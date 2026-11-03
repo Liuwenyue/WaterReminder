@@ -1,3 +1,5 @@
+<p align="center"><b>简体中文</b> | <a href="README.en.md">English</a></p>
+
 # 喝水提醒（Windows）
 
 这是一个 WPF/.NET 8 桌面喝水提醒程序，支持悬浮进度窗、系统托盘、工作日提醒、暂停提醒、本地 JSON 持久化和开机自启。
