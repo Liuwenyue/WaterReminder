@@ -1,0 +1,41 @@
+# Build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+publish/
+TestResults/
+*.binlog
+
+# Bundled local .NET SDK (install your own .NET 8 SDK instead)
+dotnet/
+dotnet-install.ps1
+
+# Local backups / screenshots
+_backup*/
+_screens/
+
+# IDE / user files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userprefs
+*.rsuser
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+~$*
+Thumbs.db
+Desktop.ini
+
+# App data (never commit personal settings / drink records)
+settings.json
+settings.json.bak
+daily-records.json

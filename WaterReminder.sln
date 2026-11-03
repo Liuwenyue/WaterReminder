@@ -1,0 +1,24 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WaterReminder", "WaterReminder\WaterReminder.csproj", "{A1D1CCAA-5D2A-4B3C-B0A3-97AEF8B7C001}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WaterReminder.Tests", "WaterReminder.Tests\WaterReminder.Tests.csproj", "{B2E2DDAB-6E3B-4C4D-C1B4-A8BF09C8D002}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A1D1CCAA-5D2A-4B3C-B0A3-97AEF8B7C001}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1D1CCAA-5D2A-4B3C-B0A3-97AEF8B7C001}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1D1CCAA-5D2A-4B3C-B0A3-97AEF8B7C001}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1D1CCAA-5D2A-4B3C-B0A3-97AEF8B7C001}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B2E2DDAB-6E3B-4C4D-C1B4-A8BF09C8D002}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B2E2DDAB-6E3B-4C4D-C1B4-A8BF09C8D002}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B2E2DDAB-6E3B-4C4D-C1B4-A8BF09C8D002}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B2E2DDAB-6E3B-4C4D-C1B4-A8BF09C8D002}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
