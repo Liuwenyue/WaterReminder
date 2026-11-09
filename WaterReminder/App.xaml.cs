@@ -49,6 +49,11 @@ public partial class App : System.Windows.Application
 
         Services = new AppServices();
         StartupService.SetEnabled(Services.Settings.AutoStart);
+        if (Services.Settings.MobilePushEnabled)
+        {
+            Services.EnsureNtfyTopics(); // generate + persist before the listener starts
+            Services.Ntfy.Start();
+        }
         _mainWindow = new MainWindow(Services);
         _tray = new TrayIconService(Services, ShowMainWindow, OpenSettings, ExitApplication);
         _reminderService = new ReminderService(Services, ShowMainWindow, text => _tray!.ShowReminder(text));
@@ -95,6 +100,7 @@ public partial class App : System.Windows.Application
     {
         Services.IsExiting = true;
         _reminderService?.Stop();
+        Services.Ntfy.Dispose();
         _tray?.Dispose();
         _mainWindow?.Close();
         _showWait?.Unregister(null);
@@ -110,6 +116,7 @@ public sealed class AppServices
     public StorageService Storage { get; }
     public UserSettings Settings { get; }
     public ProgressTracker Progress { get; }
+    public NtfyService Ntfy { get; }
     public DailyRecord Today => Progress.Today;
     public bool IsExiting { get; set; }
 
@@ -121,6 +128,34 @@ public sealed class AppServices
         Settings = Storage.LoadSettings();
         WindowPlacement.Migrate(Settings);
         Progress = new ProgressTracker(Settings, Storage.LoadDailyRecord, Storage.SaveDailyRecord);
+        // The action topic callback records the cup in effect at that moment (home cup after work).
+        Ntfy = new NtfyService(
+            Settings,
+            () => Progress.Drink(WaterCalculator.CurrentCupMl(Settings, DateTime.Now), "ntfy"),
+            action =>
+            {
+                var app = Application.Current;
+                if (app is null) action();
+                else app.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Normal, action);
+            });
+    }
+
+    /// <summary>Generates and persists ntfy topics on first need (never inside deserialization).</summary>
+    public bool EnsureNtfyTopics()
+    {
+        var changed = false;
+        if (!NtfyTopics.IsValid(Settings.NtfyTopic))
+        {
+            Settings.NtfyTopic = NtfyTopics.Generate(NtfyTopics.MainPrefix);
+            changed = true;
+        }
+        if (!NtfyTopics.IsValid(Settings.NtfyActionTopic))
+        {
+            Settings.NtfyActionTopic = NtfyTopics.Generate(NtfyTopics.ActionPrefix);
+            changed = true;
+        }
+        if (changed) Storage.SaveSettings(Settings);
+        return changed;
     }
 
     public void RefreshToday() => Progress.Reload();

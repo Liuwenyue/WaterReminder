@@ -12,7 +12,9 @@ public sealed class DynamicReminderTests
     // user's current settings: 2220 / 370, 08:30–18:00, lunch 12:00–13:30, no drinking 17:30–18:00
     private static UserSettings Mine() => new()
     {
-        DailyGoalMl = 2220, CupCapacityMl = 370, WorkStart = new(8, 30, 0), WorkEnd = new(18, 0, 0),
+        DailyGoalMl = 2220, CupCapacityMl = 370, WorkCupCapacityMl = 370, HomeCupCapacityMl = 800,
+        WorkStart = new(8, 30, 0), WorkEnd = new(18, 0, 0),
+        LunchStart = new(12, 0, 0), LunchEnd = new(13, 30, 0), // pinned: these tests predate the 11:50 default
         ActiveDays = [true, true, true, true, true, false, false],
     };
 

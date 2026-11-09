@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using WaterReminder.Controls;
+using WaterReminder.Services;
 
 namespace WaterReminder;
 
@@ -34,7 +35,8 @@ public partial class RecordsWindow : Window
     private void Edit_Click(object sender, RoutedEventArgs e)
     {
         if (ItemOf(sender) is not { } item) return;
-        var dialog = new AmountWindow(initial: item.Event.AmountMl, cup: _services.Settings.CupCapacityMl, title: "修改记录", okText: "保存") { Owner = this };
+        var cup = WaterCalculator.CurrentCupMl(_services.Settings, DateTime.Now);
+        var dialog = new AmountWindow(initial: item.Event.AmountMl, cup: cup, title: "修改记录", okText: "保存") { Owner = this };
         if (dialog.ShowDialog() != true) return;
         _services.Progress.EditEvent(item.Event.Id, item.Event.AmountMl < 0 ? -dialog.AmountMl : dialog.AmountMl);
         Reload();

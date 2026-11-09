@@ -32,7 +32,9 @@ App data is stored in `%LocalAppData%\WaterReminder`. On first launch a setup wi
 
 ## Notifications
 
-This first version uses Windows balloon notifications from the WinForms `NotifyIcon` as a fallback with no external dependencies, together with the floating window and a system sound. If Windows toast notifications with actions are needed later, the notification layer in `TrayIconService` can be swapped out without changing the reminder logic or data format.
+During work hours the app uses Windows balloon notifications from the WinForms `NotifyIcon`, together with the floating window and a system sound. After work (18:00–23:00 by default) it stays quiet on the desktop and pushes to your phone through [ntfy](https://ntfy.sh) instead: enable "phone push" in Settings, copy the subscription topic shown there, and subscribe to it in the ntfy app on your iPhone. The「喝水了」button records one home cup (800 ml by default) and pushes an「已记录 … ml」confirmation, so reminders cannot loop.
+
+The computer must stay awake and running the app: reminders are sent by the PC, and the button callback is received by the PC as well. The ntfy topic and optional access token are stored only in `%LocalAppData%\WaterReminder\settings.json` and never committed to the repository. From 23:00 until the next workday's start, and all weekend, everything is silent.
 
 ## License
 

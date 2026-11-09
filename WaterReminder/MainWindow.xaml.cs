@@ -110,6 +110,7 @@ public partial class MainWindow : Window
         var goal = Math.Max(1, settings.DailyGoalMl);
         var progress = consumed / (double)goal;
         var done = consumed >= goal;
+        var cup = WaterCalculator.CurrentCupMl(settings, now);
 
         DateText.Text = now.ToString("M月d日 dddd");
         if (!_editing) GoalText.Text = $"/ {settings.DailyGoalMl:N0} ml";
@@ -118,7 +119,7 @@ public partial class MainWindow : Window
         MiniPercent.Text = $"{percent}%";
         MiniAmount.Text = $"{consumed:N0}";
         MiniGoal.Text = $" / {settings.DailyGoalMl:N0} ml";
-        DrinkAmount.Text = $"  {settings.CupCapacityMl} ml";
+        DrinkAmount.Text = $"  {cup} ml";
 
         if (_shownConsumed != consumed)
         {
@@ -141,7 +142,7 @@ public partial class MainWindow : Window
         DrinkLabel.Text = done ? "今日目标已完成" : "喝一杯";
         DrinkAmount.Visibility = done ? Visibility.Collapsed : Visibility.Visible;
         DrinkGlyph.Text = done ? "\uE73E" : "\uE710";
-        MiniDrink.ToolTip = done ? "今日目标已完成" : $"喝一杯（{settings.CupCapacityMl} ml）";
+        MiniDrink.ToolTip = done ? "今日目标已完成" : $"喝一杯（{cup} ml）";
 
         var plan = _services.Progress.Plan();
         var phase = WaterCalculator.PhaseAt(settings, now);
@@ -212,11 +213,13 @@ public partial class MainWindow : Window
             ShowSnack(applied > 0 ? $"已记录 +{applied} ml" : $"已减少 {-applied} ml");
     }
 
-    private void DrinkButton_Click(object sender, RoutedEventArgs e) => AddWater(_services.Settings.CupCapacityMl, "cup");
+    private void DrinkButton_Click(object sender, RoutedEventArgs e)
+        => AddWater(WaterCalculator.CurrentCupMl(_services.Settings, DateTime.Now), "cup");
 
     private void CustomButton_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new AmountWindow(initial: _services.Settings.CupCapacityMl, cup: _services.Settings.CupCapacityMl) { Owner = this };
+        var cup = WaterCalculator.CurrentCupMl(_services.Settings, DateTime.Now);
+        var dialog = new AmountWindow(initial: cup, cup: cup) { Owner = this };
         if (dialog.ShowDialog() == true) AddWater(dialog.AmountMl, "custom");
     }
 
@@ -365,7 +368,7 @@ public partial class MainWindow : Window
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (_editing || e.OriginalSource is System.Windows.Controls.TextBox) return;
-        if (e.Key is Key.Space or Key.Enter) { AddWater(_services.Settings.CupCapacityMl, "keyboard"); e.Handled = true; }
+        if (e.Key is Key.Space or Key.Enter) { AddWater(WaterCalculator.CurrentCupMl(_services.Settings, DateTime.Now), "keyboard"); e.Handled = true; }
         else if (e.Key == Key.Escape) { Hide(); e.Handled = true; }
     }
 }

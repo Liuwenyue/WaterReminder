@@ -2,16 +2,31 @@ namespace WaterReminder;
 
 public sealed class UserSettings
 {
-    public int DailyGoalMl { get; set; } = 2000;
-    public int CupCapacityMl { get; set; } = 300;
-    public TimeSpan WorkStart { get; set; } = new(9, 0, 0);
+    public int DailyGoalMl { get; set; } = 2220;
+    /// <summary>Legacy single-cup value. Kept in sync with <see cref="WorkCupCapacityMl"/> so old JSON still loads.</summary>
+    public int CupCapacityMl { get; set; } = 370;
+    private int? _workCupCapacityMl;
+    /// <summary>Work-hours cup. When the new field is unset (older settings.json), falls back to the legacy cup.</summary>
+    public int WorkCupCapacityMl { get => _workCupCapacityMl ?? CupCapacityMl; set => _workCupCapacityMl = value; }
+    /// <summary>Cup used outside work hours (evening ntfy reminders and desktop clicks).</summary>
+    public int HomeCupCapacityMl { get; set; } = 800;
+    internal bool WorkCupCapacityWasSet => _workCupCapacityMl.HasValue;
+    public TimeSpan WorkStart { get; set; } = new(8, 30, 0);
     public TimeSpan WorkEnd { get; set; } = new(18, 0, 0);
     public bool LunchEnabled { get; set; } = true;
-    public TimeSpan LunchStart { get; set; } = new(12, 0, 0);
+    public TimeSpan LunchStart { get; set; } = new(11, 50, 0);
     public TimeSpan LunchEnd { get; set; } = new(13, 30, 0);
     /// <summary>No drinking in the last N minutes before WorkEnd.</summary>
     public int NoDrinkBeforeEndMinutes { get; set; } = 30;
+    /// <summary>Start of complete silence after work (also the end of evening push reminders).</summary>
+    public TimeSpan QuietStart { get; set; } = new(23, 0, 0);
     public bool[] ActiveDays { get; set; } = [true, true, true, true, true, false, false];
+    // ntfy settings live only in %LocalAppData%\WaterReminder\settings.json (never in the repo).
+    public bool MobilePushEnabled { get; set; } = true;
+    public string NtfyServer { get; set; } = "https://ntfy.sh";
+    public string NtfyTopic { get; set; } = "";
+    public string NtfyActionTopic { get; set; } = "";
+    public string NtfyToken { get; set; } = "";
     public bool SoundEnabled { get; set; } = true;
     public bool AutoStart { get; set; } = true;
     public bool FloatingWindow { get; set; } = true;

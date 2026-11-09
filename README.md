@@ -32,7 +32,9 @@ dotnet publish .\WaterReminder\WaterReminder.csproj -c Release -r win-x64 --self
 
 ## 当前通知实现
 
-首版使用 WinForms `NotifyIcon` 的 Windows 气泡通知作为无外部依赖的降级实现，并配合悬浮窗和系统提示音。后续若需要 Windows Toast 的通知动作，可在不改变提醒计算和数据结构的前提下替换 `TrayIconService` 的通知适配层。
+工作时段使用 WinForms `NotifyIcon` 的 Windows 气泡通知，并配合悬浮窗和系统提示音。下班后（默认 18:00 到 23:00）不再弹窗、不再响铃，改为通过 [ntfy](https://ntfy.sh) 推送到手机：在设置中开启「手机推送」，复制设置里显示的订阅话题，在 iPhone 的 ntfy App 中订阅该话题即可。通知上的「喝水了」按钮会记录一杯家庭杯（默认 800 ml），然后回推「已记录 … ml」确认，不会重复提醒。
+
+电脑需要保持开机并运行本程序：提醒由电脑发出，手机上的按钮回调也由电脑接收。ntfy 的话题和可选访问令牌只保存在 `%LocalAppData%\WaterReminder\settings.json`，不会写入仓库。23:00 到次日上班前以及周末完全静音。
 
 ## 许可
 

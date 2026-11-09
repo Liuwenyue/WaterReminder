@@ -34,13 +34,25 @@ public sealed class ReminderService
             _services.Progress.SettingsChanged();
         }
         if (!WaterCalculator.IsActiveDay(settings, now) || settings.RemindersPaused) return;
-        if (WaterCalculator.PhaseAt(settings, now) != WaterCalculator.DayPhase.Working) return; // no reminders in lunch / last minutes before work end
 
         var plan = _services.Progress.Plan();
         if (plan.SuggestedMl <= 0 || plan.NextReminder is null || plan.NextReminder > now) return;
-        _services.Progress.MarkReminded(now); // restarts the countdown; next one at least 20 min later
-        _showMainWindow();
-        _notify($"当前建议补充 {plan.SuggestedMl} ml，点击程序可记录一杯。");
-        if (settings.SoundEnabled) SystemSounds.Asterisk.Play();
+
+        if (WaterCalculator.ShouldShowDesktop(settings, now))
+        {
+            // work hours only: popup + tray balloon + optional sound
+            _services.Progress.MarkReminded(now); // restarts the countdown; next one at least 20 min later
+            _showMainWindow();
+            _notify($"当前建议补充 {plan.SuggestedMl} ml，点击程序可记录一杯。");
+            if (settings.SoundEnabled) SystemSounds.Asterisk.Play();
+            return;
+        }
+
+        if (WaterCalculator.ShouldSendNtfy(settings, now))
+        {
+            // evening: phone only; no window, no sound, no tray balloon
+            _services.Progress.MarkReminded(now);
+            _ = _services.Ntfy.PublishReminderAsync(plan.SuggestedMl);
+        }
     }
 }

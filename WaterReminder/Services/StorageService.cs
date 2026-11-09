@@ -69,8 +69,20 @@ public sealed class StorageService
     private static UserSettings Normalize(UserSettings s)
     {
         s.DailyGoalMl = Math.Clamp(s.DailyGoalMl, 100, 10000);
-        s.CupCapacityMl = Math.Clamp(s.CupCapacityMl, 50, 3000);
+        // Old settings.json has no WorkCupCapacityMl: keep using CupCapacityMl for work hours.
+        if (!s.WorkCupCapacityWasSet || s.WorkCupCapacityMl <= 0)
+            s.WorkCupCapacityMl = s.CupCapacityMl > 0 ? s.CupCapacityMl : 370;
+        s.WorkCupCapacityMl = Math.Clamp(s.WorkCupCapacityMl, 50, 3000);
+        if (s.HomeCupCapacityMl <= 0) s.HomeCupCapacityMl = 800;
+        s.HomeCupCapacityMl = Math.Clamp(s.HomeCupCapacityMl, 50, 3000);
+        // Keep the legacy field in sync so old code/JSON still sees the work cup.
+        s.CupCapacityMl = s.WorkCupCapacityMl;
+
         if (s.ActiveDays is null || s.ActiveDays.Length != 7) s.ActiveDays = [true, true, true, true, true, false, false];
+        s.NtfyServer = string.IsNullOrWhiteSpace(s.NtfyServer) ? "https://ntfy.sh" : s.NtfyServer.Trim().TrimEnd('/');
+        s.NtfyTopic = (s.NtfyTopic ?? "").Trim();
+        s.NtfyActionTopic = (s.NtfyActionTopic ?? "").Trim();
+        s.NtfyToken = (s.NtfyToken ?? "").Trim();
         return s;
     }
 }

@@ -154,7 +154,9 @@ public sealed class WaterCalculatorTests
 
     private static UserSettings Mine() => new()
     {
-        DailyGoalMl = 2220, CupCapacityMl = 370, WorkStart = new(8, 30, 0), WorkEnd = new(18, 0, 0),
+        DailyGoalMl = 2220, CupCapacityMl = 370, WorkCupCapacityMl = 370, HomeCupCapacityMl = 800,
+        WorkStart = new(8, 30, 0), WorkEnd = new(18, 0, 0),
+        LunchStart = new(12, 0, 0), LunchEnd = new(13, 30, 0), // pinned: these tests predate the 11:50 default
         ActiveDays = [true, true, true, true, true, false, false],
     };
 
@@ -173,10 +175,12 @@ public sealed class WaterCalculatorTests
     {
         var s = System.Text.Json.JsonSerializer.Deserialize<UserSettings>("{\"DailyGoalMl\":2220,\"CupCapacityMl\":370}")!;
         Assert.True(s.LunchEnabled);
-        Assert.Equal(new TimeSpan(12, 0, 0), s.LunchStart);
+        Assert.Equal(new TimeSpan(11, 50, 0), s.LunchStart);
         Assert.Equal(new TimeSpan(13, 30, 0), s.LunchEnd);
         Assert.Equal(30, s.NoDrinkBeforeEndMinutes);
         Assert.Equal(2220, s.DailyGoalMl);
+        Assert.Equal(new TimeSpan(23, 0, 0), s.QuietStart);
+        Assert.Equal(new TimeSpan(8, 30, 0), s.WorkStart);
     }
 
     [Theory]
