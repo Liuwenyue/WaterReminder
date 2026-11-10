@@ -17,7 +17,10 @@ public sealed class ProgressTracker
         _load = load;
         _save = save;
         _clock = clock ?? (() => DateTime.Now);
-        Today = _load(DateOnly.FromDateTime(_clock()));
+        var now = _clock();
+        Today = _load(DateOnly.FromDateTime(now));
+        // Restore after a restart so the last reminder still restarts today's countdown.
+        LastReminderAt = RestoreLastReminder(Today, now);
     }
 
     public UserSettings Settings { get; }
@@ -36,11 +39,16 @@ public sealed class ProgressTracker
     {
         var now = Now;
         var fresh = _load(DateOnly.FromDateTime(now));
-        if (LastReminderAt is { } r && r.Date != now.Date) LastReminderAt = null;
-        var changed = fresh.Date != Today.Date || Signature(fresh) != Signature(Today);
+        // A different day's record has no (or a stale) reminder time: clear it, same as before.
+        var restoredLast = RestoreLastReminder(fresh, now);
+        var changed = fresh.Date != Today.Date || Signature(fresh) != Signature(Today) || restoredLast != LastReminderAt;
         Today = fresh;
+        LastReminderAt = restoredLast;
         if (changed) Changed?.Invoke();
     }
+
+    private static DateTime? RestoreLastReminder(DailyRecord record, DateTime now)
+        => record.LastReminderAt is { } at && at.Date == now.Date ? at : null;
 
     private static string Signature(DailyRecord r) => string.Join(";", r.Events.Select(e => $"{e.Id}:{e.AmountMl}:{e.At.Ticks}"));
 
@@ -106,7 +114,13 @@ public sealed class ProgressTracker
     /// <summary>Settings (goal, cup, hours, lunch, pause) were changed and saved elsewhere.</summary>
     public void SettingsChanged() => Changed?.Invoke();
 
-    public void MarkReminded(DateTime at) { LastReminderAt = at; Changed?.Invoke(); }
+    public void MarkReminded(DateTime at)
+    {
+        LastReminderAt = at;
+        Today.LastReminderAt = at;
+        _save(Today); // survive a restart: the next reminder keeps a full gap
+        Changed?.Invoke();
+    }
 
     private void Commit()
     {

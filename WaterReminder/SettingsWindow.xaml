@@ -110,25 +110,20 @@
             </StackPanel>
           </Border>
 
-          <!-- Mobile push (ntfy) -->
-          <TextBlock Text="手机推送（ntfy）" Style="{StaticResource SectionHeader}"/>
+          <!-- Mobile push: PushWard only -->
+          <TextBlock Text="手机推送（PushWard）" Style="{StaticResource SectionHeader}"/>
           <Border Style="{StaticResource SectionCard}" Padding="16">
             <StackPanel>
               <CheckBox x:Name="MobilePushBox" Style="{StaticResource ToggleSwitch}" Click="MobilePush_Click">
-                <StackPanel><TextBlock Text="开启手机推送" FontSize="13"/><TextBlock Text="下班后通过 ntfy 推送到 iPhone，电脑需保持开机" Style="{StaticResource Caption}"/></StackPanel>
+                <StackPanel><TextBlock Text="开启手机推送" FontSize="13"/><TextBlock Text="下班后推到 iPhone（需安装 PushWard），电脑保持开机并运行本程序" Style="{StaticResource Caption}"/></StackPanel>
               </CheckBox>
               <Border Height="1" Background="{DynamicResource Stroke}" Margin="0,12,0,12"/>
-              <TextBlock Text="服务器" FontSize="13" Margin="0,0,0,6"/>
-              <TextBox x:Name="ServerBox" Style="{StaticResource FluentTextBox}"/>
-              <TextBlock Text="订阅话题" FontSize="13" Margin="0,12,0,6"/>
-              <TextBox x:Name="TopicBox" Style="{StaticResource FluentTextBox}"/>
-              <TextBlock Text="在 iPhone 的 ntfy App 中订阅此话题即可收到下班提醒，请勿分享给他人。" Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap"/>
-              <TextBlock Text="按钮回传话题" FontSize="13" Margin="0,12,0,6"/>
-              <TextBox x:Name="ActionTopicBox" Style="{StaticResource FluentTextBox}"/>
-              <TextBlock Text="仅用于接收「喝水了」按钮，请勿在手机上订阅。" Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap"/>
-              <TextBlock Text="访问令牌（可选）" FontSize="13" Margin="0,12,0,6"/>
-              <TextBox x:Name="TokenBox" Style="{StaticResource FluentTextBox}"/>
-              <TextBlock x:Name="NtfyError" Style="{StaticResource ErrorText}" Margin="0,8,0,0"/>
+              <TextBlock Text="PushWard API Token" FontSize="13" Margin="0,0,0,6"/>
+              <PasswordBox x:Name="PushWardTokenBox" Style="{StaticResource FluentPasswordBox}"/>
+              <TextBlock Text="在 iPhone 的 PushWard App 中创建集成密钥（hlk_ 开头）并粘贴到这里。令牌只保存在本机。" Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+              <TextBlock Text="通知带「喝水了」按钮：点按只被 PushWard 记录为 Answer，电脑轮询到后记录家庭杯，再发一条「已记录」。不会打开 App 或浏览器。" Style="{StaticResource Caption}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+              <TextBlock Text="iOS 上通常需要长按通知或下拉通知中心才能看到「喝水了」按钮。免费额度约每月 500 条推送，付费约 $24/年。" Style="{StaticResource Caption}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+              <TextBlock x:Name="PushWardError" Style="{StaticResource ErrorText}" Margin="0,8,0,0"/>
               <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                 <Button x:Name="TestButton" Style="{StaticResource SecondaryButton}" Content="发送测试" Click="Test_Click"/>
                 <TextBlock x:Name="TestStatus" Style="{StaticResource Caption}" FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="320"/>

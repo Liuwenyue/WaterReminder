@@ -8,17 +8,14 @@ namespace WaterReminder;
 public partial class SettingsWindow : Window
 {
     private readonly AppServices _services;
-    private readonly bool _firstRun;
     private readonly ToggleButton[] _days;
 
     public SettingsWindow(AppServices services, bool firstRun)
     {
         InitializeComponent();
         _services = services;
-        _firstRun = firstRun;
         _days = [Mon, Tue, Wed, Thu, Fri, Sat, Sun];
         MaxHeight = SystemParameters.WorkArea.Height - 16;
-        services.EnsureNtfyTopics(); // make the topic visible/copyable, even before the user saves
 
         if (firstRun)
         {
@@ -44,12 +41,10 @@ public partial class SettingsWindow : Window
         AutoStartBox.IsChecked = s.AutoStart;
         FloatingBox.IsChecked = s.FloatingWindow;
         MobilePushBox.IsChecked = s.MobilePushEnabled;
-        ServerBox.Text = NtfyMessageBuilder.NormalizeServer(s.NtfyServer);
-        TopicBox.Text = s.NtfyTopic;
-        ActionTopicBox.Text = s.NtfyActionTopic;
-        TokenBox.Text = s.NtfyToken;
+        PushWardTokenBox.Password = s.PushWardApiToken;
 
         foreach (var st in new[] { GoalStepper, WorkCupStepper, HomeCupStepper, StartStepper, EndStepper, LunchStartStepper, LunchEndStepper, NoDrinkStepper, QuietStepper }) st.ValueChanged += (_, _) => Validate();
+        PushWardTokenBox.PasswordChanged += (_, _) => Validate();
         Validate();
         WindowEx.EnableDrag(this);
     }
@@ -67,7 +62,16 @@ public partial class SettingsWindow : Window
         LunchStart = TimeSpan.FromMinutes(LunchStartStepper.Value), LunchEnd = TimeSpan.FromMinutes(LunchEndStepper.Value),
         NoDrinkBeforeEndMinutes = NoDrinkStepper.Value,
         QuietStart = TimeSpan.FromMinutes(QuietStepper.Value),
+        ActiveDays = _days.Select(x => x.IsChecked == true).ToArray(),
+        MobilePushEnabled = MobilePushBox.IsChecked == true,
+        PushWardApiToken = PushWardTokenBox.Password.Trim(),
     };
+
+    /// <summary>PushWard 集成密钥以 hlk_ 开头；长度只做宽松检查，真实格式由服务端判定。</summary>
+    private static bool LooksLikePushWardToken(string value)
+        => value.StartsWith("hlk_", StringComparison.Ordinal)
+           && value.Length is >= 8 and <= 256
+           && value.All(c => !char.IsWhiteSpace(c));
 
     private bool Validate()
     {
@@ -104,27 +108,19 @@ public partial class SettingsWindow : Window
         else if (timeErr is null && QuietStepper.Value <= EndStepper.Value) quietErr = "免打扰开始必须晚于下班时间。";
         Show(QuietError, quietErr); ok &= quietErr is null;
 
-        string? ntfyErr = null;
-        if (!Uri.TryCreate(NtfyMessageBuilder.NormalizeServer(ServerBox.Text), UriKind.Absolute, out var serverUri)
-            || (serverUri.Scheme != Uri.UriSchemeHttp && serverUri.Scheme != Uri.UriSchemeHttps))
-            ntfyErr = "服务器需为 http(s) 地址。";
-        else if (!string.IsNullOrWhiteSpace(TopicBox.Text) && !NtfyTopics.IsValid(TopicBox.Text.Trim()))
-            ntfyErr = "订阅话题只能包含字母、数字、- 和 _（最多 64 字符）。";
-        else if (!string.IsNullOrWhiteSpace(ActionTopicBox.Text) && !NtfyTopics.IsValid(ActionTopicBox.Text.Trim()))
-            ntfyErr = "按钮回传话题只能包含字母、数字、- 和 _（最多 64 字符）。";
-        Show(NtfyError, ntfyErr); ok &= ntfyErr is null;
+        string? pushWardErr = null;
+        var pushWardToken = PushWardTokenBox.Password.Trim();
+        if (pushWardToken.Length > 0 && !LooksLikePushWardToken(pushWardToken))
+            pushWardErr = "PushWard API Token 格式不正确（应以 hlk_ 开头）。";
+        Show(PushWardError, pushWardErr); ok &= pushWardErr is null;
 
         var anyDay = _days.Any(x => x.IsChecked == true);
         DaysError.Visibility = anyDay ? Visibility.Collapsed : Visibility.Visible; ok &= anyDay;
 
-        if (ok || (goalErr is null && timeErr is null && lunchErr is null && noDrinkErr is null && quietErr is null && ntfyErr is null))
+        if (ok)
         {
-            var draft = Draft();
-            var slots = WaterCalculator.Schedule(draft, DateTime.Today);
-            var text = $"每天工作时段提醒 {slots.Count} 次：" + string.Join("、", slots.Select(x => x.At.ToString("HH:mm")));
-            if (draft.DailyGoalMl > 0 && HomeCupStepper.Value > 0)
-                text += $"；下班后若未达标，按家庭杯 {HomeCupStepper.Value} ml 用手机提醒";
-            PlanSummary.Text = text;
+            // Same dynamic calculation the reminder timer uses: no fixed timetable is implied.
+            PlanSummary.Text = PlanSummaryText.Describe(Draft(), _services.Today, DateTime.Now, _services.Progress.LastReminderAt);
         }
         else PlanSummary.Text = "设置有误时无法计算提醒计划";
 
@@ -158,43 +154,49 @@ public partial class SettingsWindow : Window
         s.AutoStart = AutoStartBox.IsChecked == true;
         s.FloatingWindow = FloatingBox.IsChecked == true;
         s.MobilePushEnabled = MobilePushBox.IsChecked == true;
-        s.NtfyServer = NtfyMessageBuilder.NormalizeServer(ServerBox.Text);
-        s.NtfyTopic = TopicBox.Text.Trim();
-        s.NtfyActionTopic = ActionTopicBox.Text.Trim();
-        s.NtfyToken = TokenBox.Text.Trim();
-        if (!NtfyTopics.IsValid(s.NtfyTopic)) s.NtfyTopic = NtfyTopics.Generate(NtfyTopics.MainPrefix);
-        if (!NtfyTopics.IsValid(s.NtfyActionTopic)) s.NtfyActionTopic = NtfyTopics.Generate(NtfyTopics.ActionPrefix);
+        s.PushWardApiToken = PushWardTokenBox.Password.Trim();
         s.FirstRun = false;
         _services.Storage.SaveSettings(s);
         StartupService.SetEnabled(s.AutoStart);
-        _services.Ntfy.Restart(); // pick up enabled/disabled, server, topic or token changes
+        // Pick up enabled/disabled or token changes; stops the poller when push is off/unconfigured.
+        _services.PushWard.Restart();
         DialogResult = true;
     }
 
     private async void Test_Click(object sender, RoutedEventArgs e)
     {
-        var server = NtfyMessageBuilder.NormalizeServer(ServerBox.Text);
-        var topic = TopicBox.Text.Trim();
-        var actionTopic = ActionTopicBox.Text.Trim();
-        if (!Uri.TryCreate(server, UriKind.Absolute, out var uri)
-            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
-            || !NtfyTopics.IsValid(topic) || !NtfyTopics.IsValid(actionTopic))
-        {
-            TestStatus.Text = "请先填写有效的服务器和话题。";
-            return;
-        }
+        var token = PushWardTokenBox.Password.Trim();
 
         TestButton.IsEnabled = false;
         TestStatus.Text = "发送中…";
         try
         {
-            var message = NtfyMessageBuilder.BuildTest(server, topic, actionTopic, TokenBox.Text);
-            var sent = await _services.Ntfy.PublishAsync(message);
-            TestStatus.Text = sent ? "测试通知已发送，请在手机上查看。" : "发送失败，请检查服务器、话题和网络。";
+            if (token.Length == 0)
+            {
+                TestStatus.Text = "请先填写 PushWard API Token（hlk_ 开头）。";
+                return;
+            }
+            if (!LooksLikePushWardToken(token))
+            {
+                TestStatus.Text = "PushWard API Token 格式不正确（应以 hlk_ 开头）。";
+                return;
+            }
+
+            // Test the value currently in the form, not the last saved settings.
+            var sent = await _services.PushWard.PublishAsync(
+                PushWardMessageBuilder.BuildTest(new UserSettings
+                {
+                    PushWardApiToken = token,
+                    DailyGoalMl = GoalStepper.Value,
+                    HomeCupCapacityMl = HomeCupStepper.Value,
+                }, _services.Today.ConsumedMl));
+            TestStatus.Text = sent
+                ? "测试通知已发送。长按/下拉通知后点「喝水了」；首次填写 Token 时请先保存设置，轮询才会启动。"
+                : "发送失败，请检查 PushWard API Token 和网络。";
         }
         catch
         {
-            TestStatus.Text = "发送失败，请检查服务器、话题和网络。";
+            TestStatus.Text = "发送失败，请检查网络和推送设置。";
         }
         finally
         {

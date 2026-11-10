@@ -79,10 +79,9 @@ public sealed class StorageService
         s.CupCapacityMl = s.WorkCupCapacityMl;
 
         if (s.ActiveDays is null || s.ActiveDays.Length != 7) s.ActiveDays = [true, true, true, true, true, false, false];
-        s.NtfyServer = string.IsNullOrWhiteSpace(s.NtfyServer) ? "https://ntfy.sh" : s.NtfyServer.Trim().TrimEnd('/');
-        s.NtfyTopic = (s.NtfyTopic ?? "").Trim();
-        s.NtfyActionTopic = (s.NtfyActionTopic ?? "").Trim();
-        s.NtfyToken = (s.NtfyToken ?? "").Trim();
+        s.PushWardApiToken = (s.PushWardApiToken ?? "").Trim();
+        // Removed channel/ntfy/Pushover keys in an old settings.json are simply ignored by
+        // System.Text.Json and disappear the next time settings are saved.
         return s;
     }
 }

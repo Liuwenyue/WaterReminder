@@ -10,16 +10,17 @@ public sealed class WaterCalculatorTests
     public void CalculatesCeilingReminderCount()
     {
         var settings = new UserSettings { DailyGoalMl = 2000, CupCapacityMl = 300, WorkStart = new(9, 0, 0), WorkEnd = new(18, 0, 0) };
-        var plan = WaterCalculator.Calculate(settings, new DailyRecord(), new DateTime(2026, 11, 2, 12, 0, 0));
-        Assert.Equal(7, plan.TotalReminders);
+        var slots = WaterCalculator.Schedule(settings, new DateTime(2026, 11, 2, 12, 0, 0));
+        Assert.Equal(7, slots.Count);
     }
 
     [Fact]
     public void DoesNotExceedGoalInSuggestion()
     {
-        var settings = new UserSettings { DailyGoalMl = 500, CupCapacityMl = 300, WorkStart = new(9, 0, 0), WorkEnd = new(18, 0, 0) };
-        var record = new DailyRecord { Events = [new WaterEvent { AmountMl = 400 }] };
-        var plan = WaterCalculator.Calculate(settings, record, new DateTime(2026, 11, 2, 17, 0, 0));
+        var now = new DateTime(2026, 11, 2, 17, 0, 0);
+        var settings = new UserSettings { DailyGoalMl = 500, CupCapacityMl = 300, WorkCupCapacityMl = 300, WorkStart = new(9, 0, 0), WorkEnd = new(18, 0, 0) };
+        var record = new DailyRecord { Events = [new WaterEvent { AmountMl = 400, At = now.AddMinutes(-30) }] };
+        var plan = WaterCalculator.CalculateDynamic(settings, record, now);
         Assert.InRange(plan.SuggestedMl, 0, 100);
     }
 
@@ -37,51 +38,55 @@ public sealed class WaterCalculatorTests
     public void GoalSmallerThanCupGivesSingleReminder()
     {
         var settings = new UserSettings { DailyGoalMl = 200, CupCapacityMl = 300, WorkStart = new(9, 0, 0), WorkEnd = new(18, 0, 0) };
-        var plan = WaterCalculator.Calculate(settings, new DailyRecord(), new DateTime(2026, 11, 2, 10, 0, 0));
-        Assert.Equal(1, plan.TotalReminders);
-        Assert.Equal(200, WaterCalculator.Schedule(settings, new DateTime(2026, 11, 2))[0].DueMl);
+        var slots = WaterCalculator.Schedule(settings, new DateTime(2026, 11, 2, 10, 0, 0));
+        Assert.Single(slots);
+        Assert.Equal(200, slots[0].DueMl);
     }
 
     [Fact]
     public void BeforeWorkStartNothingIsDue()
     {
-        var plan = WaterCalculator.Calculate(Default(), new DailyRecord(), new DateTime(2026, 11, 2, 8, 0, 0));
+        var now = new DateTime(2026, 11, 2, 8, 0, 0);
+        var plan = WaterCalculator.CalculateDynamic(Default(), new DailyRecord(), now);
         Assert.Equal(0, plan.DueMl);
         Assert.Equal(0, plan.SuggestedMl);
-        Assert.Equal(WaterCalculator.Schedule(Default(), new DateTime(2026, 11, 2))[0].At, plan.NextReminder);
+        Assert.True(plan.NextReminder > now);
     }
 
     [Fact]
-    public void MissedRemindersAreMergedIntoOneSuggestion()
+    public void MissedReminders_SuggestOneCupNow()
     {
-        // 2000/300, 9-18, lunch 12-13:30, cutoff 17:30 -> 7 reminders; by 14:30 four have passed.
-        var plan = WaterCalculator.Calculate(Default(), new DailyRecord(), new DateTime(2026, 11, 2, 14, 30, 0));
-        Assert.Equal(1200, plan.DueMl);
-        Assert.Equal(1200, plan.SuggestedMl);
+        // Dynamic planning never merges missed cups: it asks for one cup at a time.
+        var plan = WaterCalculator.CalculateDynamic(Default(), new DailyRecord(), new DateTime(2026, 11, 2, 14, 30, 0));
+        Assert.Equal(300, plan.SuggestedMl);
+        Assert.True(plan.NextReminder <= new DateTime(2026, 11, 2, 14, 30, 0));
     }
 
     [Fact]
     public void GoalReachedStopsSuggestions()
     {
-        var record = new DailyRecord { Events = [new WaterEvent { AmountMl = 2000 }] };
-        var plan = WaterCalculator.Calculate(Default(), record, new DateTime(2026, 11, 2, 17, 0, 0));
+        var now = new DateTime(2026, 11, 2, 17, 0, 0);
+        var record = new DailyRecord { Events = [new WaterEvent { AmountMl = 2000, At = now.AddHours(-1) }] };
+        var plan = WaterCalculator.CalculateDynamic(Default(), record, now);
         Assert.Equal(0, plan.SuggestedMl);
     }
 
     [Fact]
-    public void AfterWorkEndHasNoNextReminder()
+    public void StaticScheduleEndsBeforeWorkEnd()
     {
-        var plan = WaterCalculator.Calculate(Default(), new DailyRecord(), new DateTime(2026, 11, 2, 19, 0, 0));
-        Assert.Null(plan.NextReminder);
-        Assert.Equal(2000, plan.DueMl);
+        var s = Default();
+        var slots = WaterCalculator.Schedule(s, new DateTime(2026, 11, 2));
+        Assert.NotEmpty(slots);
+        Assert.All(slots, x => Assert.True(x.At.TimeOfDay < s.WorkEnd));
     }
 
     [Fact]
     public void InvalidWorkHoursProduceEmptyPlan()
     {
         var settings = new UserSettings { WorkStart = new(18, 0, 0), WorkEnd = new(9, 0, 0) };
-        var plan = WaterCalculator.Calculate(settings, new DailyRecord(), new DateTime(2026, 11, 2, 12, 0, 0));
-        Assert.Equal(0, plan.TotalReminders);
+        var now = new DateTime(2026, 11, 2, 8, 0, 0); // before the (invalid) WorkEnd: no daytime plan
+        Assert.Empty(WaterCalculator.Schedule(settings, now));
+        var plan = WaterCalculator.CalculateDynamic(settings, new DailyRecord(), now);
         Assert.Null(plan.NextReminder);
     }
 
@@ -262,18 +267,18 @@ public sealed class WaterCalculatorTests
         Assert.Equal(WaterCalculator.DayPhase.NoDrinkWindow, WaterCalculator.PhaseAt(s, d.AddHours(17.5)));
         Assert.Equal(WaterCalculator.DayPhase.AfterWork, WaterCalculator.PhaseAt(s, d.AddHours(18)));
 
-        var lunch = WaterCalculator.Calculate(s, new DailyRecord(), d.AddHours(12.5));
-        Assert.Equal(new DateTime(2026, 11, 3, 14, 35, 0), lunch.NextReminder);
-        Assert.Equal(1110, lunch.DueMl);
+        var lunch = WaterCalculator.CalculateDynamic(s, new DailyRecord(), d.AddHours(12.5));
+        Assert.Equal(new DateTime(2026, 11, 3, 13, 30, 0), lunch.NextReminder);
+        Assert.Equal(0, lunch.SuggestedMl);
 
-        var cutoff = WaterCalculator.Calculate(s, new DailyRecord(), d.AddHours(17.6));
+        var cutoff = WaterCalculator.CalculateDynamic(s, new DailyRecord(), d.AddHours(17.6));
         Assert.Null(cutoff.NextReminder);
         Assert.Equal(2220, cutoff.DueMl);
 
-        var afterLast = WaterCalculator.Calculate(s, new DailyRecord { Events = [new WaterEvent { AmountMl = 370 }] }, d.AddHours(17));
-        Assert.Null(afterLast.NextReminder);
-        Assert.Equal(2220, afterLast.DueMl);
-        Assert.Equal(1850, afterLast.SuggestedMl);
+        var afterLast = WaterCalculator.CalculateDynamic(
+            s, new DailyRecord { Events = [new WaterEvent { AmountMl = 370, At = d.AddHours(16) }] }, d.AddHours(17));
+        Assert.Equal(new DateTime(2026, 11, 3, 16, 20, 0), afterLast.NextReminder);
+        Assert.Equal(370, afterLast.SuggestedMl);
         Assert.Equal(new DateTime(2026, 11, 3, 16, 55, 0), WaterCalculator.CurrentSlot(s, d.AddHours(17)));
     }
 
@@ -282,6 +287,7 @@ public sealed class WaterCalculatorTests
     {
         var s = Mine(); s.NoDrinkBeforeEndMinutes = 570;
         Assert.Empty(Times(s));
-        Assert.Equal(0, WaterCalculator.Calculate(s, new DailyRecord(), new DateTime(2026, 11, 3, 10, 0, 0)).TotalReminders);
+        var plan = WaterCalculator.CalculateDynamic(s, new DailyRecord(), new DateTime(2026, 11, 3, 10, 0, 0));
+        Assert.Null(plan.NextReminder);
     }
 }

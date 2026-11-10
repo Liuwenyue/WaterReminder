@@ -73,6 +73,7 @@ public static class WaterCalculator
         return DayPhase.Working;
     }
 
+    [Obsolete("Use CalculateDynamic instead.")]
     public static ReminderPlan Calculate(UserSettings settings, DailyRecord record, DateTime now)
     {
         var slots = Schedule(settings, now);
@@ -112,7 +113,7 @@ public static class WaterCalculator
         => IsActiveDay(s, now) && !s.RemindersPaused && PhaseAt(s, now) == DayPhase.Working;
 
     /// <summary>Phone push is allowed after work, until quiet hours; never during work or on rest days.</summary>
-    public static bool ShouldSendNtfy(UserSettings s, DateTime now)
+    public static bool ShouldSendMobilePush(UserSettings s, DateTime now)
         => s.MobilePushEnabled && IsActiveDay(s, now) && !s.RemindersPaused
            && now.TimeOfDay >= s.WorkEnd && now.TimeOfDay < s.QuietStart;
 

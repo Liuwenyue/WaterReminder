@@ -36,7 +36,7 @@ Thumbs.db
 Desktop.ini
 
 # App data (never commit personal settings / drink records)
-# ntfy topic/token live only in %LocalAppData%\WaterReminder\settings.json
+# PushWard API token lives only in %LocalAppData%\WaterReminder\settings.json
 settings.json
 settings.json.bak
 daily-records.json

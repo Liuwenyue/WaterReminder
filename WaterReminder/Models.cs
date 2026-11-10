@@ -8,7 +8,7 @@ public sealed class UserSettings
     private int? _workCupCapacityMl;
     /// <summary>Work-hours cup. When the new field is unset (older settings.json), falls back to the legacy cup.</summary>
     public int WorkCupCapacityMl { get => _workCupCapacityMl ?? CupCapacityMl; set => _workCupCapacityMl = value; }
-    /// <summary>Cup used outside work hours (evening ntfy reminders and desktop clicks).</summary>
+    /// <summary>Cup used outside work hours (evening phone reminders and desktop clicks).</summary>
     public int HomeCupCapacityMl { get; set; } = 800;
     internal bool WorkCupCapacityWasSet => _workCupCapacityMl.HasValue;
     public TimeSpan WorkStart { get; set; } = new(8, 30, 0);
@@ -21,12 +21,13 @@ public sealed class UserSettings
     /// <summary>Start of complete silence after work (also the end of evening push reminders).</summary>
     public TimeSpan QuietStart { get; set; } = new(23, 0, 0);
     public bool[] ActiveDays { get; set; } = [true, true, true, true, true, false, false];
-    // ntfy settings live only in %LocalAppData%\WaterReminder\settings.json (never in the repo).
+    // Phone push is PushWard only. The credential lives only in
+    // %LocalAppData%\WaterReminder\settings.json (never in the repo). Unknown keys in older
+    // settings.json files (for example the removed channel/ntfy fields) are ignored on load
+    // and are not written back.
     public bool MobilePushEnabled { get; set; } = true;
-    public string NtfyServer { get; set; } = "https://ntfy.sh";
-    public string NtfyTopic { get; set; } = "";
-    public string NtfyActionTopic { get; set; } = "";
-    public string NtfyToken { get; set; } = "";
+    /// <summary>PushWard 集成密钥，形如 hlk_…；只保存在本机 settings.json。</summary>
+    public string PushWardApiToken { get; set; } = "";
     public bool SoundEnabled { get; set; } = true;
     public bool AutoStart { get; set; } = true;
     public bool FloatingWindow { get; set; } = true;
@@ -48,6 +49,8 @@ public sealed class DailyRecord
 {
     public string Date { get; set; } = DateOnly.FromDateTime(DateTime.Now).ToString("yyyy-MM-dd");
     public List<WaterEvent> Events { get; set; } = [];
+    /// <summary>Last reminder fired on this day. Persisted so a restart does not break the minimum gap.</summary>
+    public DateTime? LastReminderAt { get; set; }
     public int ConsumedMl => Math.Max(0, Events.Sum(x => x.AmountMl));
 }
 

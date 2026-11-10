@@ -4,8 +4,8 @@ using Xunit;
 
 namespace WaterReminder.Tests;
 
-/// <summary>After-work ntfy planning, split cups, reminder decisions and the offline ntfy request builder.</summary>
-public sealed class EveningNtfyTests
+/// <summary>After-work phone-push planning, split cups, reminder decisions and PushWard settings compatibility.</summary>
+public sealed class EveningPushTests
 {
     private static readonly DateTime Day = new(2026, 11, 3); // Tuesday
     private static readonly DateTime Saturday = new(2026, 11, 7);
@@ -25,9 +25,7 @@ public sealed class EveningNtfyTests
         QuietStart = new(23, 0, 0),
         ActiveDays = [true, true, true, true, true, false, false],
         MobilePushEnabled = true,
-        NtfyServer = "https://ntfy.example",
-        NtfyTopic = "fixture-topic",
-        NtfyActionTopic = "fixture-action",
+        PushWardApiToken = "hlk_test_token",
     };
 
     private static DateTime T(int h, int m) => Day.AddHours(h).AddMinutes(m);
@@ -54,7 +52,7 @@ public sealed class EveningNtfyTests
             Assert.True(p.NextReminder >= now, $"{p.NextReminder:HH:mm} before {now:HH:mm}");
             times.Add(p.NextReminder!.Value);
 
-            rec.Events.Add(new WaterEvent { At = p.NextReminder.Value, AmountMl = 800, Source = "ntfy" });
+            rec.Events.Add(new WaterEvent { At = p.NextReminder.Value, AmountMl = 800, Source = "pushward" });
             now = p.NextReminder.Value;
         }
 
@@ -118,7 +116,7 @@ public sealed class EveningNtfyTests
     {
         var s = Settings();
         var now = Saturday.AddHours(19);
-        Assert.False(WaterCalculator.ShouldSendNtfy(s, now));
+        Assert.False(WaterCalculator.ShouldSendMobilePush(s, now));
         Assert.False(WaterCalculator.ShouldShowDesktop(s, now));
         var p = WaterCalculator.CalculateDynamic(s, new DailyRecord(), now);
         Assert.Equal("今天休息，不提醒", WaterCalculator.StatusLine(s, new DailyRecord(), p, now, false));
@@ -129,16 +127,16 @@ public sealed class EveningNtfyTests
     {
         var s = Settings();
         var fridayQuiet = Friday.AddHours(23);
-        Assert.False(WaterCalculator.ShouldSendNtfy(s, fridayQuiet));
+        Assert.False(WaterCalculator.ShouldSendMobilePush(s, fridayQuiet));
         Assert.Null(P(Rec(Ev(9, 0, 370)), fridayQuiet).NextReminder); // date/time of Day only matters for the clock
 
         var mondayMorning = Monday.AddHours(8);
         Assert.Equal(WaterCalculator.DayPhase.BeforeWork, WaterCalculator.PhaseAt(s, mondayMorning));
-        Assert.False(WaterCalculator.ShouldSendNtfy(s, mondayMorning));
+        Assert.False(WaterCalculator.ShouldSendMobilePush(s, mondayMorning));
         Assert.False(WaterCalculator.ShouldShowDesktop(s, mondayMorning));
 
         var fridayLate = Friday.AddHours(22).AddMinutes(59);
-        Assert.True(WaterCalculator.ShouldSendNtfy(s, fridayLate));
+        Assert.True(WaterCalculator.ShouldSendMobilePush(s, fridayLate));
     }
 
     [Fact]
@@ -148,17 +146,17 @@ public sealed class EveningNtfyTests
         Assert.True(WaterCalculator.ShouldShowDesktop(s, T(10, 0)));
         Assert.False(WaterCalculator.ShouldShowDesktop(s, T(12, 30)));  // lunch
         Assert.False(WaterCalculator.ShouldShowDesktop(s, T(17, 45)));  // no-drink window
-        Assert.False(WaterCalculator.ShouldSendNtfy(s, T(10, 0)));      // desktop only during work
-        Assert.True(WaterCalculator.ShouldSendNtfy(s, T(18, 0)));
-        Assert.False(WaterCalculator.ShouldSendNtfy(s, T(23, 0)));      // quiet start
+        Assert.False(WaterCalculator.ShouldSendMobilePush(s, T(10, 0)));      // desktop only during work
+        Assert.True(WaterCalculator.ShouldSendMobilePush(s, T(18, 0)));
+        Assert.False(WaterCalculator.ShouldSendMobilePush(s, T(23, 0)));      // quiet start
 
         s.RemindersPaused = true;
-        Assert.False(WaterCalculator.ShouldSendNtfy(s, T(19, 0)));
+        Assert.False(WaterCalculator.ShouldSendMobilePush(s, T(19, 0)));
         Assert.False(WaterCalculator.ShouldShowDesktop(s, T(10, 0)));
 
         s.RemindersPaused = false;
         s.MobilePushEnabled = false;
-        Assert.False(WaterCalculator.ShouldSendNtfy(s, T(19, 0)));
+        Assert.False(WaterCalculator.ShouldSendMobilePush(s, T(19, 0)));
     }
 
     [Fact]
@@ -191,83 +189,16 @@ public sealed class EveningNtfyTests
     }
 
     [Fact]
-    public void NtfyDrinkRecalculatesNextReminder()
+    public void PushWardDrinkRecalculatesNextReminder()
     {
         var h = new Harness(T(18, 0), Ev(9, 0, 370));
         Assert.Equal(T(19, 26), h.Next);
 
-        Assert.Equal(800, h.Tracker.Drink(800, "ntfy"));
+        Assert.Equal(800, h.Tracker.Drink(800, PushWardMessageBuilder.RecordSource));
         Assert.Equal(1, h.Changes);
         Assert.Equal(T(20, 0), h.Next); // anchor moves to 18:00, 2 home cups over 5 h
-        Assert.Equal("ntfy", h.Disk.Events[^1].Source);
+        Assert.Equal("pushward", h.Disk.Events[^1].Source);
         Assert.Equal(1170, h.Disk.ConsumedMl);
-    }
-
-    // ---------- ntfy request builder (offline) ----------
-
-    [Fact]
-    public void ReminderMessage_HasActionButtonAndTokenOnlyWhenSet()
-    {
-        var s = Settings();
-        var m = NtfyMessageBuilder.BuildReminder(s, 370);
-
-        Assert.Equal("https://ntfy.example/fixture-topic", m.Url.ToString());
-        Assert.Equal("该喝水了", m.Headers["Title"]);
-        Assert.Contains("370", m.Body);
-        Assert.False(m.Headers.ContainsKey("Authorization"));
-        Assert.True(m.HasAction);
-
-        var actions = m.Headers["Actions"];
-        Assert.Contains("喝水了", actions);
-        Assert.Contains("https://ntfy.example/fixture-action", actions);
-        Assert.Contains("method=POST", actions);
-        Assert.Contains("body=DRINK", actions);
-        Assert.Contains("clear=true", actions);
-
-        s.NtfyToken = "secret-token";
-        Assert.Equal("Bearer secret-token", NtfyMessageBuilder.BuildReminder(s, 370).Headers["Authorization"]);
-    }
-
-    [Fact]
-    public void ConfirmationMessage_HasNoActionButton()
-    {
-        var m = NtfyMessageBuilder.BuildConfirmation(Settings(), 800);
-        Assert.Equal("https://ntfy.example/fixture-topic", m.Url.ToString());
-        Assert.Equal("已记录 800 ml", m.Headers["Title"]);
-        Assert.Equal("已记录 800 ml", m.Body);
-        Assert.False(m.HasAction);
-        Assert.False(m.Headers.ContainsKey("Actions"));
-    }
-
-    [Fact]
-    public void TestMessage_UsesSameButton()
-    {
-        var m = NtfyMessageBuilder.BuildTest(Settings());
-        Assert.True(m.HasAction);
-        Assert.Contains("fixture-action", m.Headers["Actions"]);
-    }
-
-    [Fact]
-    public void ServerDefaultsAndTrailingSlashAreHandled()
-    {
-        Assert.Equal("https://ntfy.sh", NtfyMessageBuilder.NormalizeServer(""));
-        Assert.Equal("https://ntfy.sh", NtfyMessageBuilder.NormalizeServer(" https://ntfy.sh/// "));
-        var m = NtfyMessageBuilder.BuildReminder("", "topic", "action", null, 100);
-        Assert.Equal("https://ntfy.sh/topic", m.Url.ToString());
-        Assert.Contains("https://ntfy.sh/action", m.Headers["Actions"]);
-    }
-
-    [Fact]
-    public void GeneratedTopicsAreLongRandomAndValid()
-    {
-        var main = NtfyTopics.Generate(NtfyTopics.MainPrefix);
-        var action = NtfyTopics.Generate(NtfyTopics.ActionPrefix);
-        Assert.StartsWith("wr-", main);
-        Assert.StartsWith("wr-act-", action);
-        Assert.Equal(NtfyTopics.MainPrefix.Length + 32, main.Length); // 16 random bytes, hex
-        Assert.True(NtfyTopics.IsValid(main));
-        Assert.True(NtfyTopics.IsValid(action));
-        Assert.NotEqual(main, NtfyTopics.Generate(NtfyTopics.MainPrefix));
     }
 
     // ---------- settings compatibility ----------
@@ -284,10 +215,58 @@ public sealed class EveningNtfyTests
         Assert.Equal(new TimeSpan(13, 30, 0), s.LunchEnd);
         Assert.Equal(new TimeSpan(23, 0, 0), s.QuietStart);
         Assert.True(s.MobilePushEnabled);
-        Assert.Equal("https://ntfy.sh", s.NtfyServer);
-        Assert.Equal("", s.NtfyTopic);
-        Assert.Equal("", s.NtfyActionTopic);
-        Assert.Equal("", s.NtfyToken);
+        Assert.Equal("", s.PushWardApiToken);
+    }
+
+    [Fact]
+    public void LegacyJson_RemovedChannelKeys_AreIgnoredGracefully()
+    {
+        WithStorage((storage, dir) =>
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "settings.json"),
+                """{"DailyGoalMl":2000,"CupCapacityMl":500,"MobilePushChannel":"ntfy","NtfyTopic":"old-topic","NtfyServer":"https://old.example","NtfyActionTopic":"old-action","NtfyToken":"old-token","PushoverUserKey":"old-user","PushoverApiToken":"old-api","PushWardApiToken":" hlk_old "}""");
+
+            var s = storage.LoadSettings();
+            Assert.Equal(2000, s.DailyGoalMl);
+            Assert.Equal("hlk_old", s.PushWardApiToken);
+            Assert.True(s.MobilePushEnabled);
+
+            // Saving drops the removed keys instead of writing them back.
+            storage.SaveSettings(s);
+            var saved = File.ReadAllText(Path.Combine(dir, "settings.json"));
+            Assert.DoesNotContain("Ntfy", saved);
+            Assert.DoesNotContain("Pushover", saved);
+            Assert.DoesNotContain("MobilePushChannel", saved);
+            Assert.Contains("hlk_old", saved);
+        });
+    }
+
+    [Fact]
+    public void RecordLabels_DescribePushWardPhoneDrink()
+    {
+        Assert.Equal("手机 Pushward", RecordLabels.Describe("pushward", 800));
+    }
+
+    [Theory]
+    [InlineData(10, 0, false)] // work hours: desktop only
+    [InlineData(17, 59, false)]
+    [InlineData(18, 0, true)]  // evening push window
+    [InlineData(22, 59, true)]
+    [InlineData(23, 0, false)] // quiet hours
+    public void ShouldSendMobilePush_OnlyBetweenWorkEndAndQuietStart(int hour, int minute, bool expected)
+        => Assert.Equal(expected, WaterCalculator.ShouldSendMobilePush(Settings(), T(hour, minute)));
+
+    [Fact]
+    public void ShouldSendMobilePush_RequiresEnabledDayAndNotPaused()
+    {
+        var s = Settings();
+        Assert.False(WaterCalculator.ShouldSendMobilePush(s, Saturday.AddHours(19)));
+        s.RemindersPaused = true;
+        Assert.False(WaterCalculator.ShouldSendMobilePush(s, T(19, 0)));
+        s.RemindersPaused = false;
+        s.MobilePushEnabled = false;
+        Assert.False(WaterCalculator.ShouldSendMobilePush(s, T(19, 0)));
     }
 
     private static string TempDir()
@@ -314,26 +293,25 @@ public sealed class EveningNtfyTests
             Assert.Equal(500, s.CupCapacityMl); // legacy field kept in sync
             Assert.Equal(800, s.HomeCupCapacityMl);
             Assert.Equal(new TimeSpan(23, 0, 0), s.QuietStart);
-            Assert.Equal("https://ntfy.sh", s.NtfyServer);
         });
     }
 
     [Fact]
-    public void SplitCupsAndServerAreNormalizedOnSave()
+    public void SplitCupsAndTokenAreNormalizedOnSave()
     {
         WithStorage((storage, _) =>
         {
             var s = new UserSettings
             {
                 CupCapacityMl = 999, WorkCupCapacityMl = 370, HomeCupCapacityMl = 800,
-                NtfyServer = " https://push.example/// ",
+                PushWardApiToken = " hlk_test ",
             };
             storage.SaveSettings(s);
             var loaded = storage.LoadSettings();
             Assert.Equal(370, loaded.CupCapacityMl);
             Assert.Equal(370, loaded.WorkCupCapacityMl);
             Assert.Equal(800, loaded.HomeCupCapacityMl);
-            Assert.Equal("https://push.example", loaded.NtfyServer);
+            Assert.Equal("hlk_test", loaded.PushWardApiToken);
         });
     }
 

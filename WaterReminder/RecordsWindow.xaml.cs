@@ -69,14 +69,6 @@ public partial class RecordsWindow : Window
         public RecordItem(WaterEvent @event) => Event = @event;
         public string AmountDisplay => Event.AmountMl >= 0 ? $"+{Event.AmountMl} ml" : $"{Event.AmountMl} ml";
         public string Glyph => Event.Source == "adjust" ? "\uE70F" : Event.AmountMl < 0 ? "\uE738" : Event.Source == "custom" ? "\uE70F" : "\uE710";
-        public string Detail => $"{Event.At:HH:mm} · " + (Event.Source switch
-        {
-            "cup" => "喝一杯",
-            "keyboard" => "快捷键记录",
-            "custom" => Event.AmountMl < 0 ? "手动修正" : "自定义",
-            "adjust" => "修正",
-            "toast" or "notification" => "通知中记录",
-            _ => "手动记录",
-        });
+        public string Detail => $"{Event.At:HH:mm} · " + RecordLabels.Describe(Event.Source, Event.AmountMl);
     }
 }

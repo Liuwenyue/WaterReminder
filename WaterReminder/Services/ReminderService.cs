@@ -3,12 +3,14 @@ using System.Windows.Threading;
 
 namespace WaterReminder.Services;
 
-public sealed class ReminderService
+public sealed partial class ReminderService
 {
     private readonly AppServices _services;
     private readonly Action _showMainWindow;
     private readonly Action<string> _notify;
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(30) };
+    private DateTime _pushNextAttempt = DateTime.MinValue;
+    private bool _pushInFlight;
 
     public ReminderService(AppServices services, Action showMainWindow, Action<string> notify)
     {
@@ -48,11 +50,38 @@ public sealed class ReminderService
             return;
         }
 
-        if (WaterCalculator.ShouldSendNtfy(settings, now))
+        if (WaterCalculator.ShouldSendMobilePush(settings, now))
         {
-            // evening: phone only; no window, no sound, no tray balloon
-            _services.Progress.MarkReminded(now);
-            _ = _services.Ntfy.PublishReminderAsync(plan.SuggestedMl);
+            // Evening: PushWard only; no window, no sound, no tray balloon.
+            // Unconfigured credentials mean "do not push" rather than retrying forever.
+            if (!ShouldPublishPushWard(settings, _services.PushWard.IsConfigured)) return;
+
+            // Only mark the reminder once PushWard actually accepted it, otherwise a failed
+            // push would still burn the 20-minute gap. "Accepted" means the API returned 2xx —
+            // not that the user already tapped. A short private backoff stops 30-second retries.
+            if (!MobilePushDeliveryPolicy.ShouldAttempt(now, _pushNextAttempt, _pushInFlight)) return;
+            _pushInFlight = true;
+            _ = PublishEveningAsync(plan.SuggestedMl, now);
+        }
+    }
+
+    private async Task PublishEveningAsync(int suggestedMl, DateTime at)
+    {
+        try
+        {
+            // No ConfigureAwait(false) here: MarkReminded raises Changed and must resume on the UI thread.
+            var published = await _services.PushWard.PublishReminderAsync(suggestedMl, _services.Today.ConsumedMl);
+            var outcome = MobilePushDeliveryPolicy.AfterPublish(published, at);
+            if (outcome.MarkReminded) _services.Progress.MarkReminded(at);
+            _pushNextAttempt = outcome.NextAttempt;
+        }
+        catch
+        {
+            _pushNextAttempt = MobilePushDeliveryPolicy.AfterPublish(false, at).NextAttempt;
+        }
+        finally
+        {
+            _pushInFlight = false;
         }
     }
 }

@@ -90,6 +90,7 @@ public sealed class TrayIconService : IDisposable
             _services.Settings.RemindersPaused = false;
             _services.Settings.PauseUntil = null;
             _services.Storage.SaveSettings(_services.Settings);
+            _services.Progress.SettingsChanged(); // main window reflects resume immediately, not on the 5 s timer
             UpdateText();
         });
         menu.Items.Add(new Forms.ToolStripSeparator());
@@ -111,6 +112,7 @@ public sealed class TrayIconService : IDisposable
         _services.Settings.RemindersPaused = true;
         _services.Settings.PauseUntil = until;
         _services.Storage.SaveSettings(_services.Settings);
+        _services.Progress.SettingsChanged(); // main window reflects pause immediately, not on the 5 s timer
         UpdateText();
     }
 

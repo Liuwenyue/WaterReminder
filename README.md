@@ -32,9 +32,16 @@ dotnet publish .\WaterReminder\WaterReminder.csproj -c Release -r win-x64 --self
 
 ## 当前通知实现
 
-工作时段使用 WinForms `NotifyIcon` 的 Windows 气泡通知，并配合悬浮窗和系统提示音。下班后（默认 18:00 到 23:00）不再弹窗、不再响铃，改为通过 [ntfy](https://ntfy.sh) 推送到手机：在设置中开启「手机推送」，复制设置里显示的订阅话题，在 iPhone 的 ntfy App 中订阅该话题即可。通知上的「喝水了」按钮会记录一杯家庭杯（默认 800 ml），然后回推「已记录 … ml」确认，不会重复提醒。
+工作时段使用 WinForms `NotifyIcon` 的 Windows 气泡通知，并配合悬浮窗和系统提示音。下班后（默认 18:00 到 23:00）不再弹窗、不再响铃，改为通过 **PushWard** 推送到 iPhone。PushWard 是唯一的手机通道，**不需要 ntfy，也不需要 Pushover**：
 
-电脑需要保持开机并运行本程序：提醒由电脑发出，手机上的按钮回调也由电脑接收。ntfy 的话题和可选访问令牌只保存在 `%LocalAppData%\WaterReminder\settings.json`，不会写入仓库。23:00 到次日上班前以及周末完全静音。
+1. iPhone 从 App Store 安装 **PushWard**，在 App 内创建集成密钥（`hlk_` 开头）。
+2. 打开本程序 → 设置 →「手机推送（PushWard）」，粘贴 API Token 并保存（轮询随即启动）；之后可再打开设置点「发送测试」。
+
+提醒标题为「该喝水了」，正文为「建议补充 N ml」，并带一个自定义按钮 **「喝水了」**。这个按钮没有 `url`、没有 `foreground`，点按只会被 PushWard 记录为 Notification Answer，**不会打开 PushWard App，也不会打开 Safari**。电脑轮询 `GET /notifications/answers` 取回 Answer 后记录一杯家庭杯（默认 800 ml，来源「手机 Pushward」），再发一条「已记录 / 已记 N ml」确认（无按钮）。
+
+**iOS 提示**：通知上的「喝水了」按钮通常需要**长按通知**或在通知中心**下拉/展开**后才能看到。PushWard 免费额度约每月 500 条推送，付费约 $24/年（以官方价格为准），本程序日常使用远低于免费额度。详见 [PUSHWARD.md](PUSHWARD.md)。
+
+电脑需要保持开机并运行本程序：提醒由电脑发出，Answer 也由电脑轮询取回。PushWard Token 只保存在 `%LocalAppData%\WaterReminder\settings.json`，不会写入仓库。23:00 到次日上班前以及周末完全静音。
 
 ## 许可
 
