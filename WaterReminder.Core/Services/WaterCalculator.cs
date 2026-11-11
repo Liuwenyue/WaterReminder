@@ -112,10 +112,19 @@ public static class WaterCalculator
     public static bool ShouldShowDesktop(UserSettings s, DateTime now)
         => IsActiveDay(s, now) && !s.RemindersPaused && PhaseAt(s, now) == DayPhase.Working;
 
-    /// <summary>Phone push is allowed after work, until quiet hours; never during work or on rest days.</summary>
+    /// <summary>
+    /// Phone push goes out in every reminder window: work hours, and after work until quiet.
+    /// Lunch and the pre-end no-drink window are not reminder windows. After quiet hours,
+    /// and on rest days, nothing is sent. Desktop popups stay work-hours only.
+    /// </summary>
     public static bool ShouldSendMobilePush(UserSettings s, DateTime now)
-        => s.MobilePushEnabled && IsActiveDay(s, now) && !s.RemindersPaused
-           && now.TimeOfDay >= s.WorkEnd && now.TimeOfDay < s.QuietStart;
+    {
+        if (!s.MobilePushEnabled || !IsActiveDay(s, now) || s.RemindersPaused) return false;
+        var t = now.TimeOfDay;
+        if (t < s.WorkStart || t >= s.QuietStart) return false;
+        var phase = PhaseAt(s, now);
+        return phase is DayPhase.Working or DayPhase.AfterWork;
+    }
 
     /// <summary>Drinking minutes in [from, cutoff) excluding lunch.</summary>
     public static double AvailableMinutes(UserSettings s, DateTime from)

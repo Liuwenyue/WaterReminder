@@ -133,9 +133,9 @@ public sealed class AppServices
             dispatch: DispatchToUi);
     }
 
-    /// <summary>Home cup, recorded once per answered phone notification.</summary>
+    /// <summary>One tap records the cup for the current window: work cup during work, home cup after.</summary>
     private int RecordPushWardDrink()
-        => Progress.Drink(WaterCalculator.HomeCupMl(Settings), PushWardMessageBuilder.RecordSource);
+        => Progress.Drink(WaterCalculator.CurrentCupMl(Settings, DateTime.Now), PushWardMessageBuilder.RecordSource);
 
     private static void DispatchToUi(Action action)
     {

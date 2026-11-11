@@ -42,19 +42,24 @@ public sealed partial class ReminderService
 
         if (WaterCalculator.ShouldShowDesktop(settings, now))
         {
-            // work hours only: popup + tray balloon + optional sound
+            // Work hours: popup + tray balloon + optional sound, and the same reminder to the phone.
             _services.Progress.MarkReminded(now); // restarts the countdown; next one at least 20 min later
             _showMainWindow();
             _notify($"当前建议补充 {plan.SuggestedMl} ml，点击程序可记录一杯。");
             if (settings.SoundEnabled) SystemSounds.Asterisk.Play();
+            if (WaterCalculator.ShouldSendMobilePush(settings, now)
+                && ReminderRouting.ShouldPublishPushWard(settings, _services.PushWard.IsConfigured))
+            {
+                _ = _services.PushWard.PublishReminderAsync(plan.SuggestedMl, _services.Today.ConsumedMl);
+            }
             return;
         }
 
         if (WaterCalculator.ShouldSendMobilePush(settings, now))
         {
-            // Evening: PushWard only; no window, no sound, no tray balloon.
+            // After work, before quiet hours: PushWard only. No window, no sound, no tray balloon.
             // Unconfigured credentials mean "do not push" rather than retrying forever.
-            if (!ShouldPublishPushWard(settings, _services.PushWard.IsConfigured)) return;
+            if (!ReminderRouting.ShouldPublishPushWard(settings, _services.PushWard.IsConfigured)) return;
 
             // Only mark the reminder once PushWard actually accepted it, otherwise a failed
             // push would still burn the 20-minute gap. "Accepted" means the API returned 2xx —

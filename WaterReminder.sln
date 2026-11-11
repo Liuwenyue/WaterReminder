@@ -1,10 +1,16 @@
-Microsoft Visual Studio Solution File, Format Version 12.00
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WaterReminder", "WaterReminder\WaterReminder.csproj", "{A1D1CCAA-5D2A-4B3C-B0A3-97AEF8B7C001}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WaterReminder.Tests", "WaterReminder.Tests\WaterReminder.Tests.csproj", "{B2E2DDAB-6E3B-4C4D-C1B4-A8BF09C8D002}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WaterReminder.Core", "WaterReminder.Core\WaterReminder.Core.csproj", "{5C3E5AC0-0979-4016-AB95-B8C505394A06}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WaterReminder.Server", "WaterReminder.Server\WaterReminder.Server.csproj", "{0A4EFBF4-7325-43D9-8848-9F1591E9948C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WaterReminder.Client", "WaterReminder.Client\WaterReminder.Client.csproj", "{4C97C5B6-9060-4EA6-B3C7-1A838F29D063}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -20,5 +26,17 @@ Global
 		{B2E2DDAB-6E3B-4C4D-C1B4-A8BF09C8D002}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B2E2DDAB-6E3B-4C4D-C1B4-A8BF09C8D002}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B2E2DDAB-6E3B-4C4D-C1B4-A8BF09C8D002}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5C3E5AC0-0979-4016-AB95-B8C505394A06}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5C3E5AC0-0979-4016-AB95-B8C505394A06}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5C3E5AC0-0979-4016-AB95-B8C505394A06}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5C3E5AC0-0979-4016-AB95-B8C505394A06}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0A4EFBF4-7325-43D9-8848-9F1591E9948C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0A4EFBF4-7325-43D9-8848-9F1591E9948C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0A4EFBF4-7325-43D9-8848-9F1591E9948C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0A4EFBF4-7325-43D9-8848-9F1591E9948C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4C97C5B6-9060-4EA6-B3C7-1A838F29D063}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4C97C5B6-9060-4EA6-B3C7-1A838F29D063}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4C97C5B6-9060-4EA6-B3C7-1A838F29D063}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4C97C5B6-9060-4EA6-B3C7-1A838F29D063}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

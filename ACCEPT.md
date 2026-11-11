@@ -1,5 +1,9 @@
 # 验收说明（PushWard 唯一手机通道 + Notification Answers）
 
+> 这份记录对应「只保留 PushWard」那一次改动。现在的运行方式是 Linux 上的无界面服务加上 Windows 托盘客户端，说明见 [README.md](README.md) 和 [DEPLOY.md](DEPLOY.md)。
+
+
+
 ## 改了什么
 
 - 手机推送只保留 **PushWard**：删除 ntfy 与 Pushover 的服务、通道枚举、设置字段、

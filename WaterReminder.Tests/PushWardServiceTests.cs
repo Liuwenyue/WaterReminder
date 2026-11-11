@@ -426,4 +426,21 @@ public sealed class PushWardServiceTests
         Assert.Equal("drink", batch.Items[0].ActionId);
     }
 
+    [Fact]
+    public void NotificationId_StringAndNumber_DedupeAsTheSameId()
+    {
+        var numeric = PushWardService.ParseAnswerBatch(
+            """{"items":[{"notification_id":61901,"action_id":"drink"}],"cursor":1}""");
+        var text = PushWardService.ParseAnswerBatch(
+            """{"items":[{"notification_id":"61901","action_id":"drink"}],"cursor":"1"}""");
+
+        Assert.NotNull(numeric);
+        Assert.NotNull(text);
+        Assert.Equal(text!.Items[0].NotificationId, numeric!.Items[0].NotificationId);
+
+        var seen = new SeenIdCache(10);
+        Assert.True(seen.Add(numeric.Items[0].NotificationId));
+        Assert.False(seen.Add(text.Items[0].NotificationId));
+    }
+
 }

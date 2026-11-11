@@ -140,13 +140,16 @@ public sealed class EveningPushTests
     }
 
     [Fact]
-    public void DesktopOnlyDuringWorkHours_PhoneOnlyAfterWork()
+    public void DesktopOnlyDuringWork_PushOnEveryReminderWindow()
     {
         var s = Settings();
         Assert.True(WaterCalculator.ShouldShowDesktop(s, T(10, 0)));
         Assert.False(WaterCalculator.ShouldShowDesktop(s, T(12, 30)));  // lunch
         Assert.False(WaterCalculator.ShouldShowDesktop(s, T(17, 45)));  // no-drink window
-        Assert.False(WaterCalculator.ShouldSendMobilePush(s, T(10, 0)));      // desktop only during work
+        Assert.False(WaterCalculator.ShouldShowDesktop(s, T(18, 0)));   // after work: phone only
+        Assert.True(WaterCalculator.ShouldSendMobilePush(s, T(10, 0))); // work window, phone as well
+        Assert.False(WaterCalculator.ShouldSendMobilePush(s, T(12, 30)));
+        Assert.False(WaterCalculator.ShouldSendMobilePush(s, T(17, 45)));
         Assert.True(WaterCalculator.ShouldSendMobilePush(s, T(18, 0)));
         Assert.False(WaterCalculator.ShouldSendMobilePush(s, T(23, 0)));      // quiet start
 
@@ -207,13 +210,15 @@ public sealed class EveningPushTests
     public void NewSettingsUseAfterWorkDefaults()
     {
         var s = new UserSettings();
-        Assert.Equal(2220, s.DailyGoalMl);
+        Assert.Equal(3000, s.DailyGoalMl);
         Assert.Equal(370, s.WorkCupCapacityMl);
         Assert.Equal(800, s.HomeCupCapacityMl);
         Assert.Equal(new TimeSpan(8, 30, 0), s.WorkStart);
+        Assert.Equal(new TimeSpan(17, 30, 0), s.WorkEnd);
         Assert.Equal(new TimeSpan(11, 50, 0), s.LunchStart);
         Assert.Equal(new TimeSpan(13, 30, 0), s.LunchEnd);
         Assert.Equal(new TimeSpan(23, 0, 0), s.QuietStart);
+        Assert.Equal(TimeSpan.FromMinutes(20), WaterCalculator.MinReminderGap);
         Assert.True(s.MobilePushEnabled);
         Assert.Equal("", s.PushWardApiToken);
     }
@@ -249,12 +254,13 @@ public sealed class EveningPushTests
     }
 
     [Theory]
-    [InlineData(10, 0, false)] // work hours: desktop only
-    [InlineData(17, 59, false)]
-    [InlineData(18, 0, true)]  // evening push window
+    [InlineData(10, 0, true)]  // work window: phone as well as desktop
+    [InlineData(12, 30, false)] // lunch is not a reminder window
+    [InlineData(17, 59, false)] // no-drink window before WorkEnd
+    [InlineData(18, 0, true)]  // after work, phone only
     [InlineData(22, 59, true)]
     [InlineData(23, 0, false)] // quiet hours
-    public void ShouldSendMobilePush_OnlyBetweenWorkEndAndQuietStart(int hour, int minute, bool expected)
+    public void ShouldSendMobilePush_OnWorkAndEveningWindows(int hour, int minute, bool expected)
         => Assert.Equal(expected, WaterCalculator.ShouldSendMobilePush(Settings(), T(hour, minute)));
 
     [Fact]
