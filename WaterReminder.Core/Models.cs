@@ -2,7 +2,7 @@ namespace WaterReminder;
 
 public sealed class UserSettings
 {
-    public int DailyGoalMl { get; set; } = 2220;
+    public int DailyGoalMl { get; set; } = 3000;
     /// <summary>Legacy single-cup value. Kept in sync with <see cref="WorkCupCapacityMl"/> so old JSON still loads.</summary>
     public int CupCapacityMl { get; set; } = 370;
     private int? _workCupCapacityMl;
@@ -12,21 +12,24 @@ public sealed class UserSettings
     public int HomeCupCapacityMl { get; set; } = 800;
     internal bool WorkCupCapacityWasSet => _workCupCapacityMl.HasValue;
     public TimeSpan WorkStart { get; set; } = new(8, 30, 0);
-    public TimeSpan WorkEnd { get; set; } = new(18, 0, 0);
+    public TimeSpan WorkEnd { get; set; } = new(17, 30, 0);
     public bool LunchEnabled { get; set; } = true;
     public TimeSpan LunchStart { get; set; } = new(11, 50, 0);
     public TimeSpan LunchEnd { get; set; } = new(13, 30, 0);
     /// <summary>No drinking in the last N minutes before WorkEnd.</summary>
     public int NoDrinkBeforeEndMinutes { get; set; } = 30;
+    /// <summary>Minimum minutes between reminders. The calculator used a fixed 20 until this became configurable.</summary>
+    public int MinReminderGapMinutes { get; set; } = 20;
     /// <summary>Start of complete silence after work (also the end of evening push reminders).</summary>
     public TimeSpan QuietStart { get; set; } = new(23, 0, 0);
     public bool[] ActiveDays { get; set; } = [true, true, true, true, true, false, false];
-    // Phone push is PushWard only. The credential lives only in
-    // %LocalAppData%\WaterReminder\settings.json (never in the repo). Unknown keys in older
-    // settings.json files (for example the removed channel/ntfy fields) are ignored on load
-    // and are not written back.
+    // Phone push is PushWard only. The headless server reads the token from
+    // WATERREMINDER_PUSHWARD_TOKEN or from its data directory (never from the Windows client).
+    // The legacy WPF app still loads it from %LocalAppData%\WaterReminder\settings.json.
+    // Unknown keys in older settings.json files (removed ntfy / Pushover fields) are ignored
+    // on load and are not written back. Never commit the token.
     public bool MobilePushEnabled { get; set; } = true;
-    /// <summary>PushWard 集成密钥，形如 hlk_…；只保存在本机 settings.json。</summary>
+    /// <summary>PushWard integration token. Server data directory or environment only; the tray client never sees it.</summary>
     public string PushWardApiToken { get; set; } = "";
     public bool SoundEnabled { get; set; } = true;
     public bool AutoStart { get; set; } = true;

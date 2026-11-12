@@ -21,6 +21,9 @@
     <Using Remove="System.Drawing" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\WaterReminder.Core\WaterReminder.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
     <Resource Include="Assets\app.ico" />
     <Resource Include="Assets\drop.png" />
     <None Remove="Assets\waterdrop.png" />

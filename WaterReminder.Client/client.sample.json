@@ -1,0 +1,5 @@
+{
+  "serverUrl": "http://YOUR_VM:8787",
+  "apiToken": "",
+  "floatingWindow": true
+}

@@ -1,0 +1,23 @@
+[Unit]
+Description=Water Reminder headless service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=waterreminder
+Group=waterreminder
+WorkingDirectory=/opt/waterreminder
+Environment=DOTNET_ENVIRONMENT=Production
+Environment=TZ=Asia/Shanghai
+Environment=WATERREMINDER_DATA_DIR=/var/lib/waterreminder
+Environment=WATERREMINDER_PORT=8787
+EnvironmentFile=-/etc/waterreminder/waterreminder.env
+ExecStart=/usr/bin/dotnet /opt/waterreminder/WaterReminder.Server.dll
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

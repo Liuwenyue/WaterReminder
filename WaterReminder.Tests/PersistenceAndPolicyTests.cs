@@ -151,7 +151,7 @@ public sealed class PersistenceAndPolicyTests
     public void ReminderService_RoutesPhonePushToPushWardWhenEnabledAndConfigured(
         bool enabled, bool configured, bool expected)
         => Assert.Equal(expected,
-            ReminderService.ShouldPublishPushWard(new UserSettings { MobilePushEnabled = enabled }, configured));
+            ReminderRouting.ShouldPublishPushWard(new UserSettings { MobilePushEnabled = enabled }, configured));
 
     // ---------- settings page summary follows CalculateDynamic ----------
 
@@ -171,7 +171,7 @@ public sealed class PersistenceAndPolicyTests
         var text = PlanSummaryText.Describe(Mine(), new DailyRecord { Date = "2026-11-03" }, T(10, 0));
         Assert.Contains("工作杯 370 ml", text);
         Assert.Contains("间隔约", text);
-        Assert.Contains("工作时段仅桌面提醒", text);
+        Assert.Contains("工作时段桌面和手机会同时提醒", text);
         Assert.DoesNotContain("09:40", text);           // no fixed timetable
     }
 

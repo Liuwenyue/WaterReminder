@@ -92,6 +92,14 @@ public static class WaterCalculator
 
     public static readonly TimeSpan MinReminderGap = TimeSpan.FromMinutes(20);
 
+    /// <summary>Configured gap, or <see cref="MinReminderGap"/> when the stored value is missing.</summary>
+    public static TimeSpan GapOf(UserSettings s)
+    {
+        var minutes = s.MinReminderGapMinutes;
+        if (minutes <= 0) minutes = (int)MinReminderGap.TotalMinutes;
+        return TimeSpan.FromMinutes(minutes);
+    }
+
     /// <summary>Work-hours cup; falls back to the legacy single cup when the split field is unset.</summary>
     public static int WorkCupMl(UserSettings s)
         => s.WorkCupCapacityMl > 0 ? s.WorkCupCapacityMl : s.CupCapacityMl > 0 ? s.CupCapacityMl : 370;
@@ -112,10 +120,19 @@ public static class WaterCalculator
     public static bool ShouldShowDesktop(UserSettings s, DateTime now)
         => IsActiveDay(s, now) && !s.RemindersPaused && PhaseAt(s, now) == DayPhase.Working;
 
-    /// <summary>Phone push is allowed after work, until quiet hours; never during work or on rest days.</summary>
+    /// <summary>
+    /// Phone push goes out in every reminder window: work hours, and after work until quiet.
+    /// Lunch and the pre-end no-drink window are not reminder windows. After quiet hours,
+    /// and on rest days, nothing is sent. Desktop popups stay work-hours only.
+    /// </summary>
     public static bool ShouldSendMobilePush(UserSettings s, DateTime now)
-        => s.MobilePushEnabled && IsActiveDay(s, now) && !s.RemindersPaused
-           && now.TimeOfDay >= s.WorkEnd && now.TimeOfDay < s.QuietStart;
+    {
+        if (!s.MobilePushEnabled || !IsActiveDay(s, now) || s.RemindersPaused) return false;
+        var t = now.TimeOfDay;
+        if (t < s.WorkStart || t >= s.QuietStart) return false;
+        var phase = PhaseAt(s, now);
+        return phase is DayPhase.Working or DayPhase.AfterWork;
+    }
 
     /// <summary>Drinking minutes in [from, cutoff) excluding lunch.</summary>
     public static double AvailableMinutes(UserSettings s, DateTime from)
@@ -178,14 +195,15 @@ public static class WaterCalculator
         if (anchor >= cutoff) return new ReminderPlan(cups, TimeSpan.Zero, null, s.DailyGoalMl, 0);
 
         var available = AvailableMinutes(s, anchor);
+        var gap = GapOf(s);
         var interval = TimeSpan.FromMinutes(available / (cups + 0.5));
-        if (interval < MinReminderGap) interval = MinReminderGap;
+        if (interval < gap) interval = gap;
         var next = CeilToMinute(AddAvailable(s, anchor, interval.TotalMinutes));
         if (next >= cutoff)
         {
             // squeeze the last reminder in before the cutoff, but keep the minimum gap
             var latest = cutoff.AddMinutes(-5);
-            next = latest >= AddAvailable(s, anchor, MinReminderGap.TotalMinutes) ? latest : DateTime.MaxValue;
+            next = latest >= AddAvailable(s, anchor, gap.TotalMinutes) ? latest : DateTime.MaxValue;
             if (next == DateTime.MaxValue) return new ReminderPlan(cups, interval, null, s.DailyGoalMl, 0);
         }
         if (EffectiveLunch(s) is { } l)
@@ -218,14 +236,15 @@ public static class WaterCalculator
         if (anchor >= quiet) return new ReminderPlan(cups, TimeSpan.Zero, null, s.DailyGoalMl, 0);
 
         var available = (quiet - anchor).TotalMinutes;
+        var gap = GapOf(s);
         var interval = TimeSpan.FromMinutes(available / (cups + 0.5));
-        if (interval < MinReminderGap) interval = MinReminderGap;
+        if (interval < gap) interval = gap;
         var next = CeilToMinute(anchor + interval);
         if (next >= quiet)
         {
             // squeeze the last one in just before quiet hours, but keep the minimum gap
             var latest = quiet.AddMinutes(-5);
-            next = latest >= anchor + MinReminderGap ? latest : DateTime.MaxValue;
+            next = latest >= anchor + gap ? latest : DateTime.MaxValue;
             if (next == DateTime.MaxValue) return new ReminderPlan(cups, interval, null, s.DailyGoalMl, 0);
         }
 

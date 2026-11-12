@@ -1,40 +1,57 @@
 <p align="center"><a href="README.md">简体中文</a> | <b>English</b></p>
 
-# Water Reminder (Windows)
+# Water Reminder
 
-A WPF/.NET 8 desktop app that reminds you to drink water. It has a floating progress window, a system tray icon, workday reminders, pausing, local JSON storage, and launch at startup.
+The reminder rules run headless on Linux. A thin Windows tray app shows desktop toasts during work hours. The existing WPF app is not ported to Linux.
 
-## Features
+- **WaterReminder.Core** — schedule, cup sizes, PushWard, and records. No WPF.
+- **WaterReminder.Server** — small HTTP service and the source of truth for settings and today's record. Default port **8787**. Times are always **Asia/Shanghai**.
+- **WaterReminder.Client** — Windows tray plus the original desktop floating widget. It stores the server URL, the API token, and whether the widget is shown. The tray menu **设置** opens the original desktop settings window and writes the goal, cups, and schedule back to the server. It toasts during work hours and stays quiet after work ends.
+- **WaterReminder** — the original WPF window. It still runs on Windows by itself. Do not run it together with the server or reminders fire twice.
 
-- **Dynamic reminders**: Based on today's actual progress (amount left ÷ cup size), the remaining cups are spread evenly over the time left in the workday. If you're ahead, the next reminder moves later; if you're behind, reminders come more often (at least 20 minutes apart).
-- **Lunch break and end-of-day cutoff**: No reminders during lunch, and none in the last N minutes before you leave work (30 by default), so the last drink lands well before the end of the day.
-- **Compact mode**: Switch between the full window and a compact floating bar. Each mode remembers where you dragged it, and a window that ends up off-screen is pulled back into view.
-- **Quick correction**: Click the progress number to type in today's total directly.
-- Light/dark theme follows the system setting.
+The only phone channel is **PushWard** (a Notification Answer, action id `drink`, no url, no foreground). ntfy and Pushover were removed and stay removed.
 
-## Running
+## Reminder rules (all configurable)
 
-The published app is `publish\WaterReminder.exe` (a framework-dependent single file that needs the Windows Desktop Runtime 8.x; if 8.x is missing, a newer major version is used). Start it from the "喝水提醒" desktop shortcut or with `启动喝水提醒.cmd`. If the exe doesn't exist, the script publishes it with the bundled `dotnet\dotnet.exe` first.
+| Setting | Default |
+| --- | --- |
+| Daily goal | 3000 ml |
+| Work | 08:30–17:30 |
+| Lunch | 11:50–13:30 |
+| No drinks before work ends | 30 minutes |
+| Quiet hours | from 23:00 until the next workday |
+| Work cup / home cup | 370 ml / 800 ml |
+| Minimum gap | 20 minutes |
 
-## Building from source
+In a work-hour reminder window the server sends PushWard and the Windows client shows a toast. After `WorkEnd` and before `QuietStart` the phone is notified and the desktop stays silent. After quiet hours nothing is sent.
 
-You need Windows and the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0). The repository doesn't include the SDK or build output. `启动喝水提醒.cmd` uses `dotnet\dotnet.exe` from the repository when it's there, and otherwise falls back to `dotnet` on the system PATH.
+Copy stays short: title 「该喝水了」, body 「已喝 {已喝}/{目标} ml，建议 {建议} ml」, confirmation 「已记录 / 已记 {N} ml」. A phone records a drink with one tap on the notification action. The same `notification_id` (string or number) is stored once.
 
-```powershell
-git clone https://github.com/Liuwenyue/WaterReminder.git
-cd WaterReminder
-dotnet test .\WaterReminder.sln -c Release
-dotnet publish .\WaterReminder\WaterReminder.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=none -o .\publish
-.\publish\WaterReminder.exe
+## Build
+
+Requires the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
+
+```bash
+dotnet test ./WaterReminder.sln -c Release
+dotnet publish ./WaterReminder.Server/WaterReminder.Server.csproj -c Release -o ./publish-server
+dotnet run --project ./WaterReminder.Server -c Release -- --dry-run
 ```
 
-App data is stored in `%LocalAppData%\WaterReminder`. On first launch a setup wizard opens; after that, open Settings from the top-right of the floating window or from the system tray.
+Windows client:
 
-## Notifications
+```powershell
+dotnet publish .\WaterReminder.Client\WaterReminder.Client.csproj -c Release -o .\publish-client
+```
 
-During work hours the app uses Windows balloon notifications from the WinForms `NotifyIcon`, together with the floating window and a system sound. After work (18:00–23:00 by default) it stays quiet on the desktop and pushes to your phone through [ntfy](https://ntfy.sh) instead: enable "phone push" in Settings, copy the subscription topic shown there, and subscribe to it in the ntfy app on your iPhone. The「喝水了」button records one home cup (800 ml by default) and pushes an「已记录 … ml」confirmation, so reminders cannot loop.
+Deploy notes, the systemd unit, secrets, and the firewall (host iptables/nft **and** the Oracle Cloud security list or NSG) are in [DEPLOY.md](DEPLOY.md). PushWard button behavior is in [PUSHWARD.md](PUSHWARD.md).
 
-The computer must stay awake and running the app: reminders are sent by the PC, and the button callback is received by the PC as well. The ntfy topic and optional access token are stored only in `%LocalAppData%\WaterReminder\settings.json` and never committed to the repository. From 23:00 until the next workday's start, and all weekend, everything is silent.
+The PushWard token and the client API token stay in the server data directory or in environment variables. Do not commit `settings.json`, tokens, `client.json`, or backup folders. The Windows `client.json` has `serverUrl` and `apiToken` only.
+
+The original WPF app can still be published on Windows:
+
+```powershell
+dotnet publish .\WaterReminder\WaterReminder.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=none -o .\publish
+```
 
 ## License
 

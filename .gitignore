@@ -35,8 +35,14 @@ _screens/
 Thumbs.db
 Desktop.ini
 
-# App data (never commit personal settings / drink records)
-# PushWard API token lives only in %LocalAppData%\WaterReminder\settings.json
+# App data and secrets (never commit personal settings, drink records, or tokens).
+# PushWard token and the client API token live only in the server data directory
+# or in environment variables. The Windows client keeps server URL + API token
+# in %LocalAppData%\WaterReminderClient\client.json, which is also not committed.
 settings.json
 settings.json.bak
 daily-records.json
+client.json
+/data/
+WaterReminder.Server/data/
+*.token

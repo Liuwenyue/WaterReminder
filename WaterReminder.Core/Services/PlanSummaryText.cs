@@ -36,7 +36,7 @@ public static class PlanSummaryText
                  + $"约每 {FormatInterval(plan.Interval)} 一次，{s.QuietStart.ToString(@"hh\:mm")} 后免打扰。";
         }
 
-        // Working hours (including lunch and before work): desktop reminders only.
+        // Work hours: the server pushes to the phone and the Windows client shows a desktop toast.
         var desktop = plan.NextReminder switch
         {
             null => "今天不再提醒",
@@ -45,9 +45,11 @@ public static class PlanSummaryText
         };
         var text = $"还差 {remaining:N0} ml，约 {plan.TotalReminders} 次（工作杯 {WaterCalculator.WorkCupMl(s)} ml）；{desktop}";
         if (plan.Interval > TimeSpan.Zero) text += $"，间隔约 {FormatInterval(plan.Interval)}";
-        text += "。工作时段仅桌面提醒";
+        text += "。工作时段桌面和手机会同时提醒";
         if (s.MobilePushEnabled)
-            text += $"；下班后若未达标，按家庭杯 {WaterCalculator.HomeCupMl(s)} ml 用手机提醒";
+            text += $"；下班后若未达标，按家庭杯 {WaterCalculator.HomeCupMl(s)} ml 只提醒手机";
+        else
+            text += "；手机推送已关闭，下班后不再提醒";
         return text + "。";
     }
 
