@@ -147,9 +147,8 @@ public sealed class DynamicReminderTests
         Assert.Equal(0, plan.SuggestedMl);
 
         var during = new DateTime(2026, 11, 3, 9, 0, 0);
-        var line = WaterCalculator.StatusLine(s, new DailyRecord(), plan, during, compact: true);
-        Assert.Equal("下次提醒 09:34 · 建议 370 ml", line);
-        Assert.Equal(line, WaterCalculator.StatusLine(s, new DailyRecord(), plan, during, compact: false));
+        Assert.Equal("下次 09:34 · 370 ml", WaterCalculator.StatusLine(s, new DailyRecord(), plan, during, compact: true));
+        Assert.Equal("下次提醒 09:34 · 建议 370 ml", WaterCalculator.StatusLine(s, new DailyRecord(), plan, during, compact: false));
     }
 
     [Fact]

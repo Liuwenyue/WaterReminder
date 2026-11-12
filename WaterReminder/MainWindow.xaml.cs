@@ -23,15 +23,10 @@ public partial class MainWindow : Window
     public double DisplayMl { get => (double)GetValue(DisplayMlProperty); set => SetValue(DisplayMlProperty, value); }
     public bool IsDemo { get; init; }
 
-    // Expanded stays 352. Compact is wider so "下次提醒 16:19 · 建议 370 ml" fits on one line.
-    private const double ExpandedWindowWidth = 352;
-    private const double CompactWindowWidth = 420;
-
     public MainWindow(AppServices services)
     {
         InitializeComponent();
         _services = services;
-        Width = services.Settings.CompactMode ? CompactWindowWidth : ExpandedWindowWidth;
         Loaded += (_, _) => { ApplyMode(); PlaceWindow(); RefreshView(); };
         _refreshTimer.Tick += (_, _) => RefreshView();
         _refreshTimer.Start();
@@ -95,11 +90,12 @@ public partial class MainWindow : Window
         var before = new ScreenRect(Left, Top, ActualWidth, ActualHeight);
         ExpandedPanel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         CompactPanel.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
-        Width = compact ? CompactWindowWidth : ExpandedWindowWidth;
-        if (!IsLoaded || IsDemo || double.IsNaN(Left) || double.IsNaN(Top)) return;
-        UpdateLayout();
-        // compact -> back to where the user put the compact window; expanded -> its own spot, or grow upward
-        (Left, Top) = WindowPlacement.Resolve(_services.Settings, compact, ActualWidth, ActualHeight, WorkAreas(), before);
+        if (IsLoaded && !IsDemo && !double.IsNaN(Left) && !double.IsNaN(Top))
+        {
+            UpdateLayout();
+            // compact -> back to where the user put the compact window; expanded -> its own spot, or grow upward
+            (Left, Top) = WindowPlacement.Resolve(_services.Settings, compact, ActualWidth, ActualHeight, WorkAreas(), before);
+        }
     }
 
     // ---------- view ----------

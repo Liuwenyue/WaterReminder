@@ -16,6 +16,8 @@ public sealed class StatusResponse
     public bool PushWindow { get; set; }
     public bool RemindersPaused { get; set; }
     public string StatusText { get; set; } = "";
+    /// <summary>One-line status for the 352-wide compact pill. Expanded view uses <see cref="StatusText"/>.</summary>
+    public string CompactStatusText { get; set; } = "";
     public int WorkCupMl { get; set; }
     public int HomeCupMl { get; set; }
     public string WorkStart { get; set; } = "";

@@ -75,7 +75,7 @@ public sealed class EveningPushTests
         var now = T(18, 0);
         var p = P(rec, now);
         Assert.Equal("下次提醒 19:26 · 建议 800 ml", WaterCalculator.StatusLine(Settings(), rec, p, now, false));
-        Assert.Equal("下次提醒 19:26 · 建议 800 ml", WaterCalculator.StatusLine(Settings(), rec, p, now, true));
+        Assert.Equal("下次 19:26 · 800 ml", WaterCalculator.StatusLine(Settings(), rec, p, now, true));
     }
 
     [Fact]

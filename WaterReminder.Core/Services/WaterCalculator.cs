@@ -298,8 +298,10 @@ public static class WaterCalculator
         if (cap <= 0) cap = remainingNow;
         var cup = Math.Min(CurrentCupMl(s, now), cap);
         if (plan.SuggestedMl > 0) return compact ? $"该喝水了 · {plan.SuggestedMl} ml" : $"该喝水了，建议现在补充 {plan.SuggestedMl} ml";
-        // Compact and full share this line so the suggested amount stays visible in the floating pill.
-        return $"下次提醒 {plan.NextReminder:HH:mm} · 建议 {cup} ml";
+        // Compact pill is 352 wide: time and amount, without the longer expanded wording.
+        return compact
+            ? $"下次 {plan.NextReminder:HH:mm} · {cup} ml"
+            : $"下次提醒 {plan.NextReminder:HH:mm} · 建议 {cup} ml";
     }
 
     /// <summary>The most recent reminder time at or before <paramref name="now"/>, if any.</summary>

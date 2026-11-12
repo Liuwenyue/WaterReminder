@@ -399,6 +399,7 @@ public sealed class ReminderEngine : IDisposable
             PushWindow = WaterCalculator.ShouldSendMobilePush(_settings, now),
             RemindersPaused = _settings.RemindersPaused,
             StatusText = WaterCalculator.StatusLine(_settings, _progress.Today, plan, now, compact: false),
+            CompactStatusText = WaterCalculator.StatusLine(_settings, _progress.Today, plan, now, compact: true),
             WorkCupMl = WaterCalculator.WorkCupMl(_settings),
             HomeCupMl = WaterCalculator.HomeCupMl(_settings),
             WorkStart = Clock(_settings.WorkStart),
