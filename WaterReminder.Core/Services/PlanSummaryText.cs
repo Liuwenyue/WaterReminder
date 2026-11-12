@@ -36,18 +36,31 @@ public static class PlanSummaryText
                  + $"约每 {FormatInterval(plan.Interval)} 一次，{s.QuietStart.ToString(@"hh\:mm")} 后免打扰。";
         }
 
-        // Work hours: the server pushes to the phone and the Windows client shows a desktop toast.
+        // Work hours: pace the work portion only. One home cup stays for the evening plan.
+        var workLeft = WaterCalculator.WorkPortionMl(s, remaining);
+        var home = WaterCalculator.HomeCupMl(s);
+        var reservesEvening = s.QuietStart > s.WorkEnd;
         var desktop = plan.NextReminder switch
         {
+            null when workLeft <= 0 && reservesEvening => "下班后再提醒",
             null => "今天不再提醒",
             _ when plan.SuggestedMl > 0 => "现在该喝水了",
             { } next => $"下次提醒 {next:HH:mm}",
         };
-        var text = $"还差 {remaining:N0} ml，约 {plan.TotalReminders} 次（工作杯 {WaterCalculator.WorkCupMl(s)} ml）；{desktop}";
+        string text;
+        if (workLeft <= 0 && reservesEvening)
+            text = $"还差 {remaining:N0} ml，工作时段不再提醒，留给下班后";
+        else
+        {
+            text = $"还差 {remaining:N0} ml，工作时段约 {plan.TotalReminders} 次（工作杯 {WaterCalculator.WorkCupMl(s)} ml";
+            if (reservesEvening) text += $"，预留家庭杯 {home:N0} ml 到下班后";
+            text += "）";
+        }
+        text += $"；{desktop}";
         if (plan.Interval > TimeSpan.Zero) text += $"，间隔约 {FormatInterval(plan.Interval)}";
         text += "。工作时段桌面和手机会同时提醒";
         if (s.MobilePushEnabled)
-            text += $"；下班后若未达标，按家庭杯 {WaterCalculator.HomeCupMl(s)} ml 只提醒手机";
+            text += $"；下班后若未达标，按家庭杯 {home:N0} ml 只提醒手机";
         else
             text += "；手机推送已关闭，下班后不再提醒";
         return text + "。";

@@ -30,10 +30,15 @@ internal partial class MainWindow : Window
 
     internal double DisplayMl { get => (double)GetValue(DisplayMlProperty); set => SetValue(DisplayMlProperty, value); }
 
+    // Expanded stays 352. Compact is wider so "下次提醒 16:19 · 建议 370 ml" fits on one line.
+    private const double ExpandedWindowWidth = 352;
+    private const double CompactWindowWidth = 420;
+
     internal MainWindow(ReminderApiClient api, ClientConfig config, Action openSettings)
     {
         ClientTheme.Ensure();
         InitializeComponent();
+        Width = config.CompactMode ? CompactWindowWidth : ExpandedWindowWidth;
         _api = api;
         _config = config;
         _openSettings = openSettings;
@@ -97,12 +102,11 @@ internal partial class MainWindow : Window
         var before = new ScreenRect(Left, Top, ActualWidth, ActualHeight);
         ExpandedPanel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         CompactPanel.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
-        if (IsLoaded && !double.IsNaN(Left) && !double.IsNaN(Top))
-        {
-            UpdateLayout();
-            var settings = _config.Display().ToSettings();
-            (Left, Top) = WindowPlacement.Resolve(settings, compact, ActualWidth, ActualHeight, WorkAreas(), before);
-        }
+        Width = compact ? CompactWindowWidth : ExpandedWindowWidth;
+        if (!IsLoaded || double.IsNaN(Left) || double.IsNaN(Top)) return;
+        UpdateLayout();
+        var settings = _config.Display().ToSettings();
+        (Left, Top) = WindowPlacement.Resolve(settings, compact, ActualWidth, ActualHeight, WorkAreas(), before);
     }
 
     private async Task RefreshAsync()

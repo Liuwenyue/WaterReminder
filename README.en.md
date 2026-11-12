@@ -23,7 +23,7 @@ Phone reminders use **PushWard**.
 | Work cup / home cup | 370 ml / 800 ml |
 | Minimum gap | 20 minutes |
 
-Nothing is sent during lunch or in the no-drink window before work ends. Through the rest of the workday the server sends PushWard and the Windows client shows a desktop toast. After work ends and before quiet hours, reminders go to the phone and the desktop stays quiet. After quiet hours, nothing is sent.
+During work hours the schedule covers only the part of the daily goal meant for the office, and leaves one home cup (800 ml by default) for the evening. With the default 3000 ml goal that is about six work-cup reminders, not the whole day packed into work hours. Nothing is sent during lunch or in the no-drink window before work ends. Through the rest of the workday the server sends PushWard and the Windows client shows a desktop toast. After work, if the goal is still short, reminders use the home cup on the phone and the desktop stays quiet. After quiet hours, nothing is sent.
 
 Copy stays short: title 「该喝水了」, body 「已喝 {已喝}/{目标} ml，建议 {建议} ml」, confirmation 「已记录 / 已记 {N} ml」. On the phone, one tap on the notification records the drink and does not open a browser.
 
