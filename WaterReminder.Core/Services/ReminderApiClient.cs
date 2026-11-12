@@ -6,8 +6,9 @@ namespace WaterReminder.Services;
 
 public readonly record struct ApiResult<T>(bool Ok, int StatusCode, T? Value)
 {
+    public string? Error { get; init; }
     public static ApiResult<T> Success(T value) => new(true, 200, value);
-    public static ApiResult<T> Fail(int statusCode) => new(false, statusCode, default);
+    public static ApiResult<T> Fail(int statusCode, string? error = null) => new(false, statusCode, default) { Error = error };
 }
 
 /// <summary>
@@ -39,6 +40,25 @@ public sealed class ReminderApiClient : IDisposable
 
     public Task<ApiResult<ClientSettingsResponse>> GetSettingsAsync(CancellationToken ct = default)
         => ReadAsync<ClientSettingsResponse>("api/settings", ct);
+
+    public async Task<ApiResult<ClientSettingsResponse>> SaveSettingsAsync(SettingsUpdate update, CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await _http.PutAsJsonAsync("api/settings", update, Json, ct).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                return ApiResult<ClientSettingsResponse>.Fail((int)response.StatusCode, ReadError(body));
+            var value = JsonSerializer.Deserialize<ClientSettingsResponse>(body, Json);
+            return value is null
+                ? ApiResult<ClientSettingsResponse>.Fail((int)response.StatusCode)
+                : ApiResult<ClientSettingsResponse>.Success(value);
+        }
+        catch
+        {
+            return ApiResult<ClientSettingsResponse>.Fail(0);
+        }
+    }
 
     public async Task<ApiResult<DrinkResponse>> LogDesktopDrinkAsync(CancellationToken ct = default)
     {
@@ -76,15 +96,33 @@ public sealed class ReminderApiClient : IDisposable
         try
         {
             using var response = await _http.GetAsync(path, ct).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
-                return ApiResult<T>.Fail((int)response.StatusCode);
-            var value = await response.Content.ReadFromJsonAsync<T>(Json, ct).ConfigureAwait(false);
-            return value is null ? ApiResult<T>.Fail((int)response.StatusCode) : ApiResult<T>.Success(value);
+                return ApiResult<T>.Fail((int)response.StatusCode, ReadError(body));
+            var value = JsonSerializer.Deserialize<T>(body, Json);
+            return value is null
+                ? ApiResult<T>.Fail((int)response.StatusCode, ReadError(body))
+                : ApiResult<T>.Success(value);
         }
         catch
         {
             return ApiResult<T>.Fail(0);
         }
+    }
+
+    private static string? ReadError(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("error", out var error)
+                && error.ValueKind == JsonValueKind.String)
+                return error.GetString();
+        }
+        catch (JsonException) { }
+        return null;
     }
 
     public void Dispose()

@@ -2,6 +2,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -9,7 +10,12 @@
     <AssemblyName>WaterReminder.Client</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\WaterReminder.Core\WaterReminder.Core.csproj" />
+    <Resource Include="Assets\drop.png" />
+    <Resource Include="Assets\app.ico" />
     <None Include="client.sample.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

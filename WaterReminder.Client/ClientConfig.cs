@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Json;
 
 namespace WaterReminder.Client;
@@ -23,8 +24,10 @@ internal sealed class ClientConfig
             throw new InvalidOperationException("找不到配置文件。请复制 client.sample.json 为 client.json，并填写 serverUrl 和 apiToken。");
 
         var json = File.ReadAllText(path);
-        var config = JsonSerializer.Deserialize<ClientConfig>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))
-            ?? throw new InvalidOperationException("配置文件是空的。");
+        var loaded = JsonSerializer.Deserialize<ClientConfig>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        if (loaded is null)
+            throw new InvalidOperationException("配置文件是空的。");
+        var config = loaded;
 
         if (string.IsNullOrWhiteSpace(config.ServerUrl) || string.IsNullOrWhiteSpace(config.ApiToken))
             throw new InvalidOperationException("请在 client.json 里填写 serverUrl 和 apiToken。");

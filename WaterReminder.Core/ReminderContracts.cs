@@ -72,3 +72,21 @@ public sealed class AckRequest
 {
     public string? Id { get; set; }
 }
+
+/// <summary>Fields the desktop settings window may change. No credentials.</summary>
+public sealed class SettingsUpdate
+{
+    public int DailyGoalMl { get; set; }
+    public int WorkCupMl { get; set; }
+    public int HomeCupMl { get; set; }
+    public string WorkStart { get; set; } = "";
+    public string WorkEnd { get; set; } = "";
+    public bool LunchEnabled { get; set; }
+    public string LunchStart { get; set; } = "";
+    public string LunchEnd { get; set; } = "";
+    public int NoDrinkBeforeEndMinutes { get; set; }
+    public string QuietStart { get; set; } = "";
+    public int MinReminderGapMinutes { get; set; }
+    public bool MobilePushEnabled { get; set; }
+    public bool[] ActiveDays { get; set; } = [];
+}

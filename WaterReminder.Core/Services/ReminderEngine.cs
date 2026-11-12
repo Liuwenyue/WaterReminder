@@ -134,7 +134,7 @@ public sealed class ReminderEngine : IDisposable
                 LunchEnd = Clock(_settings.LunchEnd),
                 NoDrinkBeforeEndMinutes = _settings.NoDrinkBeforeEndMinutes,
                 QuietStart = Clock(_settings.QuietStart),
-                MinReminderGapMinutes = (int)WaterCalculator.MinReminderGap.TotalMinutes,
+                MinReminderGapMinutes = _settings.MinReminderGapMinutes,
                 MobilePushEnabled = _settings.MobilePushEnabled,
                 ActiveDays = (bool[])_settings.ActiveDays.Clone(),
             };
@@ -167,6 +167,23 @@ public sealed class ReminderEngine : IDisposable
             var now = RefreshLocked();
             var amount = WaterCalculator.CurrentCupMl(_settings, now);
             return _progress.Drink(amount, PushWardMessageBuilder.RecordSource);
+        }
+    }
+
+    /// <summary>Persists reminder fields and applies them to the running schedule. The phone token is kept as it was.</summary>
+    public bool TryUpdateSettings(SettingsUpdate update, out string? error)
+    {
+        lock (_gate)
+        {
+            var fresh = _storage.LoadSettings();
+            var fileToken = fresh.PushWardApiToken;
+            if (!SettingsEditor.TryApply(fresh, update, out error)) return false;
+            fresh.PushWardApiToken = string.IsNullOrWhiteSpace(_pushToken?.Invoke()) ? fileToken : "";
+            _storage.SaveSettings(fresh);
+            ApplyOverlay(fresh);
+            Copy(fresh, _settings);
+            _progress.SettingsChanged();
+            return true;
         }
     }
 
@@ -296,7 +313,7 @@ public sealed class ReminderEngine : IDisposable
             LunchStart = Clock(_settings.LunchStart),
             LunchEnd = Clock(_settings.LunchEnd),
             QuietStart = Clock(_settings.QuietStart),
-            MinReminderGapMinutes = (int)WaterCalculator.MinReminderGap.TotalMinutes,
+            MinReminderGapMinutes = _settings.MinReminderGapMinutes,
             DesktopAlert = show && _pendingDesktop is { } alert
                 ? new DesktopAlertResponse
                 {
@@ -323,6 +340,7 @@ public sealed class ReminderEngine : IDisposable
         to.LunchStart = from.LunchStart;
         to.LunchEnd = from.LunchEnd;
         to.NoDrinkBeforeEndMinutes = from.NoDrinkBeforeEndMinutes;
+        to.MinReminderGapMinutes = from.MinReminderGapMinutes;
         to.QuietStart = from.QuietStart;
         to.ActiveDays = from.ActiveDays is { Length: 7 } days ? (bool[])days.Clone() : [true, true, true, true, true, false, false];
         to.MobilePushEnabled = from.MobilePushEnabled;

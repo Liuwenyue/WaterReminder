@@ -49,6 +49,17 @@ public static class ServerHost
 
         app.MapGet("/api/status", (ReminderEngine e) => Results.Ok(e.Status()));
         app.MapGet("/api/settings", (ReminderEngine e) => Results.Ok(e.ClientSettings()));
+        app.MapPut("/api/settings", async (ReminderEngine e, HttpRequest request) =>
+        {
+            string body;
+            using (var reader = new StreamReader(request.Body))
+                body = await reader.ReadToEndAsync();
+            if (!SettingsEditor.TryParse(body, out var update, out var error) || update is null)
+                return Results.BadRequest(new { error = error ?? SettingsEditor.Unreadable });
+            if (!e.TryUpdateSettings(update, out error))
+                return Results.BadRequest(new { error });
+            return Results.Ok(e.ClientSettings());
+        });
 
         app.MapPost("/api/drinks", async (ReminderEngine e, HttpRequest request) =>
         {

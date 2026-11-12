@@ -1,3 +1,6 @@
+using System.IO;
+using System.Windows.Forms;
+
 namespace WaterReminder.Client;
 
 internal static class Program
@@ -28,7 +31,7 @@ internal static class Program
     private static string ResolvePath(string[] args)
     {
         var fromArgs = args.FirstOrDefault(a => a.EndsWith(".json", StringComparison.OrdinalIgnoreCase));
-        if (!string.IsNullOrWhiteSpace(fromArgs)) return fromArgs;
+        if (fromArgs is { Length: > 0 }) return fromArgs;
         var besideExe = Path.Combine(AppContext.BaseDirectory, "client.json");
         if (File.Exists(besideExe)) return besideExe;
         return ClientConfig.DefaultPath();

@@ -78,6 +78,8 @@ public sealed class StorageService
         // Keep the legacy field in sync so old code/JSON still sees the work cup.
         s.CupCapacityMl = s.WorkCupCapacityMl;
 
+        if (s.MinReminderGapMinutes <= 0) s.MinReminderGapMinutes = (int)WaterCalculator.MinReminderGap.TotalMinutes;
+        s.MinReminderGapMinutes = Math.Clamp(s.MinReminderGapMinutes, 5, 180);
         if (s.ActiveDays is null || s.ActiveDays.Length != 7) s.ActiveDays = [true, true, true, true, true, false, false];
         s.PushWardApiToken = (s.PushWardApiToken ?? "").Trim();
         // Removed channel/ntfy/Pushover keys in an old settings.json are simply ignored by

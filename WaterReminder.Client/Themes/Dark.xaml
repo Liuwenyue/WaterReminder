@@ -1,0 +1,37 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Color x:Key="ShadowColor">#000000</Color>
+  <SolidColorBrush x:Key="WindowBg" Color="#1F2329"/>
+  <SolidColorBrush x:Key="SurfaceAlt" Color="#282D34"/>
+  <SolidColorBrush x:Key="Stroke" Color="#343A42"/>
+  <SolidColorBrush x:Key="StrokeStrong" Color="#4A535D"/>
+  <SolidColorBrush x:Key="TextPrimary" Color="#F1F4F8"/>
+  <SolidColorBrush x:Key="TextSecondary" Color="#AEB8C4"/>
+  <SolidColorBrush x:Key="TextTertiary" Color="#7E8995"/>
+  <SolidColorBrush x:Key="Accent" Color="#2F8FEA"/>
+  <SolidColorBrush x:Key="AccentHover" Color="#45A0F2"/>
+  <SolidColorBrush x:Key="AccentPressed" Color="#2479CC"/>
+  <SolidColorBrush x:Key="AccentSoft" Color="#1C3550"/>
+  <SolidColorBrush x:Key="AccentSoftHover" Color="#244263"/>
+  <SolidColorBrush x:Key="AccentText" Color="#7CC0FA"/>
+  <SolidColorBrush x:Key="OnAccent" Color="#FFFFFF"/>
+  <SolidColorBrush x:Key="RingTrack" Color="#313B46"/>
+  <LinearGradientBrush x:Key="RingFill" StartPoint="0,0" EndPoint="1,1">
+    <GradientStop Color="#6CCBFA" Offset="0"/>
+    <GradientStop Color="#2F8FEA" Offset="1"/>
+  </LinearGradientBrush>
+  <LinearGradientBrush x:Key="RingDone" StartPoint="0,0" EndPoint="1,1">
+    <GradientStop Color="#6BE3A6" Offset="0"/>
+    <GradientStop Color="#26B56C" Offset="1"/>
+  </LinearGradientBrush>
+  <SolidColorBrush x:Key="Success" Color="#5AD596"/>
+  <SolidColorBrush x:Key="SuccessSoft" Color="#1C3A2B"/>
+  <SolidColorBrush x:Key="Warning" Color="#F2B54B"/>
+  <SolidColorBrush x:Key="WarningSoft" Color="#3D3020"/>
+  <SolidColorBrush x:Key="Danger" Color="#FF7B7E"/>
+  <SolidColorBrush x:Key="DangerSoft" Color="#43262A"/>
+  <SolidColorBrush x:Key="ControlBg" Color="#2A2F36"/>
+  <SolidColorBrush x:Key="ControlHover" Color="#323840"/>
+  <SolidColorBrush x:Key="ControlPressed" Color="#3A414A"/>
+  <SolidColorBrush x:Key="SwitchOff" Color="#8A95A1"/>
+</ResourceDictionary>

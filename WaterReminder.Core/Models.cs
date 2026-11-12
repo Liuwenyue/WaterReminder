@@ -18,6 +18,8 @@ public sealed class UserSettings
     public TimeSpan LunchEnd { get; set; } = new(13, 30, 0);
     /// <summary>No drinking in the last N minutes before WorkEnd.</summary>
     public int NoDrinkBeforeEndMinutes { get; set; } = 30;
+    /// <summary>Minimum minutes between reminders. The calculator used a fixed 20 until this became configurable.</summary>
+    public int MinReminderGapMinutes { get; set; } = 20;
     /// <summary>Start of complete silence after work (also the end of evening push reminders).</summary>
     public TimeSpan QuietStart { get; set; } = new(23, 0, 0);
     public bool[] ActiveDays { get; set; } = [true, true, true, true, true, false, false];

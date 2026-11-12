@@ -32,6 +32,7 @@ The process listens on **TCP 8787** (`WATERREMINDER_PORT`, bind `0.0.0.0` via `W
 
 - `GET /api/status` — today, next reminder, and a desktop alert when one is due
 - `GET /api/settings` — goal, cups, and the clock settings (no secrets)
+- `PUT /api/settings` — save those fields. The running process reloads them immediately; do not restart systemd
 - `POST /api/drinks` — log one work cup (`{"source":"desktop"}`)
 - `POST /api/desktop-ack` — the tray client has shown the toast (`{"id":"..."}`)
 
@@ -52,7 +53,7 @@ sudo chown -R waterreminder:waterreminder /var/lib/waterreminder
 sudo chmod 700 /var/lib/waterreminder /etc/waterreminder
 ```
 
-Edit `/etc/waterreminder/waterreminder.env` on the server and set the two tokens. Optional `settings.json` in `/var/lib/waterreminder` overrides the defaults (goal 3000 ml, work 08:30–17:30, lunch 11:50–13:30, quiet 23:00, work cup 370 ml, home cup 800 ml, minimum gap 20 minutes, no drinks in the last 30 minutes before work ends). Leave the PushWard token out of that file when it is already in the environment.
+Edit `/etc/waterreminder/waterreminder.env` on the server and set the two tokens. Reminder values live in `/var/lib/waterreminder/settings.json`. Change them from the Windows client (tray menu **设置**), not by editing that file and not by restarting the service. Leave the PushWard token out of `settings.json` when it is already in the environment. The settings window cannot show or change either token.
 
 ```bash
 sudo cp deploy/waterreminder.service /etc/systemd/system/waterreminder.service
@@ -95,8 +96,14 @@ dotnet publish .\WaterReminder.Client\WaterReminder.Client.csproj -c Release -o 
 
 Put `client.json` next to the exe or at `%LocalAppData%\WaterReminderClient\client.json`. During work hours the tray shows a toast (`该喝水了` / `已喝 {已喝}/{目标} ml，建议 {建议} ml`) and **记录一杯** logs the work cup. After work end it does not show desktop toasts. Quiet hours stay silent. Phone recording is the PushWard **喝水了** action (no URL, no browser); the server polls `GET /notifications/answers` and dedupes `notification_id` whether it arrives as a string or a number.
 
+## Settings
+
+Open the tray icon and choose **设置**. The window is the original desktop settings screen. It loads `GET /api/settings` and saves with `PUT /api/settings`, using the API token already in `client.json` (sent as a header, not placed in the URL). Editable fields: daily goal, work cup, home cup, work start, work end, lunch on/off and times, minutes without a drink before work ends, minimum gap, quiet start, weekdays, and whether phone push is enabled. Saving writes `/var/lib/waterreminder/settings.json` and the scheduler uses the new values immediately. The window has no token fields. A request that includes a token is rejected and does not change the file.
+
 ## 部署说明（简体中文）
 
 服务跑在 Linux 上，提醒时间固定为 **Asia/Shanghai**。默认监听 **8787**。PushWard 令牌和客户端 API 令牌只放在服务器的环境变量或数据目录（`/var/lib/waterreminder`），不要写入仓库或 Windows 客户端。客户端只配置服务器地址和 API 令牌。
+
+自定义数值在 Windows 托盘菜单「设置」里改。窗口沿用原来的桌面设置界面，读取并保存到服务器的 `settings.json`（`PUT /api/settings`），保存后马上生效，不用重启 systemd。可改：每日目标、工作杯、家庭杯、上下班、午休、下班前不喝水、最小间隔、免打扰、工作日，以及是否开启手机推送。窗口里不能看也不能改任何令牌。
 
 必须同时在主机防火墙（iptables 或 nft）和 Oracle Cloud 的安全列表（security list）或 NSG 里放行 TCP 8787。只新增允许规则，不要清空现有规则，也不要改 SSH。仓库里没有防火墙脚本。systemd 示例见 `deploy/waterreminder.service`。

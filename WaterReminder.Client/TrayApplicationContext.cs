@@ -1,4 +1,7 @@
 using System.Drawing;
+using System.Globalization;
+using System.Windows.Forms;
+using WaterReminder;
 using WaterReminder.Services;
 
 namespace WaterReminder.Client;
@@ -31,6 +34,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.Add("今天状态", null, async (_, _) => await RefreshAsync(announceStatus: true));
         menu.Items.Add("记录一杯", null, async (_, _) => await LogDrinkAsync());
+        menu.Items.Add("设置", null, (_, _) =>
+        {
+            var ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+            _ = OpenSettingsAsync(ui);
+        });
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => ExitThread());
         _tray.ContextMenuStrip = menu;
         _tray.BalloonTipClicked += async (_, _) =>
@@ -44,6 +53,56 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _timer.Tick += async (_, _) => await RefreshAsync(announceStatus: false);
         _timer.Start();
         _ = RefreshAsync(announceStatus: false);
+    }
+
+    private async Task OpenSettingsAsync(SynchronizationContext ui)
+    {
+        ClientSettingsResponse? current = null;
+        var now = DateTime.Now;
+        var consumed = 0;
+        string? error = null;
+        try
+        {
+            var settings = await _api.GetSettingsAsync().ConfigureAwait(false);
+            if (!settings.Ok || settings.Value is null)
+                error = settings.Error ?? "无法读取设置";
+            else
+            {
+                current = settings.Value;
+                var status = await _api.GetStatusAsync().ConfigureAwait(false);
+                if (status.Ok && status.Value is not null
+                    && DateTime.TryParse(status.Value.Now, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+                {
+                    now = parsed;
+                    consumed = status.Value.ConsumedMl;
+                }
+            }
+        }
+        catch
+        {
+            error = "无法读取设置";
+        }
+
+        ui.Send(_ =>
+        {
+            if (error is not null || current is null)
+            {
+                ShowBalloon(error ?? "无法读取设置", "喝水提醒", logsDrink: false);
+                return;
+            }
+
+            var window = new SettingsWindow(current, update => SaveSettingsAsync(update, ui), now, consumed);
+            window.ShowDialog();
+        }, null);
+    }
+
+    private async Task<string?> SaveSettingsAsync(SettingsUpdate update, SynchronizationContext ui)
+    {
+        var saved = await _api.SaveSettingsAsync(update).ConfigureAwait(false);
+        if (!saved.Ok)
+            return string.IsNullOrWhiteSpace(saved.Error) ? "保存失败" : saved.Error;
+        ui.Post(_ => _ = RefreshAsync(announceStatus: false), null);
+        return null;
     }
 
     private async Task RefreshAsync(bool announceStatus)
