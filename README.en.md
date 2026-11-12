@@ -2,14 +2,14 @@
 
 # Water Reminder
 
-The reminder rules run headless on Linux. A thin Windows tray app shows desktop toasts during work hours. The existing WPF app is not ported to Linux.
+Reminder rules run headless on Linux. The Windows client keeps the original floating widget, settings, and today's records, and shows desktop toasts during work hours. After work, reminders go to the phone through PushWard.
 
-- **WaterReminder.Core** — schedule, cup sizes, PushWard, and records. No WPF.
-- **WaterReminder.Server** — small HTTP service and the source of truth for settings and today's record. Default port **8787**. Times are always **Asia/Shanghai**.
-- **WaterReminder.Client** — Windows tray plus the original desktop floating widget. It stores the server URL, the API token, and whether the widget is shown. The tray menu **设置** opens the original desktop settings window and writes the goal, cups, and schedule back to the server. It toasts during work hours and stays quiet after work ends.
-- **WaterReminder** — the original WPF window. It still runs on Windows by itself. Do not run it together with the server or reminders fire twice.
+- **WaterReminder.Core** — schedule, cup sizes, PushWard, and records.
+- **WaterReminder.Server** — small HTTP service on a VM, and the source of truth for settings and today's record. Default port **8787**. Times are always **Asia/Shanghai**.
+- **WaterReminder.Client** — Windows tray, plus the original floating widget, settings, and today's records. It stores the server URL, the API token, and whether the widget is shown. The tray menu **设置** opens the desktop settings window and writes the goal, cups, schedule, and workdays back to the server. It toasts 「该喝水了」 during work hours and stays quiet after work ends.
+- **WaterReminder** — the original WPF app. It still runs on Windows by itself. Running it together with the server sends duplicate reminders.
 
-The only phone channel is **PushWard** (a Notification Answer, action id `drink`, no url, no foreground). ntfy and Pushover were removed and stay removed.
+Phone reminders use **PushWard**.
 
 ## Reminder rules (all configurable)
 
@@ -23,9 +23,9 @@ The only phone channel is **PushWard** (a Notification Answer, action id `drink`
 | Work cup / home cup | 370 ml / 800 ml |
 | Minimum gap | 20 minutes |
 
-In a work-hour reminder window the server sends PushWard and the Windows client shows a toast. After `WorkEnd` and before `QuietStart` the phone is notified and the desktop stays silent. After quiet hours nothing is sent.
+Nothing is sent during lunch or in the no-drink window before work ends. Through the rest of the workday the server sends PushWard and the Windows client shows a desktop toast. After work ends and before quiet hours, reminders go to the phone and the desktop stays quiet. After quiet hours, nothing is sent.
 
-Copy stays short: title 「该喝水了」, body 「已喝 {已喝}/{目标} ml，建议 {建议} ml」, confirmation 「已记录 / 已记 {N} ml」. A phone records a drink with one tap on the notification action. The same `notification_id` (string or number) is stored once.
+Copy stays short: title 「该喝水了」, body 「已喝 {已喝}/{目标} ml，建议 {建议} ml」, confirmation 「已记录 / 已记 {N} ml」. On the phone, one tap on the notification records the drink and does not open a browser.
 
 ## Build
 
@@ -43,9 +43,9 @@ Windows client:
 dotnet publish .\WaterReminder.Client\WaterReminder.Client.csproj -c Release -o .\publish-client
 ```
 
-Deploy notes, the systemd unit, secrets, and the firewall (host iptables/nft **and** the Oracle Cloud security list or NSG) are in [DEPLOY.md](DEPLOY.md). PushWard button behavior is in [PUSHWARD.md](PUSHWARD.md).
+Deployment, the systemd unit, secrets, and the firewall are in [DEPLOY.md](DEPLOY.md). PushWard button behavior is in [PUSHWARD.md](PUSHWARD.md).
 
-The PushWard token and the client API token stay in the server data directory or in environment variables. Do not commit `settings.json`, tokens, `client.json`, or backup folders. The Windows `client.json` has `serverUrl` and `apiToken` only.
+The PushWard token and the client API token stay in the server data directory or in environment variables. Do not commit `settings.json` or tokens.
 
 The original WPF app can still be published on Windows:
 
