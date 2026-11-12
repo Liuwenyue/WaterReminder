@@ -2,14 +2,14 @@
 
 # 喝水提醒
 
-提醒规则在 Linux 上无界面运行，Windows 只负责上班时间的桌面气泡。不要把原来的 WPF 程序搬到 Linux 上跑。
+提醒日程在 Linux 上无界面运行。Windows 客户端保留原来的悬浮窗、设置和今日记录，并在上班时间弹出桌面提醒；下班后改为向手机发送 PushWard 通知。
 
-- **WaterReminder.Core**：日程、杯量、PushWard、记录。没有 WPF。
-- **WaterReminder.Server**：在虚拟机上跑的轻量 HTTP 服务，是设置和当日记录的唯一来源。默认端口 **8787**。时间固定为 **Asia/Shanghai**。
-- **WaterReminder.Client**：Windows 托盘和原来的桌面悬浮窗。只保存服务器地址、API 令牌，以及是否显示悬浮窗。托盘菜单「设置」沿用原来的桌面设置窗口，把目标、杯量、时间和工作日写回服务器。上班时间弹「该喝水了」，下班后不弹窗。
-- **WaterReminder**：原来的 WPF 悬浮窗。可以继续在本机单独使用；和服务器同时开会重复提醒。
+- **WaterReminder.Core**：日程、杯量、PushWard 和记录。
+- **WaterReminder.Server**：在虚拟机上运行的轻量 HTTP 服务，是设置和当日记录的唯一来源。默认端口 **8787**。时间固定为 **Asia/Shanghai**。
+- **WaterReminder.Client**：Windows 托盘，以及原来的悬浮窗、设置和今日记录。本机保存服务器地址、API 令牌，以及是否显示悬浮窗。托盘菜单「设置」打开桌面设置窗口，把目标、杯量、时间和工作日写回服务器。上班时间弹出「该喝水了」，下班后不再弹窗。
+- **WaterReminder**：原来的 WPF 程序，仍可在 Windows 上单独使用。与服务器同时运行时会重复提醒。
 
-手机通道只有 **PushWard**（Notification Answer，动作 `drink`，没有 url、没有 foreground）。ntfy 和 Pushover 已删除，不要加回来。
+手机提醒使用 **PushWard**。
 
 ## 提醒规则（都可以改）
 
@@ -23,9 +23,9 @@
 | 工作杯 / 家庭杯 | 370 ml / 800 ml |
 | 最小间隔 | 20 分钟 |
 
-上班的提醒窗口里，服务器给手机发 PushWard，Windows 客户端同时弹桌面气泡。`WorkEnd` 之后到 `QuietStart` 之前只推手机，不弹桌面。免打扰之后保持安静。
+午休期间，以及下班前的这段时间里，不发送提醒。其余上班时间，服务器给手机发 PushWard，Windows 客户端同时弹出桌面提醒。下班后、免打扰开始前，提醒发到手机，桌面保持安静。免打扰开始后不再发送。
 
-文案保持短句：标题「该喝水了」，正文「已喝 {已喝}/{目标} ml，建议 {建议} ml」；记下之后是「已记录 / 已记 {N} ml」。手机上点一次通知动作即可记账，不会打开浏览器。同一条 `notification_id`（字符串或数字）只记一次。
+文案保持短句：标题「该喝水了」，正文「已喝 {已喝}/{目标} ml，建议 {建议} ml」；记下之后是「已记录 / 已记 {N} ml」。手机上点一次通知即可记账，不会打开浏览器。
 
 ## 从源码构建
 
@@ -45,7 +45,7 @@ dotnet publish .\WaterReminder.Client\WaterReminder.Client.csproj -c Release -o 
 
 部署、systemd、密钥和防火墙见 [DEPLOY.md](DEPLOY.md)。PushWard 的按钮行为见 [PUSHWARD.md](PUSHWARD.md)。
 
-服务器上的 PushWard 令牌和客户端 API 令牌只放在数据目录或环境变量里。不要把 `settings.json`、令牌、`client.json` 或备份目录提交进仓库。Windows 客户端的 `client.json` 只有 `serverUrl` 和 `apiToken`。
+PushWard 令牌和客户端 API 令牌放在服务器的数据目录或环境变量里。不要把 `settings.json` 和令牌提交进仓库。
 
 原来的 WPF 程序仍可用下面的命令在 Windows 上发布：
 
