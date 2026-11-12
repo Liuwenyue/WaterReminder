@@ -53,6 +53,7 @@ internal partial class MainWindow : Window
             Hide();
         };
         WindowEx.EnableDrag(this, SavePosition);
+        WpfInterop.EnableKeyboard(this);
     }
 
     public void ForceClose()
@@ -106,10 +107,11 @@ internal partial class MainWindow : Window
 
     private async Task RefreshAsync()
     {
+        if (_editing) return;
         try
         {
             var result = await _api.GetStatusAsync();
-            if (!result.Ok || result.Value is null) return;
+            if (_editing || !result.Ok || result.Value is null) return;
             ApplyStatus(result.Value);
         }
         catch
@@ -305,7 +307,13 @@ internal partial class MainWindow : Window
         EditorHost.Visibility = Visibility.Collapsed;
         editor.Visibility = Visibility.Visible;
         SetEditHint(null);
-        Dispatcher.BeginInvoke(DispatcherPriority.Input, () => { editor.Focus(); Keyboard.Focus(editor); editor.SelectAll(); });
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+        {
+            Activate();
+            editor.Focus();
+            Keyboard.Focus(editor);
+            editor.SelectAll();
+        });
     }
 
     private static bool IsInside(DependencyObject start, DependencyObject ancestor)
@@ -389,7 +397,11 @@ internal partial class MainWindow : Window
 
     private void AmountEditor_LostFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
-        if (_editing) EndEditTotal(true);
+        if (!_editing) return;
+        // A null target is the WinForms/WPF focus bounce, not the user leaving the box.
+        if (e.NewFocus is null) return;
+        if (e.NewFocus is DependencyObject next && IsInside(next, Editor)) return;
+        EndEditTotal(true);
     }
 
     private void AmountEditor_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)

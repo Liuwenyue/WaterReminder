@@ -19,6 +19,7 @@ public partial class ConfirmDialog : Window
             IconGlyph.Text = "\uE74D";
         }
         WindowEx.EnableDrag(this);
+        WpfInterop.EnableKeyboard(this);
     }
 
     public static bool Ask(Window? owner, string title, string message, string confirmText, bool danger = false)

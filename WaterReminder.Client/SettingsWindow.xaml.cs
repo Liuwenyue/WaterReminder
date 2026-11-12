@@ -53,6 +53,7 @@ public partial class SettingsWindow : Window
             stepper.ValueChanged += (_, _) => Validate();
         Validate();
         WindowEx.EnableDrag(this);
+        WpfInterop.EnableKeyboard(this);
     }
 
     private void Day_Click(object sender, RoutedEventArgs e) => Validate();

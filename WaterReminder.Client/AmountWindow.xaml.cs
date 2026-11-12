@@ -25,6 +25,7 @@ public partial class AmountWindow : Window
             QuickPanel.Children.Add(b);
         }
         WindowEx.EnableDrag(this);
+        WpfInterop.EnableKeyboard(this);
     }
 
     private void Ok_Click(object sender, RoutedEventArgs e)

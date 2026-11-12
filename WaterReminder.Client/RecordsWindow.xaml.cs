@@ -21,6 +21,7 @@ public partial class RecordsWindow : Window
         _api = api;
         _cupMl = cupMl;
         WindowEx.EnableDrag(this);
+        WpfInterop.EnableKeyboard(this);
         Loaded += async (_, _) => await ReloadAsync();
     }
 
