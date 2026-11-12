@@ -75,6 +75,40 @@ public sealed class AckRequest
     public string? Id { get; set; }
 }
 
+public sealed class TodayRecordsResponse
+{
+    public string Date { get; set; } = "";
+    public int ConsumedMl { get; set; }
+    public int GoalMl { get; set; }
+    public List<RecordEventResponse> Events { get; set; } = [];
+}
+
+public sealed class RecordEventResponse
+{
+    public Guid Id { get; set; }
+    public string At { get; set; } = "";
+    public int AmountMl { get; set; }
+    public string Source { get; set; } = "";
+}
+
+public sealed class SetTotalRequest
+{
+    public int TotalMl { get; set; }
+}
+
+public sealed class SetTotalResponse
+{
+    public int DeltaMl { get; set; }
+    public int ConsumedMl { get; set; }
+    public int GoalMl { get; set; }
+    public bool Changed { get; set; }
+}
+
+public sealed class EditRecordRequest
+{
+    public int AmountMl { get; set; }
+}
+
 /// <summary>Fields the desktop settings window may change. No credentials.</summary>
 public sealed class SettingsUpdate
 {

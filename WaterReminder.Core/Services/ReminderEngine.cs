@@ -161,6 +161,97 @@ public sealed class ReminderEngine : IDisposable
         }
     }
 
+    public TodayRecordsResponse TodayRecords()
+    {
+        lock (_gate)
+        {
+            RefreshLocked();
+            return MapRecords();
+        }
+    }
+
+    /// <summary>Makes today's total equal <paramref name="totalMl"/> by appending an <c>adjust</c> event. Same total is a no-op.</summary>
+    public bool TrySetTodayTotal(int totalMl, out SetTotalResponse? result, out string? error)
+    {
+        result = null;
+        if (!WaterCalculator.TryParseTotal(totalMl.ToString(CultureInfo.InvariantCulture), out var total, out error))
+            return false;
+        lock (_gate)
+        {
+            RefreshLocked();
+            var delta = _progress.Correct(total);
+            error = null;
+            result = new SetTotalResponse
+            {
+                DeltaMl = delta,
+                ConsumedMl = _progress.Today.ConsumedMl,
+                GoalMl = _settings.DailyGoalMl,
+                Changed = delta != 0,
+            };
+            return true;
+        }
+    }
+
+    public bool TryEditRecord(Guid id, int amountMl, out string? error)
+    {
+        if (amountMl == 0 || amountMl is < -3000 or > 3000)
+        {
+            error = "请输入 1–3000 之间的整数。";
+            return false;
+        }
+        lock (_gate)
+        {
+            RefreshLocked();
+            if (_progress.Today.Events.All(x => x.Id != id))
+            {
+                error = "找不到这条记录。";
+                return false;
+            }
+            _progress.EditEvent(id, amountMl);
+            error = null;
+            return true;
+        }
+    }
+
+    public bool TryDeleteRecord(Guid id)
+    {
+        lock (_gate)
+        {
+            RefreshLocked();
+            return _progress.DeleteEvent(id);
+        }
+    }
+
+    public bool TryClearToday()
+    {
+        lock (_gate)
+        {
+            RefreshLocked();
+            return _progress.ClearToday();
+        }
+    }
+
+    private TodayRecordsResponse MapRecords()
+    {
+        var today = _progress.Today;
+        return new TodayRecordsResponse
+        {
+            Date = today.Date,
+            ConsumedMl = today.ConsumedMl,
+            GoalMl = _settings.DailyGoalMl,
+            Events = today.Events
+                .OrderBy(x => x.At)
+                .Select(x => new RecordEventResponse
+                {
+                    Id = x.Id,
+                    At = x.At.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture),
+                    AmountMl = x.AmountMl,
+                    Source = x.Source,
+                })
+                .ToList(),
+        };
+    }
+
     /// <summary>One phone tap. Work cup during work hours, home cup after work.</summary>
     public int RecordPhoneDrink()
     {

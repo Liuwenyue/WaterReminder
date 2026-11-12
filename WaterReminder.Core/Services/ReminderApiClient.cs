@@ -66,6 +66,69 @@ public sealed class ReminderApiClient : IDisposable
     public async Task<ApiResult<DrinkResponse>> LogAmountAsync(int amountMl, CancellationToken ct = default)
         => await PostDrinkAsync(new DrinkRequest { AmountMl = amountMl, Source = "desktop" }, ct).ConfigureAwait(false);
 
+    public Task<ApiResult<TodayRecordsResponse>> GetRecordsAsync(CancellationToken ct = default)
+        => ReadAsync<TodayRecordsResponse>("api/records", ct);
+
+    public async Task<ApiResult<SetTotalResponse>> SetTodayTotalAsync(int totalMl, CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await _http.PutAsJsonAsync("api/records/total", new SetTotalRequest { TotalMl = totalMl }, Json, ct).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                return ApiResult<SetTotalResponse>.Fail((int)response.StatusCode, ReadError(body));
+            var value = JsonSerializer.Deserialize<SetTotalResponse>(body, Json);
+            return value is null
+                ? ApiResult<SetTotalResponse>.Fail((int)response.StatusCode, ReadError(body))
+                : ApiResult<SetTotalResponse>.Success(value);
+        }
+        catch
+        {
+            return ApiResult<SetTotalResponse>.Fail(0);
+        }
+    }
+
+    public async Task<ApiResult<TodayRecordsResponse>> EditRecordAsync(Guid id, int amountMl, CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await _http.PutAsJsonAsync($"api/records/{id}", new EditRecordRequest { AmountMl = amountMl }, Json, ct).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                return ApiResult<TodayRecordsResponse>.Fail((int)response.StatusCode, ReadError(body));
+            var value = JsonSerializer.Deserialize<TodayRecordsResponse>(body, Json);
+            return value is null ? ApiResult<TodayRecordsResponse>.Fail((int)response.StatusCode) : ApiResult<TodayRecordsResponse>.Success(value);
+        }
+        catch
+        {
+            return ApiResult<TodayRecordsResponse>.Fail(0);
+        }
+    }
+
+    public async Task<ApiResult<TodayRecordsResponse>> DeleteRecordAsync(Guid id, CancellationToken ct = default)
+        => await SendRecordsAsync(HttpMethod.Delete, $"api/records/{id}", ct).ConfigureAwait(false);
+
+    public async Task<ApiResult<TodayRecordsResponse>> ClearTodayAsync(CancellationToken ct = default)
+        => await SendRecordsAsync(HttpMethod.Delete, "api/records", ct).ConfigureAwait(false);
+
+    private async Task<ApiResult<TodayRecordsResponse>> SendRecordsAsync(HttpMethod method, string path, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(method, path);
+            using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                return ApiResult<TodayRecordsResponse>.Fail((int)response.StatusCode, ReadError(body));
+            var value = JsonSerializer.Deserialize<TodayRecordsResponse>(body, Json);
+            return value is null ? ApiResult<TodayRecordsResponse>.Fail((int)response.StatusCode) : ApiResult<TodayRecordsResponse>.Success(value);
+        }
+        catch
+        {
+            return ApiResult<TodayRecordsResponse>.Fail(0);
+        }
+    }
+
     private async Task<ApiResult<DrinkResponse>> PostDrinkAsync(DrinkRequest request, CancellationToken ct)
     {
         try

@@ -92,6 +92,37 @@ public static class ServerHost
                 : Results.NotFound(new { ok = false });
         });
 
+        app.MapGet("/api/records", (ReminderEngine e) => Results.Ok(e.TodayRecords()));
+        app.MapPut("/api/records/total", async (ReminderEngine e, HttpRequest request) =>
+        {
+            SetTotalRequest? body = null;
+            try { body = await request.ReadFromJsonAsync<SetTotalRequest>(); }
+            catch { body = null; }
+            if (body is null)
+                return Results.BadRequest(new { error = "设置内容无法识别。" });
+            return e.TrySetTodayTotal(body.TotalMl, out var result, out var error)
+                ? Results.Ok(result)
+                : Results.BadRequest(new { error });
+        });
+        app.MapPut("/api/records/{id:guid}", async (Guid id, ReminderEngine e, HttpRequest request) =>
+        {
+            EditRecordRequest? body = null;
+            try { body = await request.ReadFromJsonAsync<EditRecordRequest>(); }
+            catch { body = null; }
+            if (body is null)
+                return Results.BadRequest(new { error = "设置内容无法识别。" });
+            if (!e.TryEditRecord(id, body.AmountMl, out var error))
+                return error == "找不到这条记录。" ? Results.NotFound(new { error }) : Results.BadRequest(new { error });
+            return Results.Ok(e.TodayRecords());
+        });
+        app.MapDelete("/api/records/{id:guid}", (Guid id, ReminderEngine e) =>
+            e.TryDeleteRecord(id) ? Results.Ok(e.TodayRecords()) : Results.NotFound(new { error = "找不到这条记录。" }));
+        app.MapDelete("/api/records", (ReminderEngine e) =>
+        {
+            e.TryClearToday();
+            return Results.Ok(e.TodayRecords());
+        });
+
         return app;
     }
 

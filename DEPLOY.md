@@ -34,6 +34,11 @@ The process listens on **TCP 8787** (`WATERREMINDER_PORT`, bind `0.0.0.0` via `W
 - `GET /api/settings` — goal, cups, and the clock settings (no secrets)
 - `PUT /api/settings` — save those fields. The running process reloads them immediately; do not restart systemd
 - `POST /api/drinks` — log one work cup (`{"source":"desktop"}`)
+- `GET /api/records` — today's events
+- `PUT /api/records/total` — set today's total (`{"totalMl":1200}`); a lower total is an `adjust` event, the same total changes nothing
+- `PUT /api/records/{id}` — edit one event's amount
+- `DELETE /api/records/{id}` — delete one event
+- `DELETE /api/records` — clear today
 - `POST /api/desktop-ack` — the tray client has shown the toast (`{"id":"..."}`)
 
 `--dry-run` prints the Shanghai schedule and exits. It does not open the port and does not call PushWard.
@@ -94,7 +99,7 @@ On a Windows machine with the .NET 8 desktop runtime:
 dotnet publish .\WaterReminder.Client\WaterReminder.Client.csproj -c Release -o .\publish-client
 ```
 
-Put `client.json` next to the exe or at `%LocalAppData%\WaterReminderClient\client.json`. On startup the original desktop floating widget is shown (today's amount, progress, and **喝一杯**). It reads `GET /api/status` and logs drinks with `POST /api/drinks`. It does not run its own scheduler. Hide it from the widget; open it again from the tray item **打开悬浮窗**, or with a left click on the tray icon. The settings checkbox **显示桌面悬浮窗** (default on) is stored in `client.json` together with the window position. That file still has only the server URL, the API token, and this display preference.
+Put `client.json` next to the exe or at `%LocalAppData%\WaterReminderClient\client.json`. On startup the original desktop floating widget is shown (today's amount, progress, and **喝一杯**). Click the amount (tooltip 「点击修正今日已喝量」) to set today's total, including a lower total or 0. **记录** opens the original records window to edit or delete today's events. Both write to the server immediately. The widget reads `GET /api/status` and logs new drinks with `POST /api/drinks`. It does not run its own scheduler. Hide it from the widget; open it again from the tray item **打开悬浮窗**, or with a left click on the tray icon. The settings checkbox **显示桌面悬浮窗** (default on) is stored in `client.json` together with the window position. That file still has only the server URL, the API token, and this display preference.
 
 During work hours the tray shows a toast (`该喝水了` / `已喝 {已喝}/{目标} ml，建议 {建议} ml`) and **记录一杯** logs the work cup. After work end it does not show desktop toasts. Quiet hours stay silent. Phone recording is the PushWard **喝水了** action (no URL, no browser); the server polls `GET /notifications/answers` and dedupes `notification_id` whether it arrives as a string or a number.
 
@@ -106,6 +111,6 @@ Open the tray icon and choose **设置**. The window is the original desktop set
 
 服务跑在 Linux 上，提醒时间固定为 **Asia/Shanghai**。默认监听 **8787**。PushWard 令牌和客户端 API 令牌只放在服务器的环境变量或数据目录（`/var/lib/waterreminder`），不要写入仓库或 Windows 客户端。客户端只配置服务器地址和 API 令牌。
 
-自定义数值在 Windows 托盘菜单「设置」里改，其中「显示桌面悬浮窗」默认打开。启动后桌面上会看到原来的悬浮窗（今日进度和喝一杯），数据来自服务器，不在本机计时。关掉后可从托盘「打开悬浮窗」再打开。悬浮窗开关和位置写在本机 `client.json`，不是密钥。窗口沿用原来的桌面设置界面，读取并保存到服务器的 `settings.json`（`PUT /api/settings`），保存后马上生效，不用重启 systemd。可改：每日目标、工作杯、家庭杯、上下班、午休、下班前不喝水、最小间隔、免打扰、工作日，以及是否开启手机推送。窗口里不能看也不能改任何令牌。
+自定义数值在 Windows 托盘菜单「设置」里改，其中「显示桌面悬浮窗」默认打开。启动后桌面上会看到原来的悬浮窗（今日进度和喝一杯）。点击已喝数字可以改今天的总量，调低或改成 0 也可以；「记录」打开原来的记录窗口，能改或删每一条。这些都马上写到服务器。数据来自服务器，不在本机计时。关掉后可从托盘「打开悬浮窗」再打开。悬浮窗开关和位置写在本机 `client.json`，不是密钥。窗口沿用原来的桌面设置界面，读取并保存到服务器的 `settings.json`（`PUT /api/settings`），保存后马上生效，不用重启 systemd。可改：每日目标、工作杯、家庭杯、上下班、午休、下班前不喝水、最小间隔、免打扰、工作日，以及是否开启手机推送。窗口里不能看也不能改任何令牌。
 
 必须同时在主机防火墙（iptables 或 nft）和 Oracle Cloud 的安全列表（security list）或 NSG 里放行 TCP 8787。只新增允许规则，不要清空现有规则，也不要改 SSH。仓库里没有防火墙脚本。systemd 示例见 `deploy/waterreminder.service`。

@@ -261,11 +261,12 @@ internal partial class MainWindow : Window
         await RefreshAsync();
     }
 
-    private void RecordsButton_Click(object sender, RoutedEventArgs e)
+    private async void RecordsButton_Click(object sender, RoutedEventArgs e)
     {
-        var consumed = _status?.ConsumedMl ?? 0;
-        var goal = _status?.GoalMl ?? 0;
-        ShowSnack($"今日已喝 {consumed:N0} / {goal:N0} ml");
+        var cup = _status is null ? 370 : FloatingWidgetView.CurrentCupMl(_status);
+        var dialog = new RecordsWindow(_api, cup) { Owner = this };
+        dialog.ShowDialog();
+        await RefreshAsync();
     }
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e) => _openSettings();
@@ -337,19 +338,9 @@ internal partial class MainWindow : Window
                 Editor.SelectAll();
                 return;
             }
-            var consumed = _status?.ConsumedMl ?? 0;
-            if (total < consumed)
-            {
-                SetEditHint("目前只能增加饮水量");
-                Editor.Focus();
-                Editor.SelectAll();
-                return;
-            }
             _editing = false;
             CloseEditor();
-            var delta = total - consumed;
-            if (delta > 0) await LogDrinkAsync(delta);
-            else await RefreshAsync();
+            await SetTotalAsync(total);
         }
         else
         {
@@ -357,6 +348,24 @@ internal partial class MainWindow : Window
             CloseEditor();
             await RefreshAsync();
         }
+    }
+
+    private async Task SetTotalAsync(int total)
+    {
+        var result = await _api.SetTodayTotalAsync(total);
+        if (!result.Ok || result.Value is null)
+        {
+            ShowSnack(string.IsNullOrWhiteSpace(result.Error) ? "没能修正" : result.Error);
+            await RefreshAsync();
+            return;
+        }
+        if (result.Value.Changed)
+        {
+            var delta = result.Value.DeltaMl;
+            var sign = delta > 0 ? "+" : "−";
+            ShowSnack($"已修正为 {result.Value.ConsumedMl:N0} ml（{sign}{Math.Abs(delta):N0}）");
+        }
+        await RefreshAsync();
     }
 
     private void CloseEditor()
