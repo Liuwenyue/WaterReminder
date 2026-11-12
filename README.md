@@ -6,7 +6,7 @@
 
 - **WaterReminder.Core**：日程、杯量、PushWard、记录。没有 WPF。
 - **WaterReminder.Server**：在虚拟机上跑的轻量 HTTP 服务，是设置和当日记录的唯一来源。默认端口 **8787**。时间固定为 **Asia/Shanghai**。
-- **WaterReminder.Client**：Windows 托盘。只保存服务器地址和 API 令牌。托盘菜单「设置」沿用原来的桌面设置窗口，把目标、杯量、时间和工作日写回服务器。上班时间弹「该喝水了」，下班后不弹窗。
+- **WaterReminder.Client**：Windows 托盘和原来的桌面悬浮窗。只保存服务器地址、API 令牌，以及是否显示悬浮窗。托盘菜单「设置」沿用原来的桌面设置窗口，把目标、杯量、时间和工作日写回服务器。上班时间弹「该喝水了」，下班后不弹窗。
 - **WaterReminder**：原来的 WPF 悬浮窗。可以继续在本机单独使用；和服务器同时开会重复提醒。
 
 手机通道只有 **PushWard**（Notification Answer，动作 `drink`，没有 url、没有 foreground）。ntfy 和 Pushover 已删除，不要加回来。

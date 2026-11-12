@@ -125,6 +125,16 @@
               </StackPanel>
             </CheckBox>
           </Border>
+
+          <TextBlock Text="通用" Style="{StaticResource SectionHeader}"/>
+          <Border Style="{StaticResource SectionCard}" Padding="16,4">
+            <CheckBox x:Name="FloatingBox" Style="{StaticResource ToggleSwitch}">
+              <StackPanel>
+                <TextBlock Text="显示桌面悬浮窗" FontSize="13"/>
+                <TextBlock Text="关闭后可从系统托盘打开" Style="{StaticResource Caption}"/>
+              </StackPanel>
+            </CheckBox>
+          </Border>
         </StackPanel>
       </ScrollViewer>
 

@@ -137,6 +137,8 @@ public sealed class ReminderEngine : IDisposable
                 MinReminderGapMinutes = _settings.MinReminderGapMinutes,
                 MobilePushEnabled = _settings.MobilePushEnabled,
                 ActiveDays = (bool[])_settings.ActiveDays.Clone(),
+                RemindersPaused = _settings.RemindersPaused,
+                PauseUntil = _settings.PauseUntil?.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture),
             };
         }
     }

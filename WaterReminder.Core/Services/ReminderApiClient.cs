@@ -61,11 +61,16 @@ public sealed class ReminderApiClient : IDisposable
     }
 
     public async Task<ApiResult<DrinkResponse>> LogDesktopDrinkAsync(CancellationToken ct = default)
+        => await PostDrinkAsync(new DrinkRequest { Source = "desktop" }, ct).ConfigureAwait(false);
+
+    public async Task<ApiResult<DrinkResponse>> LogAmountAsync(int amountMl, CancellationToken ct = default)
+        => await PostDrinkAsync(new DrinkRequest { AmountMl = amountMl, Source = "desktop" }, ct).ConfigureAwait(false);
+
+    private async Task<ApiResult<DrinkResponse>> PostDrinkAsync(DrinkRequest request, CancellationToken ct)
     {
         try
         {
-            using var response = await _http.PostAsJsonAsync(
-                "api/drinks", new DrinkRequest { Source = "desktop" }, Json, ct).ConfigureAwait(false);
+            using var response = await _http.PostAsJsonAsync("api/drinks", request, Json, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 return ApiResult<DrinkResponse>.Fail((int)response.StatusCode);
             var value = await response.Content.ReadFromJsonAsync<DrinkResponse>(Json, ct).ConfigureAwait(false);

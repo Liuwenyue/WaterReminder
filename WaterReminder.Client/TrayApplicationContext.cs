@@ -14,14 +14,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
 {
     private readonly NotifyIcon _tray;
     private readonly ReminderApiClient _api;
+    private readonly ClientConfig _config;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly Icon _icon;
+    private MainWindow? _window;
     private string? _lastAlertId;
     private bool _clickLogsDrink;
     private DateTime _lastDrinkUtc = DateTime.MinValue;
 
     public TrayApplicationContext(ClientConfig config)
     {
+        _config = config;
         _api = new ReminderApiClient(config.ServerUrl, config.ApiToken);
         _icon = CreateIcon();
         _tray = new NotifyIcon
@@ -32,6 +35,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         };
 
         var menu = new ContextMenuStrip();
+        menu.Items.Add("打开悬浮窗", null, (_, _) => ShowFloating());
         menu.Items.Add("今天状态", null, async (_, _) => await RefreshAsync(announceStatus: true));
         menu.Items.Add("记录一杯", null, async (_, _) => await LogDrinkAsync());
         menu.Items.Add("设置", null, (_, _) =>
@@ -42,6 +46,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => ExitThread());
         _tray.ContextMenuStrip = menu;
+        _tray.MouseClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left) ShowFloating();
+        };
         _tray.BalloonTipClicked += async (_, _) =>
         {
             if (!_clickLogsDrink) return;
@@ -52,6 +60,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _timer = new System.Windows.Forms.Timer { Interval = 20_000 };
         _timer.Tick += async (_, _) => await RefreshAsync(announceStatus: false);
         _timer.Start();
+        var startup = new System.Windows.Forms.Timer { Interval = 200 };
+        startup.Tick += (_, _) =>
+        {
+            startup.Stop();
+            startup.Dispose();
+            if (_config.FloatingWindow) ShowFloating();
+        };
+        startup.Start();
         _ = RefreshAsync(announceStatus: false);
     }
 
@@ -91,8 +107,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 return;
             }
 
-            var window = new SettingsWindow(current, update => SaveSettingsAsync(update, ui), now, consumed);
-            window.ShowDialog();
+            var window = new SettingsWindow(current, _config.FloatingWindow, update => SaveSettingsAsync(update, ui), now, consumed);
+            if (window.ShowDialog() == true)
+            {
+                _config.FloatingWindow = window.FloatingWindow;
+                _config.Save();
+                if (_config.FloatingWindow) ShowFloating();
+                else HideFloating();
+            }
         }, null);
     }
 
@@ -103,6 +125,25 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return string.IsNullOrWhiteSpace(saved.Error) ? "保存失败" : saved.Error;
         ui.Post(_ => _ = RefreshAsync(announceStatus: false), null);
         return null;
+    }
+
+    private void ShowFloating()
+    {
+        if (_window is null)
+        {
+            _window = new MainWindow(_api, _config, () =>
+            {
+                var ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+                _ = OpenSettingsAsync(ui);
+            });
+        }
+        if (!_window.IsVisible) _window.Show();
+        _window.Activate();
+    }
+
+    private void HideFloating()
+    {
+        if (_window is { IsVisible: true }) _window.Hide();
     }
 
     private async Task RefreshAsync(bool announceStatus)
@@ -183,6 +224,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         _timer.Stop();
         _timer.Dispose();
+        _window?.ForceClose();
         _tray.Visible = false;
         _tray.Dispose();
         _icon.Dispose();

@@ -6,7 +6,7 @@ The reminder rules run headless on Linux. A thin Windows tray app shows desktop 
 
 - **WaterReminder.Core** — schedule, cup sizes, PushWard, and records. No WPF.
 - **WaterReminder.Server** — small HTTP service and the source of truth for settings and today's record. Default port **8787**. Times are always **Asia/Shanghai**.
-- **WaterReminder.Client** — Windows tray. It stores the server URL and the API token only. The tray menu **设置** opens the original desktop settings window and writes the goal, cups, and schedule back to the server. It toasts during work hours and stays quiet after work ends.
+- **WaterReminder.Client** — Windows tray plus the original desktop floating widget. It stores the server URL, the API token, and whether the widget is shown. The tray menu **设置** opens the original desktop settings window and writes the goal, cups, and schedule back to the server. It toasts during work hours and stays quiet after work ends.
 - **WaterReminder** — the original WPF window. It still runs on Windows by itself. Do not run it together with the server or reminders fire twice.
 
 The only phone channel is **PushWard** (a Notification Answer, action id `drink`, no url, no foreground). ntfy and Pushover were removed and stay removed.

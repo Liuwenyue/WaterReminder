@@ -16,14 +16,20 @@ public partial class SettingsWindow : Window
     private readonly Func<SettingsUpdate, Task<string?>> _save;
     private readonly DateTime _now;
     private readonly int _consumedMl;
+    private readonly bool _remindersPaused;
+    private readonly string? _pauseUntil;
 
-    public SettingsWindow(ClientSettingsResponse current, Func<SettingsUpdate, Task<string?>> save, DateTime now, int consumedMl)
+    public bool FloatingWindow => FloatingBox.IsChecked == true;
+
+    public SettingsWindow(ClientSettingsResponse current, bool floatingWindow, Func<SettingsUpdate, Task<string?>> save, DateTime now, int consumedMl)
     {
         ClientTheme.Ensure();
         InitializeComponent();
         _save = save;
         _now = now;
         _consumedMl = consumedMl;
+        _remindersPaused = current.RemindersPaused;
+        _pauseUntil = current.PauseUntil;
         _days = [Mon, Tue, Wed, Thu, Fri, Sat, Sun];
         MaxHeight = SystemParameters.WorkArea.Height - 16;
 
@@ -41,6 +47,7 @@ public partial class SettingsWindow : Window
         for (var i = 0; i < _days.Length && i < current.ActiveDays.Length; i++)
             _days[i].IsChecked = current.ActiveDays[i];
         MobilePushBox.IsChecked = current.MobilePushEnabled;
+        FloatingBox.IsChecked = floatingWindow;
 
         foreach (var stepper in new[] { GoalStepper, WorkCupStepper, HomeCupStepper, StartStepper, EndStepper, LunchStartStepper, LunchEndStepper, NoDrinkStepper, GapStepper, QuietStepper })
             stepper.ValueChanged += (_, _) => Validate();
@@ -67,6 +74,8 @@ public partial class SettingsWindow : Window
         MinReminderGapMinutes = GapStepper.Value,
         MobilePushEnabled = MobilePushBox.IsChecked == true,
         ActiveDays = _days.Select(x => x.IsChecked == true).ToArray(),
+        RemindersPaused = _remindersPaused,
+        PauseUntil = _pauseUntil,
     };
 
     private bool Validate()

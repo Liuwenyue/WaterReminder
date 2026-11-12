@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using WaterReminder.Services;
 
 namespace WaterReminder.Client;
 
@@ -11,6 +12,17 @@ internal sealed class ClientConfig
 {
     public string ServerUrl { get; set; } = "";
     public string ApiToken { get; set; } = "";
+    public bool FloatingWindow { get; set; } = true;
+    public bool CompactMode { get; set; }
+    public double? CompactLeft { get; set; }
+    public double? CompactTop { get; set; }
+    public double? ExpandedLeft { get; set; }
+    public double? ExpandedTop { get; set; }
+    public double? WindowLeft { get; set; }
+    public double? WindowTop { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string SourcePath { get; set; } = "";
 
     public static string DefaultPath()
         => Path.Combine(
@@ -38,6 +50,48 @@ internal sealed class ClientConfig
 
         config.ServerUrl = config.ServerUrl.Trim().TrimEnd('/');
         config.ApiToken = config.ApiToken.Trim();
+        var display = ClientDisplayStore.Read(json);
+        config.FloatingWindow = display.FloatingWindow;
+        config.CompactMode = display.CompactMode;
+        config.CompactLeft = display.CompactLeft;
+        config.CompactTop = display.CompactTop;
+        config.ExpandedLeft = display.ExpandedLeft;
+        config.ExpandedTop = display.ExpandedTop;
+        config.WindowLeft = display.WindowLeft;
+        config.WindowTop = display.WindowTop;
+        config.SourcePath = path;
         return config;
+    }
+
+    public ClientDisplayPreferences Display() => new()
+    {
+        FloatingWindow = FloatingWindow,
+        CompactMode = CompactMode,
+        CompactLeft = CompactLeft,
+        CompactTop = CompactTop,
+        ExpandedLeft = ExpandedLeft,
+        ExpandedTop = ExpandedTop,
+        WindowLeft = WindowLeft,
+        WindowTop = WindowTop,
+    };
+
+    public void ApplyDisplay(ClientDisplayPreferences display)
+    {
+        FloatingWindow = display.FloatingWindow;
+        CompactMode = display.CompactMode;
+        CompactLeft = display.CompactLeft;
+        CompactTop = display.CompactTop;
+        ExpandedLeft = display.ExpandedLeft;
+        ExpandedTop = display.ExpandedTop;
+        WindowLeft = display.WindowLeft;
+        WindowTop = display.WindowTop;
+    }
+
+    public void Save()
+    {
+        if (string.IsNullOrWhiteSpace(SourcePath))
+            throw new InvalidOperationException("没有配置文件路径。");
+        var current = File.Exists(SourcePath) ? File.ReadAllText(SourcePath) : "{}";
+        File.WriteAllText(SourcePath, ClientDisplayStore.Apply(current, Display()));
     }
 }

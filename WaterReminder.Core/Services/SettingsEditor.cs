@@ -49,6 +49,8 @@ public static class SettingsEditor
         MinReminderGapMinutes = settings.MinReminderGapMinutes,
         MobilePushEnabled = settings.MobilePushEnabled,
         ActiveDays = settings.ActiveDays is { Length: 7 } days ? (bool[])days.Clone() : [],
+        RemindersPaused = settings.RemindersPaused,
+        PauseUntil = settings.PauseUntil,
     };
 
     public static bool TryParse(string? json, out SettingsUpdate? update, out string? error)
@@ -191,6 +193,8 @@ public static class SettingsEditor
         target.MinReminderGapMinutes = update.MinReminderGapMinutes;
         target.MobilePushEnabled = update.MobilePushEnabled;
         target.ActiveDays = (bool[])update.ActiveDays.Clone();
+        target.RemindersPaused = update.RemindersPaused;
+        target.PauseUntil = ParsePauseUntil(update.PauseUntil);
     }
 
     public static bool TryParseClock(string? text, out TimeSpan time)
@@ -201,6 +205,14 @@ public static class SettingsEditor
         if (!TimeSpan.TryParseExact(value, ["h\\:mm", "hh\\:mm", "h\\:mm\\:ss", "hh\\:mm\\:ss"], CultureInfo.InvariantCulture, out time))
             return false;
         return time >= TimeSpan.Zero && time < TimeSpan.FromDays(1);
+    }
+
+    public static DateTime? ParsePauseUntil(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        return DateTime.TryParse(text.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.None, out var value)
+            ? value
+            : null;
     }
 
     private static bool ContainsSecret(JsonElement element)

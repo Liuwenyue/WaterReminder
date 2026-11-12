@@ -51,6 +51,8 @@ public sealed class ClientSettingsResponse
     public int MinReminderGapMinutes { get; set; }
     public bool MobilePushEnabled { get; set; }
     public bool[] ActiveDays { get; set; } = [];
+    public bool RemindersPaused { get; set; }
+    public string? PauseUntil { get; set; }
 }
 
 public sealed class DrinkRequest
@@ -89,4 +91,6 @@ public sealed class SettingsUpdate
     public int MinReminderGapMinutes { get; set; }
     public bool MobilePushEnabled { get; set; }
     public bool[] ActiveDays { get; set; } = [];
+    public bool RemindersPaused { get; set; }
+    public string? PauseUntil { get; set; }
 }
