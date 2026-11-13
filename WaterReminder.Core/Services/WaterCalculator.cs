@@ -108,6 +108,18 @@ public static class WaterCalculator
     public static int HomeCupMl(UserSettings s) => s.HomeCupCapacityMl > 0 ? s.HomeCupCapacityMl : 800;
 
     /// <summary>
+    /// Milliliters still paced during work hours. One home cup is left for after work
+    /// when quiet hours start later than <see cref="UserSettings.WorkEnd"/>.
+    /// Returns 0 when the remainder should wait for the evening plan.
+    /// </summary>
+    public static int WorkPortionMl(UserSettings s, int remaining)
+    {
+        if (remaining <= 0) return 0;
+        if (s.QuietStart <= s.WorkEnd) return remaining;
+        return Math.Max(0, remaining - HomeCupMl(s));
+    }
+
+    /// <summary>
     /// Cup in effect right now: the work cup on an active workday between WorkStart and WorkEnd,
     /// otherwise the home cup (evenings, weekends, before work).
     /// </summary>
@@ -165,9 +177,12 @@ public static class WaterCalculator
     }
 
     /// <summary>
-    /// Dynamic plan from live progress. remaining = goal − consumed, cups = ceil(remaining / cup).
+    /// Dynamic plan from live progress.
+    /// During work hours only the work portion is paced: one home cup stays for after work
+    /// (<see cref="WorkPortionMl"/>). cups = ceil(work portion / work cup).
+    /// After work, <see cref="CalculateEvening"/> still paces whatever is left with the home cup.
     /// Countdown restarts at the latest of: work start, last positive drink/correction, last fired reminder.
-    /// Interval = available drinking time (anchor → cutoff, minus lunch) / (cups + ½), at least <see cref="MinReminderGap"/>;
+    /// Interval = available drinking time (anchor → cutoff, minus lunch) / (cups + ½), at least the configured minimum gap;
     /// next = anchor + interval skipping lunch, never inside lunch and never at/after the cutoff.
     /// If next ≤ now a reminder is due now (SuggestedMl &gt; 0).
     /// </summary>
@@ -180,12 +195,15 @@ public static class WaterCalculator
         var day = now.Date;
         var cutoff = day + Cutoff(s);
 
-        // After work (and before quiet hours) plan the remaining cups with the home cup.
-        // Note: before WorkEnd this branch never runs, so the daytime plan below is unchanged.
+        // After work (and before quiet hours) plan whatever is still left with the home cup.
         if (now >= day + s.WorkEnd && now.TimeOfDay < s.QuietStart)
             return CalculateEvening(s, record, now, lastReminderAt, remaining);
 
-        var cups = (int)Math.Ceiling(remaining / (double)workCup);
+        var workRemaining = WorkPortionMl(s, remaining);
+        if (workRemaining <= 0)
+            return new ReminderPlan(0, TimeSpan.Zero, null, record.ConsumedMl, 0);
+
+        var cups = (int)Math.Ceiling(workRemaining / (double)workCup);
         if (now >= cutoff || cutoff <= day + s.WorkStart) return new ReminderPlan(cups, TimeSpan.Zero, null, s.DailyGoalMl, 0);
 
         var anchor = day + s.WorkStart;
@@ -213,7 +231,7 @@ public static class WaterCalculator
         }
 
         var dueNow = next <= now;
-        var suggested = dueNow ? Math.Min(workCup, remaining) : 0;
+        var suggested = dueNow ? Math.Min(workCup, workRemaining) : 0;
         return new ReminderPlan(cups, interval, next, record.ConsumedMl + suggested, suggested);
     }
 
@@ -265,11 +283,25 @@ public static class WaterCalculator
         if (!IsActiveDay(s, now)) return "今天休息，不提醒";
         var phase = PhaseAt(s, now);
         if (phase == DayPhase.NoDrinkWindow) return "下班前不再提醒";
-        if (plan.NextReminder is null) return "今日提醒已结束";
+        if (plan.NextReminder is null)
+        {
+            var left = Math.Max(0, s.DailyGoalMl - record.ConsumedMl);
+            if (left > 0
+                && phase is DayPhase.BeforeWork or DayPhase.Working or DayPhase.Lunch
+                && WorkPortionMl(s, left) <= 0)
+                return s.MobilePushEnabled ? "下班后再提醒" : "今日提醒已结束";
+            return "今日提醒已结束";
+        }
         if (phase == DayPhase.Lunch) return compact ? $"午休中 · 下次 {plan.NextReminder:HH:mm}" : $"午休中 · 下次提醒 {plan.NextReminder:HH:mm}";
-        var cup = Math.Min(CurrentCupMl(s, now), s.DailyGoalMl - record.ConsumedMl);
+        var remainingNow = Math.Max(0, s.DailyGoalMl - record.ConsumedMl);
+        var cap = phase == DayPhase.AfterWork ? remainingNow : WorkPortionMl(s, remainingNow);
+        if (cap <= 0) cap = remainingNow;
+        var cup = Math.Min(CurrentCupMl(s, now), cap);
         if (plan.SuggestedMl > 0) return compact ? $"该喝水了 · {plan.SuggestedMl} ml" : $"该喝水了，建议现在补充 {plan.SuggestedMl} ml";
-        return compact ? $"下次提醒 {plan.NextReminder:HH:mm}" : $"下次提醒 {plan.NextReminder:HH:mm} · 建议 {cup} ml";
+        // Compact pill is 352 wide: time and amount, without the longer expanded wording.
+        return compact
+            ? $"下次 {plan.NextReminder:HH:mm} · {cup} ml"
+            : $"下次提醒 {plan.NextReminder:HH:mm} · 建议 {cup} ml";
     }
 
     /// <summary>The most recent reminder time at or before <paramref name="now"/>, if any.</summary>

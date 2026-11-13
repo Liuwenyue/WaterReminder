@@ -26,7 +26,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         _config = config;
         _api = new ReminderApiClient(config.ServerUrl, config.ApiToken);
-        _icon = CreateIcon();
+        _icon = LoadIcon();
         _tray = new NotifyIcon
         {
             Icon = _icon,
@@ -232,16 +232,24 @@ internal sealed class TrayApplicationContext : ApplicationContext
         base.ExitThreadCore();
     }
 
-    private static Icon CreateIcon()
+    /// <summary>
+    /// Original tray icon: embedded Assets/app.ico at the small icon size.
+    /// The tray is created before any window, so the WPF application has to exist
+    /// before the pack URI can be read. Falls back to the system information icon.
+    /// </summary>
+    private static Icon LoadIcon()
     {
-        using var bitmap = new Bitmap(32, 32);
-        using (var graphics = Graphics.FromImage(bitmap))
+        try
         {
-            graphics.Clear(Color.Transparent);
-            using var brush = new SolidBrush(Color.FromArgb(30, 136, 229));
-            graphics.FillEllipse(brush, 8, 2, 16, 22);
-            graphics.FillEllipse(brush, 8, 16, 16, 14);
+            ClientTheme.Ensure();
+            var info = System.Windows.Application.GetResourceStream(new Uri("pack://application:,,,/Assets/app.ico"));
+            if (info is not null)
+            {
+                using var stream = info.Stream;
+                return new Icon(stream, SystemInformation.SmallIconSize);
+            }
         }
-        return Icon.FromHandle(bitmap.GetHicon());
+        catch { }
+        return SystemIcons.Information;
     }
 }

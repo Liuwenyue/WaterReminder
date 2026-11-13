@@ -8,6 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>WaterReminder.Client</RootNamespace>
     <AssemblyName>WaterReminder.Client</AssemblyName>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <Using Remove="System.Windows.Forms" />

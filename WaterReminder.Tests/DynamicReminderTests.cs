@@ -28,9 +28,9 @@ public sealed class DynamicReminderTests
     [Fact]
     public void OnPace_UserCurrentState()
     {
-        // 370 at 09:50 -> 5 cups left over 370 effective min (09:50–17:30 minus lunch) -> every 67 min
+        // 370 at 09:50 -> 1050 ml still paced at work (1850 left, 800 reserved) over 370 min -> 11:36
         var p = P(Rec(Ev(9, 50, 370)), T(10, 0));
-        Assert.Equal(T(10, 58), p.NextReminder);
+        Assert.Equal(T(11, 36), p.NextReminder);
         Assert.Equal(0, p.SuggestedMl);
     }
 
@@ -38,19 +38,20 @@ public sealed class DynamicReminderTests
     public void Ahead_PushesNextLater()
     {
         var onPace = P(Rec(Ev(10, 0, 370)), T(10, 5)).NextReminder;
-        var ahead = P(Rec(Ev(10, 0, 1110)), T(10, 5)).NextReminder;   // 3 cups left -> 360/3.5 = 103 min
-        Assert.Equal(T(11, 43), ahead);
+        var ahead = P(Rec(Ev(10, 0, 1110)), T(10, 5)).NextReminder;   // 310 ml left at work -> one cup, skips lunch
+        Assert.Equal(T(11, 43), onPace);
+        Assert.Equal(T(15, 30), ahead);
         Assert.True(ahead > onPace);
     }
 
     [Fact]
     public void Behind_IsDueNow_ThenShorterInterval()
     {
-        var p = P(Rec(), T(11, 0));                       // nothing drunk, first one was due 09:40
+        var p = P(Rec(), T(11, 0));                       // nothing drunk, first one was due 10:10
         Assert.Equal(370, p.SuggestedMl);
         Assert.True(p.NextReminder <= T(11, 0));
         var after = P(Rec(), T(11, 1), reminded: T(11, 0)); // reminder fired at 11:00, ignored
-        Assert.Equal(T(11, 47), after.NextReminder);        // 6 cups in 300 min -> 46 min
+        Assert.Equal(T(13, 37), after.NextReminder);        // 4 work cups in 300 min, interval crosses lunch
         Assert.Equal(0, after.SuggestedMl);
     }
 
@@ -64,8 +65,8 @@ public sealed class DynamicReminderTests
     [Fact]
     public void AcrossLunch_SkipsLunch()
     {
-        var p = P(Rec(Ev(11, 50, 1110)), T(11, 51));      // 3 cups, 10 min before lunch + 240 after
-        Assert.Equal(T(14, 32), p.NextReminder);
+        var p = P(Rec(Ev(11, 50, 1110)), T(11, 51));      // 310 ml left at work, skips lunch
+        Assert.Equal(T(16, 7), p.NextReminder);
     }
 
     [Fact]
@@ -90,7 +91,7 @@ public sealed class DynamicReminderTests
     [Fact]
     public void NearCutoff_LastOneSqueezedInOrDropped()
     {
-        var r = Rec(Ev(16, 0, 1850));
+        var r = Rec(Ev(16, 0, 1050)); // 1170 left: 370 still paced at work, 800 reserved for evening
         Assert.Equal(370, P(r, T(17, 10)).SuggestedMl);                       // due now
         Assert.Equal(T(17, 20), P(r, T(17, 1), reminded: T(17, 0)).NextReminder); // 20 min gap still fits
         Assert.Null(P(r, T(17, 11), reminded: T(17, 10)).NextReminder);       // 17:30 cutoff -> no room
@@ -100,7 +101,7 @@ public sealed class DynamicReminderTests
 
     [Fact]
     public void BeforeWork_FirstReminderFromWorkStart()
-        => Assert.Equal(T(9, 40), P(Rec(), T(8, 0)).NextReminder);
+        => Assert.Equal(T(10, 10), P(Rec(), T(8, 0)).NextReminder);
 
     [Fact]
     public void NeverInsideLunchOrAfterCutoff()
@@ -123,6 +124,77 @@ public sealed class DynamicReminderTests
         var sat = new DateTime(2026, 11, 7, 10, 0, 0);
         var p = WaterCalculator.CalculateDynamic(Mine(), new DailyRecord(), sat);
         Assert.Equal("今天休息，不提醒", WaterCalculator.StatusLine(Mine(), new DailyRecord(), p, sat, false));
+    }
+
+    [Fact]
+    public void DefaultWorkday_ReservesHomeCup_PlansSixWorkCupsNotNine()
+    {
+        // Product defaults: 3000 ml, work cup 370, home cup 800, 08:30–17:30, lunch 11:50–13:30, cutoff 17:00.
+        // Drinking time is 410 minutes. Six work cups land about every 63 minutes, not nine cups every ~43.
+        var s = new UserSettings();
+        var morning = new DateTime(2026, 11, 3, 8, 0, 0);
+        var plan = WaterCalculator.CalculateDynamic(s, new DailyRecord(), morning);
+
+        Assert.Equal(3000, s.DailyGoalMl);
+        Assert.Equal(370, WaterCalculator.WorkCupMl(s));
+        Assert.Equal(800, WaterCalculator.HomeCupMl(s));
+        Assert.Equal(20, s.MinReminderGapMinutes);
+        Assert.Equal(6, plan.TotalReminders);
+        Assert.NotEqual(9, plan.TotalReminders);
+        Assert.Equal(63, Math.Round(plan.Interval.TotalMinutes));
+        Assert.True(plan.Interval.TotalMinutes > s.MinReminderGapMinutes);
+        Assert.Equal(new DateTime(2026, 11, 3, 9, 34, 0), plan.NextReminder);
+        Assert.Equal(0, plan.SuggestedMl);
+
+        var during = new DateTime(2026, 11, 3, 9, 0, 0);
+        Assert.Equal("下次 09:34 · 370 ml", WaterCalculator.StatusLine(s, new DailyRecord(), plan, during, compact: true));
+        Assert.Equal("下次提醒 09:34 · 建议 370 ml", WaterCalculator.StatusLine(s, new DailyRecord(), plan, during, compact: false));
+    }
+
+    [Fact]
+    public void AfterSixWorkCups_NoMoreWorkReminder_EveningStillPlansOneHomeCup()
+    {
+        var s = new UserSettings();
+        var day = new DateTime(2026, 11, 3);
+        var six = new DailyRecord
+        {
+            Events = Enumerable.Range(0, 6).Select(i => new WaterEvent
+            {
+                At = day.AddHours(9).AddMinutes(i * 50),
+                AmountMl = 370,
+                Source = "cup",
+            }).ToList(),
+        };
+        Assert.Equal(2220, six.ConsumedMl);
+
+        var during = WaterCalculator.CalculateDynamic(s, six, day.AddHours(16));
+        Assert.Equal(0, during.TotalReminders);
+        Assert.Null(during.NextReminder);
+        Assert.Equal(0, during.SuggestedMl);
+        Assert.Equal("下班后再提醒", WaterCalculator.StatusLine(s, six, during, day.AddHours(16), false));
+
+        six.Events.Add(new WaterEvent { At = day.AddHours(16).AddMinutes(10), AmountMl = 20, Source = "custom" });
+        Assert.True(six.ConsumedMl > 2220);
+        Assert.Null(WaterCalculator.CalculateDynamic(s, six, day.AddHours(16).AddMinutes(20)).NextReminder);
+
+        var five = new DailyRecord { Events = [new WaterEvent { At = day.AddHours(9), AmountMl = 1850, Source = "cup" }] };
+        var stillWorking = WaterCalculator.CalculateDynamic(s, five, day.AddHours(10));
+        Assert.Equal(1, stillWorking.TotalReminders);
+        Assert.NotNull(stillWorking.NextReminder);
+
+        var eveningRecord = new DailyRecord { Events = [new WaterEvent { At = day.AddHours(9), AmountMl = 2220, Source = "cup" }] };
+        var evening = WaterCalculator.CalculateDynamic(s, eveningRecord, day.AddHours(17).AddMinutes(30));
+        Assert.Equal(1, evening.TotalReminders);
+        Assert.Equal(day.AddHours(21).AddMinutes(10), evening.NextReminder);
+        Assert.Equal(0, evening.SuggestedMl);
+    }
+
+    [Fact]
+    public void NoEveningWindow_PacesTheWholeGoalDuringWork()
+    {
+        var s = new UserSettings { QuietStart = new TimeSpan(17, 30, 0) };
+        var plan = WaterCalculator.CalculateDynamic(s, new DailyRecord(), new DateTime(2026, 11, 3, 8, 0, 0));
+        Assert.Equal(9, plan.TotalReminders);
     }
 
     // ---------- every path that changes today's total recomputes immediately ----------
@@ -154,7 +226,7 @@ public sealed class DynamicReminderTests
         Assert.True(h.Tracker.Plan().SuggestedMl > 0);   // behind, due now
         Assert.Equal(370, h.Tracker.Drink(370, source));
         Assert.Equal(1, h.Changes);
-        Assert.Equal(T(11, 55), h.Next);                // 5 cups over 300 min from 11:00
+        Assert.Equal(T(13, 56), h.Next);                // 3 work cups over 300 min from 11:00, skips lunch
         Assert.Equal(0, h.Tracker.Plan().SuggestedMl);
         Assert.Equal(370, h.Disk.ConsumedMl);           // saved
     }
@@ -163,19 +235,19 @@ public sealed class DynamicReminderTests
     public void CorrectionUpRecomputes()
     {
         var h = new Harness(T(11, 0));
-        Assert.Equal(1480, h.Tracker.Correct(1480));
+        Assert.Equal(1110, h.Tracker.Correct(1110));
         Assert.Equal(1, h.Changes);
-        Assert.Equal(T(14, 30), h.Next);                // 2 cups left, skips lunch
+        Assert.Equal(T(15, 50), h.Next);                // 310 ml left at work, skips lunch
     }
 
     [Fact]
     public void CorrectionDownRecomputes()
     {
         var h = new Harness(T(10, 30), Ev(10, 0, 1110));
-        Assert.Equal(T(11, 43), h.Next);
+        Assert.Equal(T(15, 30), h.Next);
         Assert.Equal(-740, h.Tracker.Correct(370));
         Assert.Equal(1, h.Changes);
-        Assert.Equal(T(11, 6), h.Next);                 // more left -> sooner, timer still from last real drink
+        Assert.Equal(T(11, 43), h.Next);                // more left at work -> sooner, timer still from last real drink
     }
 
     [Fact]
@@ -184,9 +256,10 @@ public sealed class DynamicReminderTests
         var ev = Ev(10, 0, 370);
         var h = new Harness(T(10, 30), ev);
         var before = h.Next;
+        Assert.Equal(T(11, 43), before);
         Assert.True(h.Tracker.EditEvent(ev.Id, 1110));
         Assert.Equal(1, h.Changes);
-        Assert.Equal(T(11, 43), h.Next);
+        Assert.Equal(T(15, 30), h.Next);
         Assert.True(h.Next > before);
     }
 
@@ -197,7 +270,7 @@ public sealed class DynamicReminderTests
         var h = new Harness(T(10, 30), ev);
         Assert.True(h.Tracker.DeleteEvent(ev.Id));
         Assert.Equal(1, h.Changes);
-        Assert.Equal(370, h.Tracker.Plan().SuggestedMl); // nothing drunk -> 09:40 was due
+        Assert.Equal(370, h.Tracker.Plan().SuggestedMl); // nothing drunk -> 10:10 was due
     }
 
     [Fact]
@@ -215,9 +288,10 @@ public sealed class DynamicReminderTests
     {
         var h = new Harness(T(10, 30), Ev(10, 0, 370));
         var before = h.Next;
-        h.Tracker.Settings.DailyGoalMl = 1110;
+        h.Tracker.Settings.DailyGoalMl = 1900;
         h.Tracker.SettingsChanged();
         Assert.Equal(1, h.Changes);
+        Assert.Equal(T(13, 54), h.Next);
         Assert.True(h.Next > before);
     }
 
@@ -227,7 +301,7 @@ public sealed class DynamicReminderTests
         var h = new Harness(T(11, 0));
         h.Tracker.MarkReminded(T(11, 0));
         Assert.Equal(1, h.Changes);
-        Assert.Equal(T(11, 47), h.Next);
+        Assert.Equal(T(13, 37), h.Next);
     }
 
     [Fact]

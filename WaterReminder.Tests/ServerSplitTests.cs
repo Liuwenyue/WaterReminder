@@ -152,6 +152,10 @@ public sealed class ServerSplitTests
             Assert.True(status.ShowDesktop);
             Assert.True(status.PushWindow);
             Assert.Equal("Working", status.Phase);
+            Assert.StartsWith("下次 ", status.CompactStatusText);
+            Assert.EndsWith(" ml", status.CompactStatusText);
+            Assert.DoesNotContain("建议", status.CompactStatusText);
+            Assert.Contains("建议", status.StatusText);
             Assert.NotNull(status.DesktopAlert);
             var alert = status.DesktopAlert!;
             Assert.Equal("该喝水了", alert.Title);

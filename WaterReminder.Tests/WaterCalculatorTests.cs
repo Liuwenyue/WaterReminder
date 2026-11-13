@@ -17,10 +17,15 @@ public sealed class WaterCalculatorTests
     [Fact]
     public void DoesNotExceedGoalInSuggestion()
     {
-        var now = new DateTime(2026, 11, 2, 17, 0, 0);
-        var settings = new UserSettings { DailyGoalMl = 500, CupCapacityMl = 300, WorkCupCapacityMl = 300, WorkStart = new(9, 0, 0), WorkEnd = new(18, 0, 0) };
-        var record = new DailyRecord { Events = [new WaterEvent { AmountMl = 400, At = now.AddMinutes(-30) }] };
+        var now = new DateTime(2026, 11, 2, 17, 20, 0);
+        var settings = new UserSettings
+        {
+            DailyGoalMl = 500, CupCapacityMl = 300, WorkCupCapacityMl = 300, HomeCupCapacityMl = 50,
+            WorkStart = new(9, 0, 0), WorkEnd = new(18, 0, 0),
+        };
+        var record = new DailyRecord { Events = [new WaterEvent { AmountMl = 400, At = now.AddMinutes(-50) }] };
         var plan = WaterCalculator.CalculateDynamic(settings, record, now);
+        Assert.Equal(50, plan.SuggestedMl);
         Assert.InRange(plan.SuggestedMl, 0, 100);
     }
 
@@ -277,7 +282,7 @@ public sealed class WaterCalculatorTests
 
         var afterLast = WaterCalculator.CalculateDynamic(
             s, new DailyRecord { Events = [new WaterEvent { AmountMl = 370, At = d.AddHours(16) }] }, d.AddHours(17));
-        Assert.Equal(new DateTime(2026, 11, 3, 16, 20, 0), afterLast.NextReminder);
+        Assert.Equal(new DateTime(2026, 11, 3, 16, 26, 0), afterLast.NextReminder);
         Assert.Equal(370, afterLast.SuggestedMl);
         Assert.Equal(new DateTime(2026, 11, 3, 16, 55, 0), WaterCalculator.CurrentSlot(s, d.AddHours(17)));
     }

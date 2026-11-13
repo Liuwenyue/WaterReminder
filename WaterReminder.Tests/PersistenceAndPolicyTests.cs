@@ -170,6 +170,7 @@ public sealed class PersistenceAndPolicyTests
     {
         var text = PlanSummaryText.Describe(Mine(), new DailyRecord { Date = "2026-11-03" }, T(10, 0));
         Assert.Contains("工作杯 370 ml", text);
+        Assert.Contains("预留家庭杯 800 ml", text);
         Assert.Contains("间隔约", text);
         Assert.Contains("工作时段桌面和手机会同时提醒", text);
         Assert.DoesNotContain("09:40", text);           // no fixed timetable

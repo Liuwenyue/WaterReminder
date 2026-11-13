@@ -143,7 +143,7 @@
             </TextBox>
             <TextBlock x:Name="MiniGoal" Text=" / 2,000 ml" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
           </StackPanel>
-          <TextBlock x:Name="MiniStatus" Style="{StaticResource Caption}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
+          <TextBlock x:Name="MiniStatus" Style="{StaticResource Caption}" Margin="0,2,0,0" TextWrapping="NoWrap" TextTrimming="None"/>
         </StackPanel>
         <Button x:Name="MiniDrink" Grid.Column="2" Style="{StaticResource PrimaryButton}" Width="40" Height="40" Tag="20" Padding="0"
                 FontFamily="{StaticResource IconFont}" FontSize="16" Content="&#xE710;" Click="DrinkButton_Click" ToolTip="喝一杯"/>

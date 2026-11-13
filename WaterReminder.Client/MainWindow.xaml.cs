@@ -169,7 +169,11 @@ internal partial class MainWindow : Window
         StatusText.SetResourceReference(ForegroundProperty, brush);
         StatusGlyph.SetResourceReference(ForegroundProperty, brush);
         StatusPill.SetResourceReference(BackgroundProperty, brush switch { "Success" => "SuccessSoft", "Warning" => "WarningSoft", "AccentText" => "AccentSoft", _ => "SurfaceAlt" });
-        if (!_editing) MiniStatus.Text = string.IsNullOrWhiteSpace(status.StatusText) ? "" : status.StatusText;
+        if (!_editing)
+        {
+            var compactLine = string.IsNullOrWhiteSpace(status.CompactStatusText) ? status.StatusText : status.CompactStatusText;
+            MiniStatus.Text = compactLine ?? "";
+        }
 
         PauseGlyph.Text = status.RemindersPaused ? "\uE768" : "\uE769";
         PauseLabel.Text = status.RemindersPaused ? "恢复" : "暂停";
