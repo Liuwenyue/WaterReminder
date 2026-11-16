@@ -83,6 +83,21 @@ public sealed class TodayRecordsResponse
     public int ConsumedMl { get; set; }
     public int GoalMl { get; set; }
     public List<RecordEventResponse> Events { get; set; } = [];
+    /// <summary>False for past days: the client shows them read-only.</summary>
+    public bool Editable { get; set; } = true;
+}
+
+public sealed class HistoryDayResponse
+{
+    public string Date { get; set; } = "";
+    public int ConsumedMl { get; set; }
+    public int GoalMl { get; set; }
+    public int EventCount { get; set; }
+}
+
+public sealed class HistoryResponse
+{
+    public List<HistoryDayResponse> Days { get; set; } = [];
 }
 
 public sealed class RecordEventResponse

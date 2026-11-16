@@ -1,19 +1,22 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using WaterReminder.Services;
 
 namespace WaterReminder.Client;
 
 /// <summary>
-/// Local client configuration. Only the server URL and the API token belong here.
+/// Local client configuration. Server URL, API token, optional SSH tunnel, and display prefs.
 /// The phone push token stays on the server.
 /// </summary>
 internal sealed class ClientConfig
 {
     public string ServerUrl { get; set; } = "";
     public string ApiToken { get; set; } = "";
+    public TunnelOptions? Tunnel { get; set; }
     public bool FloatingWindow { get; set; } = true;
     public bool CompactMode { get; set; }
+    public bool AutoStart { get; set; }
     public double? CompactLeft { get; set; }
     public double? CompactTop { get; set; }
     public double? ExpandedLeft { get; set; }
@@ -21,7 +24,7 @@ internal sealed class ClientConfig
     public double? WindowLeft { get; set; }
     public double? WindowTop { get; set; }
 
-    [System.Text.Json.Serialization.JsonIgnore]
+    [JsonIgnore]
     public string SourcePath { get; set; } = "";
 
     public static string DefaultPath()
@@ -50,9 +53,20 @@ internal sealed class ClientConfig
 
         config.ServerUrl = config.ServerUrl.Trim().TrimEnd('/');
         config.ApiToken = config.ApiToken.Trim();
+        if (config.Tunnel is not null)
+        {
+            config.Tunnel.SshPath = string.IsNullOrWhiteSpace(config.Tunnel.SshPath) ? "ssh" : config.Tunnel.SshPath.Trim();
+            config.Tunnel.Host = (config.Tunnel.Host ?? "").Trim();
+            config.Tunnel.User = (config.Tunnel.User ?? "").Trim();
+            config.Tunnel.IdentityFile = (config.Tunnel.IdentityFile ?? "").Trim();
+            if (config.Tunnel.RemotePort <= 0) config.Tunnel.RemotePort = 8787;
+            if (config.Tunnel.LocalPort <= 0) config.Tunnel.LocalPort = 8787;
+        }
+
         var display = ClientDisplayStore.Read(json);
         config.FloatingWindow = display.FloatingWindow;
         config.CompactMode = display.CompactMode;
+        config.AutoStart = display.AutoStart;
         config.CompactLeft = display.CompactLeft;
         config.CompactTop = display.CompactTop;
         config.ExpandedLeft = display.ExpandedLeft;
@@ -67,6 +81,7 @@ internal sealed class ClientConfig
     {
         FloatingWindow = FloatingWindow,
         CompactMode = CompactMode,
+        AutoStart = AutoStart,
         CompactLeft = CompactLeft,
         CompactTop = CompactTop,
         ExpandedLeft = ExpandedLeft,
@@ -79,6 +94,7 @@ internal sealed class ClientConfig
     {
         FloatingWindow = display.FloatingWindow;
         CompactMode = display.CompactMode;
+        AutoStart = display.AutoStart;
         CompactLeft = display.CompactLeft;
         CompactTop = display.CompactTop;
         ExpandedLeft = display.ExpandedLeft;

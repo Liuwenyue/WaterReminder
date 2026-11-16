@@ -69,6 +69,15 @@ public sealed class ReminderApiClient : IDisposable
     public Task<ApiResult<TodayRecordsResponse>> GetRecordsAsync(CancellationToken ct = default)
         => ReadAsync<TodayRecordsResponse>("api/records", ct);
 
+    public Task<ApiResult<TodayRecordsResponse>> GetRecordsAsync(string date, CancellationToken ct = default)
+        => ReadAsync<TodayRecordsResponse>($"api/records?date={Uri.EscapeDataString(date)}", ct);
+
+    public Task<ApiResult<HistoryResponse>> GetHistoryAsync(int days = 30, CancellationToken ct = default)
+        => ReadAsync<HistoryResponse>($"api/history?days={days}", ct);
+
+    public Task<ApiResult<object>> GetHealthAsync(CancellationToken ct = default)
+        => ReadAsync<object>("health", ct);
+
     public async Task<ApiResult<SetTotalResponse>> SetTodayTotalAsync(int totalMl, CancellationToken ct = default)
     {
         try

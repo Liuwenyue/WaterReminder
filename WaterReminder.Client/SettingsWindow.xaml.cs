@@ -20,8 +20,15 @@ public partial class SettingsWindow : Window
     private readonly string? _pauseUntil;
 
     public bool FloatingWindow => FloatingBox.IsChecked == true;
+    public bool AutoStart => AutoStartBox.IsChecked == true;
 
-    public SettingsWindow(ClientSettingsResponse current, bool floatingWindow, Func<SettingsUpdate, Task<string?>> save, DateTime now, int consumedMl)
+    public SettingsWindow(
+        ClientSettingsResponse current,
+        bool floatingWindow,
+        bool autoStart,
+        Func<SettingsUpdate, Task<string?>> save,
+        DateTime now,
+        int consumedMl)
     {
         ClientTheme.Ensure();
         InitializeComponent();
@@ -48,6 +55,7 @@ public partial class SettingsWindow : Window
             _days[i].IsChecked = current.ActiveDays[i];
         MobilePushBox.IsChecked = current.MobilePushEnabled;
         FloatingBox.IsChecked = floatingWindow;
+        AutoStartBox.IsChecked = autoStart;
 
         foreach (var stepper in new[] { GoalStepper, WorkCupStepper, HomeCupStepper, StartStepper, EndStepper, LunchStartStepper, LunchEndStepper, NoDrinkStepper, GapStepper, QuietStepper })
             stepper.ValueChanged += (_, _) => Validate();

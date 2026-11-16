@@ -34,6 +34,10 @@ public sealed class StorageService
         return LoadAllRecords().FirstOrDefault(x => x.Date == key) ?? new DailyRecord { Date = key };
     }
 
+    /// <summary>Every saved day, oldest first. Missing days are omitted.</summary>
+    public IReadOnlyList<DailyRecord> ListDailyRecords()
+        => LoadAllRecords().OrderBy(x => x.Date).ToList();
+
     public void SaveSettings(UserSettings settings) => AtomicWrite(SettingsPath, JsonSerializer.Serialize(Normalize(settings), _options));
 
     public void SaveDailyRecord(DailyRecord record)

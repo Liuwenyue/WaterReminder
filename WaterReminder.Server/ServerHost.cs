@@ -92,7 +92,14 @@ public static class ServerHost
                 : Results.NotFound(new { ok = false });
         });
 
-        app.MapGet("/api/records", (ReminderEngine e) => Results.Ok(e.TodayRecords()));
+        app.MapGet("/api/records", (ReminderEngine e, string? date) =>
+        {
+            if (string.IsNullOrWhiteSpace(date))
+                return Results.Ok(e.TodayRecords());
+            var day = e.RecordsFor(date);
+            return day is null ? Results.BadRequest(new { error = "日期格式应为 yyyy-MM-dd。" }) : Results.Ok(day);
+        });
+        app.MapGet("/api/history", (ReminderEngine e, int? days) => Results.Ok(e.History(days ?? 30)));
         app.MapPut("/api/records/total", async (ReminderEngine e, HttpRequest request) =>
         {
             SetTotalRequest? body = null;

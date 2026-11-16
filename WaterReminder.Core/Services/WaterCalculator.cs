@@ -279,7 +279,11 @@ public static class WaterCalculator
     {
         if (record.ConsumedMl >= s.DailyGoalMl) return compact ? "今日目标已完成" : "太棒了，今天的喝水目标已完成！";
         if (s.RemindersPaused)
-            return compact ? "提醒已暂停" : s.PauseUntil is null || s.PauseUntil.Value.Date > now.Date ? "今日提醒已暂停" : $"提醒已暂停至 {s.PauseUntil:HH:mm}";
+        {
+            if (s.PauseUntil is { } until && until > now && until.Date == now.Date)
+                return compact ? $"暂停至 {until:HH:mm}" : $"提醒已暂停至 {until:HH:mm}";
+            return compact ? "今日暂停" : "今日提醒已暂停";
+        }
         if (!IsActiveDay(s, now)) return "今天休息，不提醒";
         var phase = PhaseAt(s, now);
         if (phase == DayPhase.NoDrinkWindow) return "下班前不再提醒";

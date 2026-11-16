@@ -6,10 +6,10 @@ Reminder rules run headless on Linux. The Windows client keeps the original floa
 
 - **WaterReminder.Core** — schedule, cup sizes, PushWard, and records.
 - **WaterReminder.Server** — small HTTP service on a VM, and the source of truth for settings and today's record. Default port **8787**. Times are always **Asia/Shanghai**.
-- **WaterReminder.Client** — Windows tray, plus the original floating widget, settings, and today's records. It stores the server URL, the API token, and whether the widget is shown. The tray menu **设置** opens the desktop settings window and writes the goal, cups, schedule, and workdays back to the server. It toasts 「该喝水了」 during work hours and stays quiet after work ends.
+- **WaterReminder.Client** — Windows tray, plus the original floating widget, settings, and today's records. It stores the server URL, the API token, an optional SSH tunnel, and local prefs such as the floating window and launch-at-logon. The tray menu **设置** writes reminder settings back to the server; the tray can also pause or resume reminders. It toasts 「该喝水了」 during work hours and stays quiet after work ends. A second launch activates the existing instance.
 - **WaterReminder** — the original WPF app. It still runs on Windows by itself. Running it together with the server sends duplicate reminders.
 
-Phone reminders use **PushWard**.
+Phone reminders use **PushWard**. The server defaults to `127.0.0.1:8787`. The Windows client can open an SSH local forward from the optional `tunnel` block in `client.json` (placeholders only in the sample — do not commit a real host or key path).
 
 ## Reminder rules (all configurable)
 

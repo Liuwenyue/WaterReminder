@@ -11,92 +11,104 @@ public sealed class WindowPlacementTests
     private const double W = 352, CompactH = 76, ExpandedH = 520;
 
     [Fact]
-    public void CollapseReturnsToCompactSpot_AfterExpand()
-    {
-        var s = new UserSettings { CompactMode = true };
-        WindowPlacement.Remember(s, compact: true, 1189.6, 673.6);                // user dragged compact window
-        var compactRect = new ScreenRect(1189.6, 673.6, W, CompactH);
-        // expand (no expanded spot yet): grows upward, clamped on screen
-        var exp = WindowPlacement.Resolve(s, compact: false, W, ExpandedH, One, compactRect);
-        Assert.Equal(1184, exp.Left);                                               // pulled in from the right edge
-        Assert.Equal(673.6 + CompactH - ExpandedH, exp.Top, 3);
-        // collapse: exactly the compact spot again
-        var back = WindowPlacement.Resolve(s, compact: true, W, CompactH, One, new ScreenRect(exp.Left, exp.Top, W, ExpandedH));
-        Assert.Equal((1184.0, 673.6), (back.Left, Math.Round(back.Top, 1)));       // 1189.6 itself is 5.6px off-screen -> clamped
-    }
-
-    [Fact]
-    public void CollapseReturnsExactlyWhenFullyVisible()
-    {
-        var s = new UserSettings { CompactMode = true };
-        WindowPlacement.Remember(s, true, 900, 600);
-        var exp = WindowPlacement.Resolve(s, false, W, ExpandedH, One, new ScreenRect(900, 600, W, CompactH));
-        var back = WindowPlacement.Resolve(s, true, W, CompactH, One, new ScreenRect(exp.Left, exp.Top, W, ExpandedH));
-        Assert.Equal((900.0, 600.0), back);
-    }
-
-    [Fact]
-    public void ExpandedDragDoesNotOverwriteCompactSpot()
+    public void ToggleKeepsTopLeft_ThenClamps()
     {
         var s = new UserSettings();
-        WindowPlacement.Remember(s, true, 900, 600);
-        WindowPlacement.Remember(s, false, 100, 50);                              // user drags the big window
-        Assert.Equal((900.0, 600.0), WindowPlacement.Saved(s, true));
-        Assert.Equal((100.0, 50.0), WindowPlacement.Saved(s, false));
-        Assert.Equal((100.0, 50.0), WindowPlacement.Resolve(s, false, W, ExpandedH, One, new ScreenRect(900, 600, W, CompactH)));
-        Assert.Equal((900.0, 600.0), WindowPlacement.Resolve(s, true, W, CompactH, One, new ScreenRect(100, 50, W, ExpandedH)));
+        WindowPlacement.Remember(s, 1189.6, 673.6);
+        var compact = new ScreenRect(1189.6, 673.6, W, CompactH);
+        // Expand: same top-left, taller window is clamped up into the work area.
+        var exp = WindowPlacement.ClampToVisible(compact.Left, compact.Top, W, ExpandedH, One);
+        Assert.Equal(1184, exp.Left); // right edge pulled in
+        Assert.True(exp.Top <= compact.Top);
+        Assert.True(Primary.Contains(new ScreenRect(exp.Left, exp.Top, W, ExpandedH)));
+
+        // Collapse: keep that top-left (shared anchor).
+        var back = WindowPlacement.ClampToVisible(exp.Left, exp.Top, W, CompactH, One);
+        Assert.Equal(exp.Left, back.Left);
+        Assert.Equal(exp.Top, back.Top);
+    }
+
+    [Fact]
+    public void SharedRemember_IsUsedByBothModes()
+    {
+        var s = new UserSettings();
+        WindowPlacement.Remember(s, 900, 600);
+        Assert.Equal((900.0, 600.0), WindowPlacement.Saved(s));
+        Assert.Equal((900.0, 600.0), WindowPlacement.Resolve(s, W, CompactH, One));
+        // Expanded is taller: same left, top pulled up so the window stays on screen.
+        Assert.Equal((900.0, Primary.Bottom - ExpandedH), WindowPlacement.Resolve(s, W, ExpandedH, One));
+        Assert.Equal(900, s.CompactLeft);
+        Assert.Equal(900, s.ExpandedLeft);
     }
 
     [Fact]
     public void PersistsAcrossRestart_JsonRoundTripKeepsOtherFields()
     {
         var s = new UserSettings { DailyGoalMl = 2220, CupCapacityMl = 370, CompactMode = true, NoDrinkBeforeEndMinutes = 30 };
-        WindowPlacement.Remember(s, true, 900, 600);
-        WindowPlacement.Remember(s, false, 100, 50);
+        WindowPlacement.Remember(s, 900, 600);
         var json = System.Text.Json.JsonSerializer.Serialize(s);
         var r = System.Text.Json.JsonSerializer.Deserialize<UserSettings>(json)!;
         WindowPlacement.Migrate(r);
-        Assert.Equal((900.0, 600.0), WindowPlacement.Resolve(r, true, W, CompactH, One));
+        Assert.Equal((900.0, 600.0), WindowPlacement.Resolve(r, W, CompactH, One));
         Assert.Equal(2220, r.DailyGoalMl);
         Assert.Equal(370, r.CupCapacityMl);
         Assert.Equal(30, r.NoDrinkBeforeEndMinutes);
     }
 
     [Fact]
-    public void LegacyPositionMigratesIntoCurrentMode()
+    public void LegacyPerModePositionMigratesIntoSharedAnchor()
     {
-        // user's existing settings.json: compact mode, WindowLeft/Top only
-        var r = System.Text.Json.JsonSerializer.Deserialize<UserSettings>("{\"CompactMode\":true,\"WindowLeft\":1189.6,\"WindowTop\":673.6,\"DailyGoalMl\":2220}")!;
+        var r = System.Text.Json.JsonSerializer.Deserialize<UserSettings>(
+            "{\"CompactMode\":true,\"CompactLeft\":1189.6,\"CompactTop\":673.6,\"DailyGoalMl\":2220}")!;
         WindowPlacement.Migrate(r);
-        Assert.Equal((1189.6, 673.6), WindowPlacement.Saved(r, true));
-        Assert.Null(WindowPlacement.Saved(r, false));
+        Assert.Equal((1189.6, 673.6), WindowPlacement.Saved(r));
+        Assert.Equal(1189.6, r.WindowLeft);
+    }
+
+    [Fact]
+    public void LegacyWindowLeftMigratesIntoSharedAnchor()
+    {
+        var r = System.Text.Json.JsonSerializer.Deserialize<UserSettings>(
+            "{\"CompactMode\":true,\"WindowLeft\":1189.6,\"WindowTop\":673.6,\"DailyGoalMl\":2220}")!;
+        WindowPlacement.Migrate(r);
+        Assert.Equal((1189.6, 673.6), WindowPlacement.Saved(r));
     }
 
     [Theory]
     [InlineData(3000, 600)]     // monitor that no longer exists (right)
     [InlineData(-2000, -900)]   // old left/top monitor
     [InlineData(1400, 790)]     // resolution shrank, partly off-screen
-    public void OffScreenSpotIsPulledBack(double l, double t)
+    public void OffScreenSpotIsPulledBackToPrimary(double l, double t)
     {
         var s = new UserSettings();
-        WindowPlacement.Remember(s, true, l, t);
-        var p = WindowPlacement.Resolve(s, true, W, CompactH, One);
+        WindowPlacement.Remember(s, l, t);
+        var p = WindowPlacement.Resolve(s, W, CompactH, One);
         Assert.True(Primary.Contains(new ScreenRect(p.Left, p.Top, W, CompactH)), $"{p}");
     }
 
     [Fact]
-    public void SecondMonitorSpotIsKept()
+    public void SecondMonitorSpotIsKept_UntilUnplugged()
     {
         ScreenRect[] two = [Primary, new(1536, 0, 1920, 1040)];
         var s = new UserSettings();
-        WindowPlacement.Remember(s, true, 2500, 700);
-        Assert.Equal((2500.0, 700.0), WindowPlacement.Resolve(s, true, W, CompactH, two));
-        // monitor unplugged -> back onto the primary
-        var p = WindowPlacement.Resolve(s, true, W, CompactH, One);
+        WindowPlacement.Remember(s, 2500, 700);
+        Assert.Equal((2500.0, 700.0), WindowPlacement.Resolve(s, W, CompactH, two));
+        var p = WindowPlacement.Resolve(s, W, CompactH, One);
         Assert.True(Primary.Contains(new ScreenRect(p.Left, p.Top, W, CompactH)));
     }
 
     [Fact]
+    public void ClampDuringDrag_KeepsAllEdgesInside()
+    {
+        var (left, top) = WindowPlacement.ClampToVisible(-40, -20, W, CompactH, One);
+        Assert.Equal(0, left);
+        Assert.Equal(0, top);
+        var (right, bottom) = WindowPlacement.ClampToVisible(2000, 900, W, CompactH, One);
+        Assert.Equal(Primary.Right - W, right);
+        Assert.Equal(Primary.Bottom - CompactH, bottom);
+    }
+
+    [Fact]
     public void NothingSavedDefaultsToBottomRight()
-        => Assert.Equal((1536 - W - 8, 816 - CompactH - 8), WindowPlacement.Resolve(new UserSettings(), true, W, CompactH, One));
+        => Assert.Equal((1536 - W - 8, 816 - CompactH - 8), WindowPlacement.Resolve(new UserSettings(), W, CompactH, One));
 }

@@ -1,5 +1,15 @@
 {
-  "serverUrl": "http://YOUR_VM:8787",
+  "serverUrl": "http://127.0.0.1:8787",
   "apiToken": "",
-  "floatingWindow": true
+  "floatingWindow": true,
+  "autoStart": false,
+  "tunnel": {
+    "enabled": false,
+    "sshPath": "ssh",
+    "host": "YOUR_VM_HOST",
+    "user": "YOUR_SSH_USER",
+    "identityFile": "C:\\\\Users\\\\YOU\\\\.ssh\\\\id_ed25519",
+    "remotePort": 8787,
+    "localPort": 8787
+  }
 }

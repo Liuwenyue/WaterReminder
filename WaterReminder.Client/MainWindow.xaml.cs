@@ -52,7 +52,7 @@ internal partial class MainWindow : Window
             e.Cancel = true;
             Hide();
         };
-        WindowEx.EnableDrag(this, SavePosition);
+        WindowEx.EnableDrag(this, SavePosition, WorkAreas);
         WpfInterop.EnableKeyboard(this);
     }
 
@@ -65,6 +65,7 @@ internal partial class MainWindow : Window
     private IReadOnlyList<ScreenRect> WorkAreas()
     {
         var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this);
+        // Primary first so a missing saved monitor falls back to the main screen.
         return FormsScreen.AllScreens
             .OrderByDescending(x => x.Primary)
             .Select(x => new ScreenRect(
@@ -78,13 +79,13 @@ internal partial class MainWindow : Window
     private void PlaceWindow()
     {
         var settings = _config.Display().ToSettings();
-        (Left, Top) = WindowPlacement.Resolve(settings, _config.CompactMode, ActualWidth, ActualHeight, WorkAreas());
+        (Left, Top) = WindowPlacement.Resolve(settings, ActualWidth, ActualHeight, WorkAreas());
     }
 
     private void SavePosition()
     {
         var settings = _config.Display().ToSettings();
-        WindowPlacement.Remember(settings, _config.CompactMode, Left, Top);
+        WindowPlacement.Remember(settings, Left, Top);
         var display = _config.Display();
         display.Capture(settings);
         _config.ApplyDisplay(display);
@@ -94,15 +95,14 @@ internal partial class MainWindow : Window
     private void ApplyMode()
     {
         var compact = _config.CompactMode;
-        var before = new ScreenRect(Left, Top, ActualWidth, ActualHeight);
+        var left = Left;
+        var top = Top;
         ExpandedPanel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         CompactPanel.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
-        if (IsLoaded && !double.IsNaN(Left) && !double.IsNaN(Top))
-        {
-            UpdateLayout();
-            var settings = _config.Display().ToSettings();
-            (Left, Top) = WindowPlacement.Resolve(settings, compact, ActualWidth, ActualHeight, WorkAreas(), before);
-        }
+        if (!IsLoaded || double.IsNaN(left) || double.IsNaN(top)) return;
+        UpdateLayout();
+        // Keep the shared top-left anchor; only the size changes.
+        (Left, Top) = WindowPlacement.ClampToVisible(left, top, ActualWidth, ActualHeight, WorkAreas());
     }
 
     private async Task RefreshAsync()
@@ -270,7 +270,11 @@ internal partial class MainWindow : Window
     private async void RecordsButton_Click(object sender, RoutedEventArgs e)
     {
         var cup = _status is null ? 370 : FloatingWidgetView.CurrentCupMl(_status);
-        var dialog = new RecordsWindow(_api, cup) { Owner = this };
+        DateTime? serverNow = null;
+        if (_status is not null
+            && DateTime.TryParse(_status.Now, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var now))
+            serverNow = now;
+        var dialog = new RecordsWindow(_api, cup, serverNow) { Owner = this };
         dialog.ShowDialog();
         await RefreshAsync();
     }

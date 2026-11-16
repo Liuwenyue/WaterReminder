@@ -12,6 +12,8 @@ public sealed class ClientDisplayPreferences
 {
     public bool FloatingWindow { get; set; } = true;
     public bool CompactMode { get; set; }
+    /// <summary>Launch at Windows logon. Registry only; never uploaded.</summary>
+    public bool AutoStart { get; set; }
     public double? CompactLeft { get; set; }
     public double? CompactTop { get; set; }
     public double? ExpandedLeft { get; set; }
@@ -25,6 +27,7 @@ public sealed class ClientDisplayPreferences
         {
             FloatingWindow = FloatingWindow,
             CompactMode = CompactMode,
+            AutoStart = AutoStart,
             CompactLeft = CompactLeft,
             CompactTop = CompactTop,
             ExpandedLeft = ExpandedLeft,
@@ -40,6 +43,7 @@ public sealed class ClientDisplayPreferences
     {
         FloatingWindow = settings.FloatingWindow;
         CompactMode = settings.CompactMode;
+        AutoStart = settings.AutoStart;
         CompactLeft = settings.CompactLeft;
         CompactTop = settings.CompactTop;
         ExpandedLeft = settings.ExpandedLeft;
@@ -61,12 +65,20 @@ public static class ClientDisplayStore
             prefs.FloatingWindow = floating;
         if (root["compactMode"] is JsonValue compact && compact.TryGetValue<bool>(out var mode))
             prefs.CompactMode = mode;
+        if (root["autoStart"] is JsonValue auto && auto.TryGetValue<bool>(out var start))
+            prefs.AutoStart = start;
         prefs.CompactLeft = ReadNumber(root, "compactLeft");
         prefs.CompactTop = ReadNumber(root, "compactTop");
         prefs.ExpandedLeft = ReadNumber(root, "expandedLeft");
         prefs.ExpandedTop = ReadNumber(root, "expandedTop");
         prefs.WindowLeft = ReadNumber(root, "windowLeft");
         prefs.WindowTop = ReadNumber(root, "windowTop");
+        // Collapse older per-mode slots into the shared anchor used by both modes.
+        if (prefs.WindowLeft is null || prefs.WindowTop is null)
+        {
+            prefs.WindowLeft ??= prefs.CompactLeft ?? prefs.ExpandedLeft;
+            prefs.WindowTop ??= prefs.CompactTop ?? prefs.ExpandedTop;
+        }
         return prefs;
     }
 
@@ -76,12 +88,14 @@ public static class ClientDisplayStore
         var root = string.IsNullOrWhiteSpace(json) ? new JsonObject() : JsonNode.Parse(json) as JsonObject ?? new JsonObject();
         root["floatingWindow"] = prefs.FloatingWindow;
         root["compactMode"] = prefs.CompactMode;
-        SetNumber(root, "compactLeft", prefs.CompactLeft);
-        SetNumber(root, "compactTop", prefs.CompactTop);
-        SetNumber(root, "expandedLeft", prefs.ExpandedLeft);
-        SetNumber(root, "expandedTop", prefs.ExpandedTop);
+        root["autoStart"] = prefs.AutoStart;
         SetNumber(root, "windowLeft", prefs.WindowLeft);
         SetNumber(root, "windowTop", prefs.WindowTop);
+        // Keep legacy keys in sync so an older client still sees a position.
+        SetNumber(root, "compactLeft", prefs.WindowLeft ?? prefs.CompactLeft);
+        SetNumber(root, "compactTop", prefs.WindowTop ?? prefs.CompactTop);
+        SetNumber(root, "expandedLeft", prefs.WindowLeft ?? prefs.ExpandedLeft);
+        SetNumber(root, "expandedTop", prefs.WindowTop ?? prefs.ExpandedTop);
         return root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
     }
 

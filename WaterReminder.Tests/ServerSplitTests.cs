@@ -441,7 +441,11 @@ public sealed class ServerSplitTests
         Assert.Contains("8787", unit);
         Assert.Contains("Asia/Shanghai", unit);
         Assert.DoesNotContain("iptables", unit);
-        Assert.Contains("YOUR_VM:8787", File.ReadAllText(Path.Combine(root, "WaterReminder.Client", "client.sample.json")));
+        var sample = File.ReadAllText(Path.Combine(root, "WaterReminder.Client", "client.sample.json"));
+        Assert.Contains("127.0.0.1:8787", sample);
+        Assert.Contains("YOUR_VM_HOST", sample);
+        Assert.Contains("YOUR_SSH_USER", sample);
+        Assert.DoesNotContain("hlk_", sample);
     }
 
     private static DateTime FindDue(DateTime from, DateTime until)

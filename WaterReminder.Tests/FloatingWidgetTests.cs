@@ -8,40 +8,45 @@ public sealed class FloatingWidgetTests
     [Fact]
     public void MissingFloatingWindow_DefaultsToShown_AndSaveKeepsTheApiToken()
     {
-        const string original = """{"serverUrl":"http://vm:8787","apiToken":"desktop-api-token"}""";
+        const string original = """{"serverUrl":"http://127.0.0.1:8787","apiToken":"desktop-api-token"}""";
         var prefs = ClientDisplayStore.Read(original);
         Assert.True(prefs.FloatingWindow);
         Assert.False(prefs.CompactMode);
+        Assert.False(prefs.AutoStart);
 
         prefs.FloatingWindow = false;
         prefs.CompactMode = true;
-        prefs.CompactLeft = 40;
-        prefs.CompactTop = 80;
+        prefs.AutoStart = true;
+        prefs.WindowLeft = 40;
+        prefs.WindowTop = 80;
         var saved = ClientDisplayStore.Apply(original, prefs);
         Assert.Contains("desktop-api-token", saved);
-        Assert.Contains("http://vm:8787", saved);
+        Assert.Contains("http://127.0.0.1:8787", saved);
+        Assert.Contains("\"autoStart\": true", saved);
         Assert.DoesNotContain("hlk_", saved);
 
         var again = ClientDisplayStore.Read(saved);
         Assert.False(again.FloatingWindow);
         Assert.True(again.CompactMode);
-        Assert.Equal(40, again.CompactLeft);
-        Assert.Equal(80, again.CompactTop);
+        Assert.True(again.AutoStart);
+        Assert.Equal(40, again.WindowLeft);
+        Assert.Equal(80, again.WindowTop);
     }
 
     [Fact]
-    public void RememberedPosition_StaysWithTheCurrentMode()
+    public void RememberedPosition_IsSharedAcrossModes()
     {
         var prefs = new ClientDisplayPreferences { FloatingWindow = true };
         var settings = prefs.ToSettings();
-        WindowPlacement.Remember(settings, compact: false, 120, 240);
+        WindowPlacement.Remember(settings, 120, 240);
         prefs.Capture(settings);
+        Assert.Equal(120, prefs.WindowLeft);
+        Assert.Equal(240, prefs.WindowTop);
+        Assert.Equal(120, prefs.CompactLeft);
         Assert.Equal(120, prefs.ExpandedLeft);
-        Assert.Equal(240, prefs.ExpandedTop);
-        Assert.Null(prefs.CompactLeft);
 
         var restored = ClientDisplayStore.Read(ClientDisplayStore.Apply("{}", prefs)).ToSettings();
-        var placed = WindowPlacement.Resolve(restored, compact: false, 100, 50, []);
+        var placed = WindowPlacement.Resolve(restored, 100, 50, []);
         Assert.Equal((120d, 240d), placed);
     }
 

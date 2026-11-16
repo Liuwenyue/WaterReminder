@@ -166,7 +166,52 @@ public sealed class ReminderEngine : IDisposable
         lock (_gate)
         {
             RefreshLocked();
-            return MapRecords();
+            return MapRecords(_progress.Today, editable: true);
+        }
+    }
+
+    /// <summary>One calendar day from storage. Today is editable; past days are read-only.</summary>
+    public TodayRecordsResponse? RecordsFor(string? dateText)
+    {
+        if (string.IsNullOrWhiteSpace(dateText)
+            || !DateOnly.TryParseExact(dateText.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+            return null;
+        lock (_gate)
+        {
+            RefreshLocked();
+            var today = DateOnly.FromDateTime(_clock());
+            var record = date == today ? _progress.Today : _storage.LoadDailyRecord(date);
+            return MapRecords(record, editable: date == today);
+        }
+    }
+
+    /// <summary>Recent days that have a saved record, newest first. Empty days are omitted.</summary>
+    public HistoryResponse History(int days)
+    {
+        var take = Math.Clamp(days <= 0 ? 30 : days, 1, 366);
+        lock (_gate)
+        {
+            RefreshLocked();
+            var today = DateOnly.FromDateTime(_clock());
+            var from = today.AddDays(-(take - 1));
+            var daysList = _storage.ListDailyRecords()
+                .Where(r => DateOnly.TryParseExact(r.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)
+                            && d >= from && d <= today)
+                .Select(r =>
+                {
+                    var consumed = r.Date == _progress.Today.Date ? _progress.Today.ConsumedMl : r.ConsumedMl;
+                    var events = r.Date == _progress.Today.Date ? _progress.Today.Events : r.Events;
+                    return new HistoryDayResponse
+                    {
+                        Date = r.Date,
+                        ConsumedMl = consumed,
+                        GoalMl = _settings.DailyGoalMl,
+                        EventCount = events.Count,
+                    };
+                })
+                .OrderByDescending(x => x.Date)
+                .ToList();
+            return new HistoryResponse { Days = daysList };
         }
     }
 
@@ -231,15 +276,14 @@ public sealed class ReminderEngine : IDisposable
         }
     }
 
-    private TodayRecordsResponse MapRecords()
-    {
-        var today = _progress.Today;
-        return new TodayRecordsResponse
+    private TodayRecordsResponse MapRecords(DailyRecord record, bool editable)
+        => new()
         {
-            Date = today.Date,
-            ConsumedMl = today.ConsumedMl,
+            Date = record.Date,
+            ConsumedMl = record.ConsumedMl,
             GoalMl = _settings.DailyGoalMl,
-            Events = today.Events
+            Editable = editable,
+            Events = record.Events
                 .OrderBy(x => x.At)
                 .Select(x => new RecordEventResponse
                 {
@@ -250,7 +294,6 @@ public sealed class ReminderEngine : IDisposable
                 })
                 .ToList(),
         };
-    }
 
     /// <summary>One phone tap. Work cup during work hours, home cup after work.</summary>
     public int RecordPhoneDrink()

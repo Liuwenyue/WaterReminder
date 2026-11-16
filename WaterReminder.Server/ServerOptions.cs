@@ -7,7 +7,8 @@ public sealed class ServerOptions
     public required string DataDirectory { get; init; }
     public string ApiToken { get; init; } = "";
     public int Port { get; init; } = DefaultPort;
-    public string BindAddress { get; init; } = "0.0.0.0";
+    /// <summary>Default is loopback; the Windows client reaches the VM through an SSH tunnel.</summary>
+    public string BindAddress { get; init; } = "127.0.0.1";
     public bool RunScheduler { get; init; } = true;
 
     public string ListenUrl => $"http://{BindAddress}:{Port}";
@@ -24,7 +25,7 @@ public sealed class ServerOptions
             port = parsed;
 
         var bind = Environment.GetEnvironmentVariable("WATERREMINDER_BIND");
-        if (string.IsNullOrWhiteSpace(bind)) bind = "0.0.0.0";
+        if (string.IsNullOrWhiteSpace(bind)) bind = "127.0.0.1";
 
         return Create(data, SecretFiles.ApiToken(data), port, bind.Trim(), requireApiToken);
     }
@@ -42,7 +43,7 @@ public sealed class ServerOptions
             DataDirectory = dataDirectory,
             ApiToken = apiToken?.Trim() ?? "",
             Port = port,
-            BindAddress = string.IsNullOrWhiteSpace(bindAddress) ? "0.0.0.0" : bindAddress.Trim(),
+            BindAddress = string.IsNullOrWhiteSpace(bindAddress) ? "127.0.0.1" : bindAddress.Trim(),
             RunScheduler = runScheduler,
         };
     }
