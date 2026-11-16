@@ -61,6 +61,10 @@ internal sealed class ClientConfig
             config.Tunnel.IdentityFile = (config.Tunnel.IdentityFile ?? "").Trim();
             if (config.Tunnel.RemotePort <= 0) config.Tunnel.RemotePort = 8787;
             if (config.Tunnel.LocalPort <= 0) config.Tunnel.LocalPort = 8787;
+            if (double.IsNaN(config.Tunnel.ReadyTimeoutSeconds)
+                || double.IsInfinity(config.Tunnel.ReadyTimeoutSeconds)
+                || config.Tunnel.ReadyTimeoutSeconds <= 0)
+                config.Tunnel.ReadyTimeoutSeconds = SshTunnelSpec.DefaultReadyTimeout.TotalSeconds;
         }
 
         var display = ClientDisplayStore.Read(json);

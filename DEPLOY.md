@@ -30,12 +30,13 @@ The Windows client config (`%LocalAppData%\WaterReminderClient\client.json`) hol
     "user": "YOUR_SSH_USER",
     "identityFile": "C:\\\\Users\\\\YOU\\\\.ssh\\\\id_ed25519",
     "remotePort": 8787,
-    "localPort": 8787
+    "localPort": 8787,
+    "readyTimeoutSeconds": 15
   }
 }
 ```
 
-With `tunnel.enabled`, the client starts `ssh -N -L` when the local port is not already open, reconnects with backoff if the process dies or `/health` fails, and stops only the SSH process it started. Status shows 「连接服务器中…」 while connecting (no popup spam).
+With `tunnel.enabled`, the client starts `ssh -N -L` when the local port is not already open. After starting ssh it polls the local port about every 250ms for up to `readyTimeoutSeconds` (default 15). If the ssh process exits during that wait, it fails immediately and retries with backoff; the same backoff applies when `/health` fails later. Only the SSH process this client started is stopped. Status shows 「连接服务器中…」 while connecting (no popup spam).
 
 ## Listen port
 

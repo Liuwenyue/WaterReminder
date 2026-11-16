@@ -51,7 +51,7 @@ internal static class Program
         {
             tunnel = new SshTunnelManager(config.Tunnel!);
             tunnel.Start();
-            try { tunnel.EnsureReadyAsync(TimeSpan.FromSeconds(8)).GetAwaiter().GetResult(); }
+            try { tunnel.EnsureReadyAsync(SshTunnelSpec.ReadyTimeout(config.Tunnel!)).GetAwaiter().GetResult(); }
             catch { }
         }
 

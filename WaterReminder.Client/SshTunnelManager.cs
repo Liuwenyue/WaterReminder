@@ -35,14 +35,12 @@ internal sealed class SshTunnelManager : IDisposable
     public async Task EnsureReadyAsync(TimeSpan timeout, CancellationToken ct = default)
     {
         if (!Enabled) return;
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            ct.ThrowIfCancellationRequested();
-            if (await PortOpenAsync(_options.LocalPort, ct).ConfigureAwait(false))
-                return;
-            await Task.Delay(400, ct).ConfigureAwait(false);
-        }
+        await SshTunnelSpec.WaitUntilReadyAsync(
+            timeout,
+            c => PortOpenAsync(_options.LocalPort, c),
+            () => true,
+            SshTunnelSpec.ReadyPollInterval,
+            ct).ConfigureAwait(false);
     }
 
     private async Task RunAsync(CancellationToken ct)
@@ -71,9 +69,15 @@ internal sealed class SshTunnelManager : IDisposable
                     continue;
                 }
 
-                // Give the forward a moment, then probe /health via TCP readiness.
-                await Task.Delay(800, ct).ConfigureAwait(false);
-                if (await PortOpenAsync(_options.LocalPort, ct).ConfigureAwait(false))
+                // SSH handshake can take several seconds; poll until the forward is up or the process dies.
+                var ready = await SshTunnelSpec.WaitUntilReadyAsync(
+                    SshTunnelSpec.ReadyTimeout(_options),
+                    ct => PortOpenAsync(_options.LocalPort, ct),
+                    ProcessAlive,
+                    SshTunnelSpec.ReadyPollInterval,
+                    ct).ConfigureAwait(false);
+
+                if (ready == TunnelReadyWaitResult.Ready)
                 {
                     SetConnecting(false);
                     backoff = TimeSpan.Zero;

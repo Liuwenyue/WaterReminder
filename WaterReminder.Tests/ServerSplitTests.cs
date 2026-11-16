@@ -445,6 +445,7 @@ public sealed class ServerSplitTests
         Assert.Contains("127.0.0.1:8787", sample);
         Assert.Contains("YOUR_VM_HOST", sample);
         Assert.Contains("YOUR_SSH_USER", sample);
+        Assert.Contains("readyTimeoutSeconds", sample);
         Assert.DoesNotContain("hlk_", sample);
     }
 

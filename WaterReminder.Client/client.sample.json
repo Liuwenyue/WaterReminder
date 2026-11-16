@@ -10,6 +10,7 @@
     "user": "YOUR_SSH_USER",
     "identityFile": "C:\\\\Users\\\\YOU\\\\.ssh\\\\id_ed25519",
     "remotePort": 8787,
-    "localPort": 8787
+    "localPort": 8787,
+    "readyTimeoutSeconds": 15
   }
 }

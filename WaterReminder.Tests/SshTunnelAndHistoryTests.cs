@@ -53,6 +53,70 @@ public sealed class SshTunnelAndHistoryTests
     }
 
     [Fact]
+    public void ReadyTimeout_DefaultsToFifteenSeconds_AndRejectsInvalid()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(15), SshTunnelSpec.DefaultReadyTimeout);
+        Assert.Equal(TimeSpan.FromMilliseconds(250), SshTunnelSpec.ReadyPollInterval);
+        Assert.Equal(15, new TunnelOptions().ReadyTimeoutSeconds);
+        Assert.Equal(TimeSpan.FromSeconds(15), SshTunnelSpec.ReadyTimeout(new TunnelOptions()));
+        Assert.Equal(TimeSpan.FromSeconds(30), SshTunnelSpec.ReadyTimeout(new TunnelOptions { ReadyTimeoutSeconds = 30 }));
+        Assert.Equal(TimeSpan.FromSeconds(15), SshTunnelSpec.ReadyTimeout(new TunnelOptions { ReadyTimeoutSeconds = 0 }));
+        Assert.Equal(TimeSpan.FromSeconds(15), SshTunnelSpec.ReadyTimeout(new TunnelOptions { ReadyTimeoutSeconds = -1 }));
+        Assert.Equal(TimeSpan.FromSeconds(15), SshTunnelSpec.ReadyTimeout(new TunnelOptions { ReadyTimeoutSeconds = double.NaN }));
+    }
+
+    [Fact]
+    public async Task WaitUntilReady_SucceedsWhenPortOpensAfterSeveralPolls()
+    {
+        var probes = 0;
+        var result = await SshTunnelSpec.WaitUntilReadyAsync(
+            TimeSpan.FromSeconds(2),
+            _ =>
+            {
+                probes++;
+                return Task.FromResult(probes >= 5);
+            },
+            () => true,
+            TimeSpan.FromMilliseconds(20));
+        Assert.Equal(TunnelReadyWaitResult.Ready, result);
+        Assert.True(probes >= 5);
+    }
+
+    [Fact]
+    public async Task WaitUntilReady_FailsImmediatelyWhenSshProcessExits()
+    {
+        var probes = 0;
+        var alive = true;
+        var result = await SshTunnelSpec.WaitUntilReadyAsync(
+            TimeSpan.FromSeconds(5),
+            _ =>
+            {
+                probes++;
+                // After the first unsuccessful probe, pretend ssh died.
+                alive = false;
+                return Task.FromResult(false);
+            },
+            () => alive,
+            TimeSpan.FromMilliseconds(20));
+        Assert.Equal(TunnelReadyWaitResult.ProcessExited, result);
+        Assert.True(probes >= 1);
+    }
+
+    [Fact]
+    public async Task WaitUntilReady_TimesOutWhenPortNeverOpens()
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var result = await SshTunnelSpec.WaitUntilReadyAsync(
+            TimeSpan.FromMilliseconds(120),
+            _ => Task.FromResult(false),
+            () => true,
+            TimeSpan.FromMilliseconds(30));
+        sw.Stop();
+        Assert.Equal(TunnelReadyWaitResult.TimedOut, result);
+        Assert.InRange(sw.ElapsedMilliseconds, 80, 2000);
+    }
+
+    [Fact]
     public void History_ReturnsPastDaysReadOnly_AndDateQueryWorks()
     {
         var dir = Path.Combine(Path.GetTempPath(), "WaterReminderTests", Guid.NewGuid().ToString("N"));
