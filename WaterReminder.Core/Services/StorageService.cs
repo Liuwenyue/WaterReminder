@@ -3,6 +3,14 @@ using System.Text.Json;
 
 namespace WaterReminder.Services;
 
+internal sealed class PhoneReplyState
+{
+    public string TokenHash { get; init; } = "";
+    public string? Cursor { get; set; }
+    public Dictionary<string, DateOnly> Sent { get; init; } = [];
+    public Dictionary<string, string> DrinkActions { get; init; } = [];
+}
+
 public sealed class StorageService
 {
     private readonly string _directory;
@@ -13,6 +21,20 @@ public sealed class StorageService
     private string SettingsPath => Path.Combine(_directory, "settings.json");
     private string RecordsPath => Path.Combine(_directory, "daily-records.json");
     private string BackupPath => RecordsPath + ".bak";
+    private string PhoneRepliesPath => Path.Combine(_directory, "phone-replies.json");
+
+    internal PhoneReplyState? LoadPhoneReplies()
+    {
+        if (!File.Exists(PhoneRepliesPath)) return null;
+        try { return JsonSerializer.Deserialize<PhoneReplyState>(File.ReadAllText(PhoneRepliesPath)); }
+        catch (JsonException) when (File.Exists(PhoneRepliesPath + ".bak"))
+        {
+            return JsonSerializer.Deserialize<PhoneReplyState>(File.ReadAllText(PhoneRepliesPath + ".bak"));
+        }
+    }
+
+    internal void SavePhoneReplies(PhoneReplyState state)
+        => AtomicWrite(PhoneRepliesPath, JsonSerializer.Serialize(state, _options));
 
     public UserSettings LoadSettings()
     {

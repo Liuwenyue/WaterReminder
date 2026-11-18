@@ -18,9 +18,11 @@ public partial class SettingsWindow : Window
     private readonly int _consumedMl;
     private readonly bool _remindersPaused;
     private readonly string? _pauseUntil;
+    private bool _saving;
 
     public bool FloatingWindow => FloatingBox.IsChecked == true;
     public bool AutoStart => AutoStartBox.IsChecked == true;
+    public string? PushWardToken => string.IsNullOrWhiteSpace(MemberPushToken.Password) ? null : MemberPushToken.Password.Trim();
 
     public SettingsWindow(
         ClientSettingsResponse current,
@@ -28,7 +30,8 @@ public partial class SettingsWindow : Window
         bool autoStart,
         Func<SettingsUpdate, Task<string?>> save,
         DateTime now,
-        int consumedMl)
+        int consumedMl,
+        string? memberName = null)
     {
         ClientTheme.Ensure();
         InitializeComponent();
@@ -56,6 +59,18 @@ public partial class SettingsWindow : Window
         MobilePushBox.IsChecked = current.MobilePushEnabled;
         FloatingBox.IsChecked = floatingWindow;
         AutoStartBox.IsChecked = autoStart;
+        if (memberName is not null)
+        {
+            Title = $"{memberName} · 成员设置";
+            SettingsTitle.Text = Title;
+            SettingsSubtitle.Text = "保存在服务器上，只修改该成员的提醒";
+            MobilePushHint.Text = "由服务器发送，只用于该成员。";
+            LocalPreferencesHeader.Visibility = Visibility.Collapsed;
+            LocalPreferencesCard.Visibility = Visibility.Collapsed;
+            MemberPushTokenPanel.Visibility = Visibility.Visible;
+            WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        }
+        Closed += (_, _) => MemberPushToken.Clear();
 
         foreach (var stepper in new[] { GoalStepper, WorkCupStepper, HomeCupStepper, StartStepper, EndStepper, LunchStartStepper, LunchEndStepper, NoDrinkStepper, GapStepper, QuietStepper })
             stepper.ValueChanged += (_, _) => Validate();
@@ -115,32 +130,38 @@ public partial class SettingsWindow : Window
             PlanSummary.Text = "设置有误时无法计算提醒计划";
         }
 
-        SaveButton.IsEnabled = validation.Ok;
+        SaveButton.IsEnabled = validation.Ok && !_saving;
         return validation.Ok;
     }
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
-        if (!Validate()) return;
+        if (_saving || !Validate()) return;
+        _saving = true;
         SaveButton.IsEnabled = false;
-        SaveError.Text = "";
+        SettingsContent.IsEnabled = false;
+        Show(SaveError, null);
         try
         {
             var error = await _save(Draft());
+            if (!IsVisible) return;
             if (error is null)
             {
+                MemberPushToken.Clear();
                 DialogResult = true;
                 return;
             }
-            SaveError.Text = error;
+            Show(SaveError, error);
         }
         catch
         {
-            SaveError.Text = "保存失败";
+            if (IsVisible) Show(SaveError, "保存失败");
         }
         finally
         {
-            if (DialogResult != true) SaveButton.IsEnabled = true;
+            _saving = false;
+            SettingsContent.IsEnabled = true;
+            if (IsVisible) Validate();
         }
     }
 

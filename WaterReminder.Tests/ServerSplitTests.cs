@@ -143,7 +143,7 @@ public sealed class ServerSplitTests
             Assert.Equal("hlk_test_token", post.Authorization);
             Assert.Contains("该喝水了", post.Body);
             Assert.Contains("已喝 0/3000 ml，建议 370 ml", post.Body);
-            Assert.Contains("\"id\":\"drink\"", post.Body);
+            Assert.Contains("\"id\":\"drink-", post.Body);
             Assert.DoesNotContain("\"url\"", post.Body);
             Assert.DoesNotContain("foreground", post.Body);
             Assert.DoesNotContain("hlk_test_token", post.Body);
@@ -426,7 +426,8 @@ public sealed class ServerSplitTests
         foreach (var file in SourceFiles(Path.Combine(root, "WaterReminder.Client")))
         {
             var text = File.ReadAllText(file);
-            Assert.DoesNotContain("PushWard", text);
+            Assert.DoesNotContain("new PushWardService", text);
+            Assert.DoesNotContain("/notifications/answers", text);
         }
 
         var deploy = File.ReadAllText(Path.Combine(root, "DEPLOY.md"));

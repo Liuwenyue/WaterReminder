@@ -54,6 +54,8 @@ public sealed class DailyRecord
     public List<WaterEvent> Events { get; set; } = [];
     /// <summary>Last reminder fired on this day. Persisted so a restart does not break the minimum gap.</summary>
     public DateTime? LastReminderAt { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public HashSet<string>? PhoneReceipts { get; set; }
     public int ConsumedMl => Math.Max(0, Events.Sum(x => x.AmountMl));
 }
 

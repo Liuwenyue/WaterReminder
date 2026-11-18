@@ -27,6 +27,9 @@ internal partial class MainWindow : Window
     private bool _wasDone;
     private bool _editing;
     private bool _allowClose;
+    private bool _modeTransitioning;
+    private int _modeGeneration;
+
 
     internal double DisplayMl { get => (double)GetValue(DisplayMlProperty); set => SetValue(DisplayMlProperty, value); }
 
@@ -44,6 +47,7 @@ internal partial class MainWindow : Window
         PreviewKeyDown += MainWindow_PreviewKeyDown;
         PreviewMouseLeftButtonDown += (_, e) =>
         {
+            if (_modeTransitioning) { e.Handled = true; return; }
             if (_editing && e.OriginalSource is DependencyObject source && !IsInside(source, Editor)) EndEditTotal(true);
         };
         Closing += (_, e) =>
@@ -52,8 +56,14 @@ internal partial class MainWindow : Window
             e.Cancel = true;
             Hide();
         };
-        WindowEx.EnableDrag(this, SavePosition, WorkAreas);
+        WindowEx.EnableDrag(this, SavePosition, WorkAreas, () => !_modeTransitioning);
         WpfInterop.EnableKeyboard(this);
+    }
+
+    internal new void Hide()
+    {
+        FinishModeTransition();
+        base.Hide();
     }
 
     public void ForceClose()
@@ -79,12 +89,17 @@ internal partial class MainWindow : Window
     private void PlaceWindow()
     {
         var settings = _config.Display().ToSettings();
-        (Left, Top) = WindowPlacement.Resolve(settings, ActualWidth, ActualHeight, WorkAreas());
+        (Left, Top) = WindowPlacement.Place(settings, _config.CompactMode, ActualWidth, ActualHeight, WorkAreas());
     }
 
     private void SavePosition()
     {
+        if (_modeTransitioning) return;
         var settings = _config.Display().ToSettings();
+        // Only an intentional compact drag chooses a new compact anchor. An expanded
+        // drag is temporary and must not replace the spot we return to on collapse.
+        if (!_config.CompactMode && WindowPlacement.Saved(settings) is not null) return;
+        // Called after an intentional drag, or immediately before leaving compact mode.
         WindowPlacement.Remember(settings, Left, Top);
         var display = _config.Display();
         display.Capture(settings);
@@ -92,17 +107,102 @@ internal partial class MainWindow : Window
         _config.Save();
     }
 
-    private void ApplyMode()
+    private void ApplyMode(bool animate = false)
     {
         var compact = _config.CompactMode;
-        var left = Left;
-        var top = Top;
-        ExpandedPanel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
-        CompactPanel.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
-        if (!IsLoaded || double.IsNaN(left) || double.IsNaN(top)) return;
-        UpdateLayout();
-        // Keep the shared top-left anchor; only the size changes.
-        (Left, Top) = WindowPlacement.ClampToVisible(left, top, ActualWidth, ActualHeight, WorkAreas());
+        var incoming = compact ? CompactPanel : ExpandedPanel;
+        var outgoing = compact ? ExpandedPanel : CompactPanel;
+        var from = (Left, Top);
+        var oldHeight = ActualHeight;
+        var width = ActualWidth;
+        var canAnimate = animate && IsLoaded && IsVisible && SystemParameters.ClientAreaAnimation
+            && oldHeight > 0 && double.IsFinite(from.Left) && double.IsFinite(from.Top);
+        var generation = ++_modeGeneration;
+        _modeTransitioning = true;
+
+        (double Left, double Top) Target(double height) =>
+            WindowPlacement.Resolve(_config.Display().ToSettings(), width, height, WorkAreas(),
+                new ScreenRect(from.Left, from.Top, width, oldHeight));
+
+        void Settle()
+        {
+            if (generation != _modeGeneration) return;
+            BeginAnimation(HeightProperty, null);
+            BeginAnimation(LeftProperty, null);
+            BeginAnimation(TopProperty, null);
+            incoming.BeginAnimation(OpacityProperty, null);
+            incoming.Opacity = 1;
+            incoming.Height = double.NaN;
+            Height = double.NaN;
+            SizeToContent = SizeToContent.Height;
+            UpdateLayout();
+            if (IsLoaded && double.IsFinite(from.Left) && double.IsFinite(from.Top))
+                (Left, Top) = Target(ActualHeight);
+            _modeTransitioning = false;
+        }
+
+        void ShowTarget()
+        {
+            if (generation != _modeGeneration) return;
+            if (canAnimate)
+            {
+                SizeToContent = SizeToContent.Manual;
+                Height = oldHeight;
+            }
+            outgoing.BeginAnimation(OpacityProperty, null);
+            outgoing.Opacity = 1;
+            outgoing.Visibility = Visibility.Collapsed;
+            incoming.Visibility = Visibility.Visible;
+            incoming.Height = double.NaN;
+            // Measure the entire card, including its border and shadow margin.
+            Card.Measure(new System.Windows.Size(Math.Max(1, width), double.PositiveInfinity));
+            var targetHeight = Card.DesiredSize.Height;
+            if (!canAnimate) { Settle(); return; }
+
+            var target = Target(targetHeight);
+            incoming.Height = Math.Max(0, incoming.DesiredSize.Height - incoming.Margin.Top - incoming.Margin.Bottom);
+            Height = targetHeight;
+            Left = target.Left;
+            Top = target.Top;
+            var duration = TimeSpan.FromMilliseconds(260);
+            DoubleAnimation Transition(double start, double end) => new(start, end, duration)
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut },
+                FillBehavior = FillBehavior.Stop
+            };
+            BeginAnimation(LeftProperty, Transition(from.Left, target.Left));
+            BeginAnimation(TopProperty, Transition(from.Top, target.Top));
+            incoming.BeginAnimation(OpacityProperty, Transition(0, 1));
+            var resize = Transition(oldHeight, targetHeight);
+            resize.Completed += (_, _) => Settle();
+            BeginAnimation(HeightProperty, resize);
+        }
+
+        if (!canAnimate) { ShowTarget(); return; }
+        var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(80))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
+        };
+        fade.Completed += (_, _) => ShowTarget();
+        outgoing.BeginAnimation(OpacityProperty, fade);
+    }
+
+    private void FinishModeTransition()
+    {
+        if (!_modeTransitioning) return;
+        ++_modeGeneration;
+        BeginAnimation(HeightProperty, null);
+        BeginAnimation(LeftProperty, null);
+        BeginAnimation(TopProperty, null);
+        foreach (var panel in new[] { CompactPanel, ExpandedPanel })
+        {
+            panel.BeginAnimation(OpacityProperty, null);
+            panel.Opacity = 1;
+            panel.Height = double.NaN;
+        }
+        Height = double.NaN;
+        SizeToContent = SizeToContent.Height;
+        ApplyMode();
     }
 
     private async Task RefreshAsync()
@@ -284,8 +384,10 @@ internal partial class MainWindow : Window
 
     private void CompactButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_modeTransitioning || _editing) return;
+        if (_config.CompactMode || WindowPlacement.Saved(_config.Display().ToSettings()) is null) SavePosition();
         _config.CompactMode = !_config.CompactMode;
-        ApplyMode();
+        ApplyMode(animate: true);
         _config.Save();
     }
 
@@ -420,7 +522,7 @@ internal partial class MainWindow : Window
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (_editing || e.OriginalSource is System.Windows.Controls.TextBox) return;
+        if (_modeTransitioning || _editing || e.OriginalSource is System.Windows.Controls.TextBox) return;
         if (e.Key is Key.Space or Key.Enter) { DrinkButton_Click(this, new RoutedEventArgs()); e.Handled = true; }
         else if (e.Key == Key.Escape) { Hide(); e.Handled = true; }
     }

@@ -13,14 +13,15 @@ public static class WindowEx
     /// Lets a borderless window be dragged from empty space. Text boxes and buttons keep the click.
     /// When <paramref name="workAreas"/> is provided, edges stay inside the desktop working area while dragging.
     /// </summary>
-    public static void EnableDrag(Window window, Action? dragged = null, Func<IReadOnlyList<ScreenRect>>? workAreas = null)
+    public static void EnableDrag(Window window, Action? dragged = null, Func<IReadOnlyList<ScreenRect>>? workAreas = null,
+        Func<bool>? canClamp = null)
     {
         var clamping = false;
         if (workAreas is not null)
         {
             window.LocationChanged += (_, _) =>
             {
-                if (clamping || !window.IsLoaded) return;
+                if (clamping || !window.IsLoaded || canClamp?.Invoke() == false) return;
                 var areas = workAreas();
                 if (areas.Count == 0) return;
                 var (left, top) = WindowPlacement.ClampToVisible(window.Left, window.Top, window.ActualWidth, window.ActualHeight, areas);

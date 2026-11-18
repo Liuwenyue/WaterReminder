@@ -14,7 +14,9 @@ namespace WaterReminder.Services;
 public sealed record PushWardAction(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("title")] string Title,
-    [property: JsonPropertyName("icon")] string Icon);
+    [property: JsonPropertyName("icon")] string Icon,
+    [property: JsonPropertyName("text_input")] bool? TextInput = null,
+    [property: JsonPropertyName("text_input_placeholder")] string? Placeholder = null);
 
 /// <summary>只包含请求体字段；API Token 走 Authorization 头，绝不写进 JSON。</summary>
 public sealed record PushWardPayload(
@@ -35,10 +37,17 @@ public sealed record PushWardMessage(string Token, PushWardPayload Payload)
 }
 
 /// <summary>电脑从 Answers 流里取回的一条动作记录。</summary>
-public sealed record PushWardAnswerItem(string NotificationId, string ActionId);
+public sealed record PushWardAnswerItem(string NotificationId, string ActionId, string? Text = null);
 
 /// <summary>一次 Answers 请求的结果；Cursor 为空表示服务端没有返回游标。</summary>
 public sealed record PushWardAnswerBatch(string? Cursor, IReadOnlyList<PushWardAnswerItem> Items);
+
+public interface IPushWardReplies
+{
+    string? LoadCursor(string token);
+    bool Accept(string token, string? previousCursor, PushWardAnswerBatch batch);
+    void Track(string token, string notificationId, string? cursor, DateTime date, string? drinkActionId = null);
+}
 
 /// <summary>
 /// 纯函数消息构造器，不联网，便于单测。令牌全部来自设置。
@@ -62,6 +71,14 @@ public static class PushWardMessageBuilder
     public const string DrinkActionId = "drink";
     public const string DrinkActionTitle = "喝水了";
     public const string DrinkActionIcon = "drop.fill";
+    public const string TotalActionPrefix = "total-";
+
+    public static PushWardAction BuildTotalAction(DateTime day) => new(
+        TotalActionPrefix + day.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture),
+        "修改当前已喝水量", "pencil", true, "今天一共喝了多少 ml？（输入当日总量）");
+
+    public static PushWardAction BuildDrinkAction(DateTime day, int amountMl)
+        => new($"drink-{day:yyyyMMdd}-{amountMl}", $"已喝水 · {amountMl} ml", DrinkActionIcon);
 
     /// <summary>手机点按记账时写入记录页的来源标记。</summary>
     public const string RecordSource = "pushward";
@@ -87,15 +104,20 @@ public static class PushWardMessageBuilder
     public static PushWardMessage BuildReminder(UserSettings s, int suggestedMl, int consumedMl)
         => BuildReminder(s.PushWardApiToken, suggestedMl, consumedMl, s.DailyGoalMl);
 
-    public static PushWardMessage BuildReminder(string? token, int suggestedMl, int consumedMl, int goalMl)
-        => new(token ?? "", new PushWardPayload(
+    public static PushWardMessage BuildReminder(string? token, int suggestedMl, int consumedMl, int goalMl,
+        DateTime? date = null, int? cupMl = null)
+    {
+        var day = date ?? ShanghaiClock.Now();
+        var amount = Math.Min(Math.Max(0, cupMl ?? suggestedMl), Math.Max(0, goalMl - consumedMl));
+        return new(token ?? "", new PushWardPayload(
             ReminderTitle,
             FormatReminderBody(consumedMl, goalMl, suggestedMl),
             Source,
             SourceDisplayName,
             ReminderLevel,
             ReminderCollapseId,
-            [BuildDrinkAction()]));
+            [BuildDrinkAction(day, amount), BuildTotalAction(day)]));
+    }
 
     /// <summary>记账后的确认：标题「已记录」，正文「已记 N ml」，没有 actions。</summary>
     public static PushWardMessage BuildConfirmation(UserSettings s, int appliedMl)
@@ -112,15 +134,13 @@ public static class PushWardMessageBuilder
             Actions: null));
 
     /// <summary>设置页测试：文案与真实提醒相同，仅 collapse_id 用 water-test，避免盖住晚间提醒。</summary>
-    public static PushWardMessage BuildTest(UserSettings s, int consumedMl)
-        => new(s.PushWardApiToken ?? "", new PushWardPayload(
-            ReminderTitle,
-            FormatReminderBody(consumedMl, s.DailyGoalMl, WaterCalculator.HomeCupMl(s)),
-            Source,
-            SourceDisplayName,
-            ReminderLevel,
-            TestCollapseId,
-            [BuildDrinkAction()]));
+    public static PushWardMessage BuildTest(UserSettings s, int consumedMl, DateTime? date = null)
+    {
+        var day = date ?? ShanghaiClock.Now();
+        var amount = Math.Min(WaterCalculator.CurrentCupMl(s, day), Math.Max(0, s.DailyGoalMl - consumedMl));
+        var reminder = BuildReminder(s.PushWardApiToken, amount, consumedMl, s.DailyGoalMl, day);
+        return reminder with { Payload = reminder.Payload with { CollapseId = TestCollapseId } };
+    }
 }
 
 /// <summary>
@@ -141,6 +161,7 @@ public sealed class PushWardService : IDisposable
     private readonly HttpClient _http;
     private readonly bool _ownsHttp;
     private readonly Func<int>? _recordDrink;
+    private readonly IPushWardReplies? _replies;
     private readonly Action<Action> _dispatch;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly object _gate = new();
@@ -156,10 +177,12 @@ public sealed class PushWardService : IDisposable
     /// <param name="delay">测试注入点；生产使用 <see cref="Task.Delay"/>。</param>
     public PushWardService(UserSettings settings, HttpClient? http = null,
         Func<int>? recordDrink = null, Action<Action>? dispatch = null,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        IPushWardReplies? replies = null)
     {
         _settings = settings;
         _recordDrink = recordDrink;
+        _replies = replies;
         _dispatch = dispatch ?? (action => action());
         _delay = delay ?? ((duration, ct) => Task.Delay(duration, ct));
         _ownsHttp = http is null;
@@ -185,7 +208,7 @@ public sealed class PushWardService : IDisposable
     public void Start()
     {
         Stop();
-        if (_disposed || !_settings.MobilePushEnabled || !IsConfigured || _recordDrink is null) return;
+        if (_disposed || !_settings.MobilePushEnabled || !IsConfigured || (_recordDrink is null && _replies is null)) return;
 
         var cts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         lock (_gate) _loop = cts;
@@ -218,12 +241,16 @@ public sealed class PushWardService : IDisposable
         try { cts?.Cancel(); } catch (ObjectDisposedException) { }
     }
 
-    public async Task<bool> PublishReminderAsync(int suggestedMl, int consumedMl = 0, CancellationToken ct = default)
+    public async Task<bool> PublishReminderAsync(int suggestedMl, int consumedMl = 0, CancellationToken ct = default,
+        DateTime? date = null)
     {
         try
         {
             if (!IsConfigured) return false;
-            return await PublishAsync(PushWardMessageBuilder.BuildReminder(_settings, suggestedMl, consumedMl), ct)
+            var day = date ?? ShanghaiClock.Now();
+            return await PublishCoreAsync(PushWardMessageBuilder.BuildReminder(
+                _settings.PushWardApiToken, suggestedMl, consumedMl, _settings.DailyGoalMl, day,
+                WaterCalculator.CurrentCupMl(_settings, day)), day, ct)
                 .ConfigureAwait(false);
         }
         catch { return false; }
@@ -240,16 +267,27 @@ public sealed class PushWardService : IDisposable
         try
         {
             if (!IsConfigured) return false;
-            return await PublishAsync(PushWardMessageBuilder.BuildTest(_settings, consumedMl), ct).ConfigureAwait(false);
+            var day = ShanghaiClock.Now();
+            return await PublishCoreAsync(PushWardMessageBuilder.BuildTest(_settings, consumedMl, day), day, ct).ConfigureAwait(false);
         }
         catch { return false; }
     }
 
     /// <summary>POST 一次；PushWard 返回 2xx（正常为 201）即视为成功。</summary>
-    public async Task<bool> PublishAsync(PushWardMessage message, CancellationToken ct = default)
+    public Task<bool> PublishAsync(PushWardMessage message, CancellationToken ct = default)
+        => PublishCoreAsync(message, null, ct);
+
+    public Task<bool> PublishTrackedAsync(PushWardMessage message, DateTime date, CancellationToken ct = default)
+        => PublishCoreAsync(message, date, ct);
+
+    private async Task<bool> PublishCoreAsync(PushWardMessage message, DateTime? date, CancellationToken ct)
     {
         try
         {
+            // The retired standalone WPF app has only the old no-argument cup callback.
+            // Headless Server always supplies replies and uses the two dated actions above.
+            if (_replies is null && _recordDrink is not null && message.HasActions)
+                message = message with { Payload = message.Payload with { Actions = [PushWardMessageBuilder.BuildDrinkAction()] } };
             if (string.IsNullOrWhiteSpace(message.Token)) return false; // 绝不用空令牌请求
             using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(PushWardMessageBuilder.Endpoint));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", message.Token.Trim());
@@ -258,7 +296,15 @@ public sealed class PushWardService : IDisposable
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(10));
             using var response = await _http.SendAsync(request, timeout.Token).ConfigureAwait(false);
-            return response.IsSuccessStatusCode;
+            if (!response.IsSuccessStatusCode) return false;
+            if (date is { } day && _replies is not null)
+            {
+                using var result = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false));
+                if (ReadString(result.RootElement, "id") is { Length: > 0 } id)
+                    _replies.Track(message.Token, id, ReadString(result.RootElement, "answer_cursor"), day,
+                        message.Payload.Actions?.FirstOrDefault()?.Id);
+            }
+            return true;
         }
         catch
         {
@@ -273,18 +319,29 @@ public sealed class PushWardService : IDisposable
     {
         var retry = InitialRetryDelay;
         string? cursor = null;
+        string? key = null;
 
         while (!ct.IsCancellationRequested)
         {
             try
             {
+                var token = _settings.PushWardApiToken.Trim();
+                if (key != token)
+                {
+                    key = token;
+                    cursor = null;
+                }
+                if (_replies is not null)
+                    cursor = _replies.LoadCursor(token);
+
                 if (cursor is null)
                 {
                     // 1) 先取游标；不处理历史 items，避免重启后重复记账。
-                    var bootstrap = await FetchAnswersAsync(after: null, wait: false, ct).ConfigureAwait(false);
-                    if (!string.IsNullOrWhiteSpace(bootstrap?.Cursor))
+                    var bootstrap = await FetchAnswersAsync(token, after: null, wait: false, ct).ConfigureAwait(false);
+                    if (bootstrap?.Cursor is { Length: > 0 } initial &&
+                        !ct.IsCancellationRequested && (_replies?.Accept(token, null, bootstrap) ?? true))
                     {
-                        cursor = bootstrap!.Cursor;
+                        cursor = initial;
                         retry = InitialRetryDelay;
                     }
                     else
@@ -296,7 +353,8 @@ public sealed class PushWardService : IDisposable
                 }
 
                 // 2) 长轮询：after=cursor&wait=25。
-                var batch = await FetchAnswersAsync(cursor, wait: true, ct).ConfigureAwait(false);
+                var batch = await FetchAnswersAsync(token, cursor, wait: true, ct).ConfigureAwait(false);
+                if (ct.IsCancellationRequested) return;
                 if (batch is null)
                 {
                     await _delay(retry, ct).ConfigureAwait(false);
@@ -305,9 +363,11 @@ public sealed class PushWardService : IDisposable
                 }
 
                 retry = InitialRetryDelay;
-                if (!string.IsNullOrWhiteSpace(batch.Cursor)) cursor = batch.Cursor; // 每个响应都推进游标
-                HandleAnswers(batch.Items);
-                await _delay(ResumeDelay, ct).ConfigureAwait(false);
+                var accepted = _replies?.Accept(token, cursor, batch) ?? true;
+                if (_replies is null) HandleAnswers(batch.Items);
+                if (accepted && !string.IsNullOrWhiteSpace(batch.Cursor)) cursor = batch.Cursor;
+                if (!accepted || batch.Items.Count < 100)
+                    await _delay(ResumeDelay, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -322,7 +382,7 @@ public sealed class PushWardService : IDisposable
         }
     }
 
-    private async Task<PushWardAnswerBatch?> FetchAnswersAsync(string? after, bool wait, CancellationToken ct)
+    private async Task<PushWardAnswerBatch?> FetchAnswersAsync(string token, string? after, bool wait, CancellationToken ct)
     {
         try
         {
@@ -331,7 +391,7 @@ public sealed class PushWardService : IDisposable
                 : PushWardMessageBuilder.AnswersEndpoint;
 
             using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(url));
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _settings.PushWardApiToken.Trim());
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(PollRequestTimeout);
@@ -401,7 +461,9 @@ public sealed class PushWardService : IDisposable
                     var actionId = ReadString(element, "action_id");
                     if (string.IsNullOrWhiteSpace(notificationId) || string.IsNullOrWhiteSpace(actionId))
                         continue;
-                    items.Add(new PushWardAnswerItem(notificationId.Trim(), actionId.Trim()));
+                    var text = element.TryGetProperty("text", out var reply) && reply.ValueKind == JsonValueKind.String
+                        ? reply.GetString() : null;
+                    items.Add(new PushWardAnswerItem(notificationId.Trim(), actionId.Trim(), text));
                 }
             }
 

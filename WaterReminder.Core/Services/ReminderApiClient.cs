@@ -75,6 +75,62 @@ public sealed class ReminderApiClient : IDisposable
     public Task<ApiResult<HistoryResponse>> GetHistoryAsync(int days = 30, CancellationToken ct = default)
         => ReadAsync<HistoryResponse>($"api/history?days={days}", ct);
 
+    public Task<ApiResult<FamilyOverview>> GetFamilyAsync(CancellationToken ct = default)
+        => ReadAsync<FamilyOverview>("api/family", ct);
+
+    public Task<ApiResult<ClientSettingsResponse>> GetFamilySettingsAsync(Guid memberId, CancellationToken ct = default)
+        => ReadAsync<ClientSettingsResponse>($"api/family/{memberId}/settings", ct);
+
+    public async Task<ApiResult<ClientSettingsResponse>> SaveFamilySettingsAsync(
+        Guid memberId, FamilySettingsUpdate update, CancellationToken ct = default)
+    {
+        var request = update with
+        {
+            PushWardToken = string.IsNullOrWhiteSpace(update.PushWardToken) ? null : update.PushWardToken.Trim()
+        };
+        try
+        {
+            using var response = await _http.PutAsJsonAsync($"api/family/{memberId}/settings", request, Json, ct).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                return ApiResult<ClientSettingsResponse>.Fail((int)response.StatusCode, ReadError(body));
+            var value = JsonSerializer.Deserialize<ClientSettingsResponse>(body, Json);
+            return value is null ? ApiResult<ClientSettingsResponse>.Fail((int)response.StatusCode)
+                : ApiResult<ClientSettingsResponse>.Success(value);
+        }
+        catch { return ApiResult<ClientSettingsResponse>.Fail(0); }
+    }
+
+    public Task<ApiResult<HistoryResponse>> GetFamilyHistoryAsync(Guid memberId, int days, CancellationToken ct = default)
+        => ReadAsync<HistoryResponse>($"api/family/{memberId}/history?days={days}", ct);
+
+    public Task<ApiResult<TodayRecordsResponse>> GetFamilyRecordsAsync(Guid memberId, string date, CancellationToken ct = default)
+        => ReadAsync<TodayRecordsResponse>($"api/family/{memberId}/records?date={Uri.EscapeDataString(date)}", ct);
+
+    public async Task<ApiResult<FamilyInvitation>> AddFamilyMemberAsync(AddFamilyMember request)
+    {
+        try
+        {
+            using var response = await _http.PostAsJsonAsync("api/family", request, Json).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                return ApiResult<FamilyInvitation>.Fail((int)response.StatusCode, ReadError(body));
+            var invitation = JsonSerializer.Deserialize<FamilyInvitation>(body, Json);
+            return invitation is null ? ApiResult<FamilyInvitation>.Fail(0) : ApiResult<FamilyInvitation>.Success(invitation);
+        }
+        catch { return ApiResult<FamilyInvitation>.Fail(0); }
+    }
+
+    public async Task<bool> ArchiveFamilyMemberAsync(Guid memberId)
+    {
+        try
+        {
+            using var response = await _http.DeleteAsync($"api/family/{memberId}").ConfigureAwait(false);
+            return response.IsSuccessStatusCode;
+        }
+        catch { return false; }
+    }
+
     public Task<ApiResult<object>> GetHealthAsync(CancellationToken ct = default)
         => ReadAsync<object>("health", ct);
 

@@ -100,6 +100,13 @@ public sealed class HistoryResponse
     public List<HistoryDayResponse> Days { get; set; } = [];
 }
 
+public sealed record FamilyMember(Guid Id, string Name, bool Archived = false);
+public sealed record FamilyOverview(bool IsOwner, IReadOnlyList<FamilyMember> Members);
+public sealed record AddFamilyMember(string Name, string? PushWardToken);
+public sealed record FamilyInvitation(FamilyMember Member, string AccessCode);
+/// <summary>Owner-only update. Blank phone token preserves the member's existing credential.</summary>
+public sealed record FamilySettingsUpdate(SettingsUpdate Settings, string? PushWardToken = null);
+
 public sealed class RecordEventResponse
 {
     public Guid Id { get; set; }

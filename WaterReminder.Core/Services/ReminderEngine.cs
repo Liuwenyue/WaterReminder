@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace WaterReminder.Services;
 
@@ -18,7 +20,7 @@ public sealed class ReminderEngineOptions
 /// Headless reminder loop: Shanghai schedule, PushWard in every reminder window,
 /// desktop alerts for the Windows client, and one-tap phone recording.
 /// </summary>
-public sealed class ReminderEngine : IDisposable
+public sealed class ReminderEngine : IDisposable, IPushWardReplies
 {
     public static readonly TimeSpan DesktopAlertLifetime = TimeSpan.FromMinutes(15);
 
@@ -32,6 +34,9 @@ public sealed class ReminderEngine : IDisposable
     private readonly object _gate = new();
     private DateTime _pushNextAttempt = DateTime.MinValue;
     private bool _pushInFlight;
+    private bool _retired;
+    private readonly CancellationTokenSource _retirement = new();
+    private PhoneReplyState? _phoneReplies;
     private DesktopAlert? _pendingDesktop;
 
     private sealed class DesktopAlert
@@ -43,7 +48,7 @@ public sealed class ReminderEngine : IDisposable
         public string Body { get; init; } = "";
     }
 
-    private readonly record struct OutboundPush(int Suggested, int Consumed, DateTime At);
+    private readonly record struct OutboundPush(PushWardMessage Message, DateTime At);
 
     public ReminderEngine(ReminderEngineOptions options)
     {
@@ -54,7 +59,7 @@ public sealed class ReminderEngine : IDisposable
         _settings = _storage.LoadSettings();
         ApplyOverlay(_settings);
         _progress = new ProgressTracker(_settings, _storage.LoadDailyRecord, _storage.SaveDailyRecord, () => _clock());
-        _push = new PushWardService(_settings, options.Http, RecordPhoneDrink, static action => action());
+        _push = new PushWardService(_settings, options.Http, replies: this);
     }
 
     public async Task TickAsync(CancellationToken ct = default)
@@ -62,6 +67,7 @@ public sealed class ReminderEngine : IDisposable
         OutboundPush? outbound = null;
         lock (_gate)
         {
+            if (_retired) return;
             var now = RefreshLocked();
             var plan = _progress.Plan();
             var due = plan.SuggestedMl > 0 && plan.NextReminder is { } next && next <= now;
@@ -77,7 +83,9 @@ public sealed class ReminderEngine : IDisposable
                 if (!MobilePushDeliveryPolicy.ShouldAttempt(now, _pushNextAttempt, _pushInFlight))
                     return;
                 _pushInFlight = true;
-                outbound = new OutboundPush(plan.SuggestedMl, _progress.Today.ConsumedMl, now);
+                outbound = new OutboundPush(PushWardMessageBuilder.BuildReminder(_settings.PushWardApiToken,
+                    plan.SuggestedMl, _progress.Today.ConsumedMl, _settings.DailyGoalMl, now,
+                    WaterCalculator.CurrentCupMl(_settings, now)), now);
             }
             else if (desktop)
             {
@@ -91,7 +99,8 @@ public sealed class ReminderEngine : IDisposable
         var published = false;
         try
         {
-            published = await _push.PublishReminderAsync(outbound.Value.Suggested, outbound.Value.Consumed, ct)
+            using var send = CancellationTokenSource.CreateLinkedTokenSource(ct, _retirement.Token);
+            published = await _push.PublishTrackedAsync(outbound.Value.Message, outbound.Value.At, send.Token)
                 .ConfigureAwait(false);
         }
         catch
@@ -101,10 +110,13 @@ public sealed class ReminderEngine : IDisposable
 
         lock (_gate)
         {
+            if (_retired) return;
+            _pushInFlight = false;
+            _progress.Reload();
+            if (DateOnly.FromDateTime(_clock()) != DateOnly.FromDateTime(outbound.Value.At)) return;
             var outcome = MobilePushDeliveryPolicy.AfterPublish(published, outbound.Value.At);
             if (outcome.MarkReminded) _progress.MarkReminded(outbound.Value.At);
             _pushNextAttempt = outcome.NextAttempt;
-            _pushInFlight = false;
         }
     }
 
@@ -148,6 +160,7 @@ public sealed class ReminderEngine : IDisposable
     {
         lock (_gate)
         {
+            EnsureActiveLocked();
             var now = RefreshLocked();
             var src = string.IsNullOrWhiteSpace(source) ? "desktop" : source.Trim();
             int amount;
@@ -223,6 +236,7 @@ public sealed class ReminderEngine : IDisposable
             return false;
         lock (_gate)
         {
+            EnsureActiveLocked();
             RefreshLocked();
             var delta = _progress.Correct(total);
             error = null;
@@ -246,6 +260,7 @@ public sealed class ReminderEngine : IDisposable
         }
         lock (_gate)
         {
+            EnsureActiveLocked();
             RefreshLocked();
             if (_progress.Today.Events.All(x => x.Id != id))
             {
@@ -262,6 +277,7 @@ public sealed class ReminderEngine : IDisposable
     {
         lock (_gate)
         {
+            EnsureActiveLocked();
             RefreshLocked();
             return _progress.DeleteEvent(id);
         }
@@ -271,6 +287,7 @@ public sealed class ReminderEngine : IDisposable
     {
         lock (_gate)
         {
+            EnsureActiveLocked();
             RefreshLocked();
             return _progress.ClearToday();
         }
@@ -300,25 +317,149 @@ public sealed class ReminderEngine : IDisposable
     {
         lock (_gate)
         {
+            EnsureActiveLocked();
             var now = RefreshLocked();
             var amount = WaterCalculator.CurrentCupMl(_settings, now);
             return _progress.Drink(amount, PushWardMessageBuilder.RecordSource);
         }
     }
 
-    /// <summary>Persists reminder fields and applies them to the running schedule. The phone token is kept as it was.</summary>
-    public bool TryUpdateSettings(SettingsUpdate update, out string? error)
+    string? IPushWardReplies.LoadCursor(string token)
+    {
+        lock (_gate) return ReplyStateLocked(token).Cursor;
+    }
+
+    /// <summary>Send one test to this member without advancing the scheduled reminder.</summary>
+    public async Task<bool> SendTestPushAsync(CancellationToken ct = default)
+    {
+        PushWardMessage message;
+        DateTime now;
+        lock (_gate)
+        {
+            EnsureActiveLocked();
+            now = RefreshLocked();
+            if (_pushInFlight || !ReminderRouting.ShouldPublishPushWard(_settings, _push.IsConfigured)) return false;
+            message = PushWardMessageBuilder.BuildTest(_settings, _progress.Today.ConsumedMl, now);
+            _pushInFlight = true;
+        }
+        try
+        {
+            using var send = CancellationTokenSource.CreateLinkedTokenSource(ct, _retirement.Token);
+            return await _push.PublishTrackedAsync(message, now, send.Token).ConfigureAwait(false);
+        }
+        finally { lock (_gate) _pushInFlight = false; }
+    }
+
+    void IPushWardReplies.Track(string token, string notificationId, string? cursor, DateTime date, string? drinkActionId)
     {
         lock (_gate)
         {
+            if (_retired || !string.Equals(token, _settings.PushWardApiToken, StringComparison.Ordinal)) return;
+            var state = ReplyStateLocked(token);
+            var day = DateOnly.FromDateTime(date);
+            var cutoff = day.AddDays(-30);
+            var sent = state.Sent.Where(entry => entry.Value >= cutoff).ToDictionary();
+            sent[notificationId] = day;
+            var actions = state.DrinkActions.Where(entry => sent.ContainsKey(entry.Key)).ToDictionary();
+            if (drinkActionId is not null) actions[notificationId] = drinkActionId;
+            SaveRepliesLocked(new PhoneReplyState { TokenHash = state.TokenHash, Cursor = state.Cursor ?? cursor, Sent = sent, DrinkActions = actions });
+        }
+    }
+
+    bool IPushWardReplies.Accept(string token, string? previousCursor, PushWardAnswerBatch batch)
+    {
+        lock (_gate)
+        {
+            // Wait until the outstanding POST's notification ID has been saved before advancing.
+            if (_retired || _pushInFlight || !_settings.MobilePushEnabled ||
+                !string.Equals(token, _settings.PushWardApiToken, StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(batch.Cursor)) return false;
+            var state = ReplyStateLocked(token);
+            if (state.Cursor != previousCursor) return false;
+            if (state.Cursor == batch.Cursor && batch.Items.Count == 0) return true;
+
+            var now = RefreshLocked();
+            var sent = new Dictionary<string, DateOnly>(state.Sent);
+            var actions = new Dictionary<string, string>(state.DrinkActions);
+            foreach (var answer in batch.Items)
+            {
+                if (!sent.Remove(answer.NotificationId, out var day)) continue;
+                actions.Remove(answer.NotificationId, out var expectedAction);
+                var message = ApplyPhoneReplyLocked(now, day, state.TokenHash, answer, expectedAction);
+                if (message is not null)
+                {
+                    var confirmation = PushWardMessageBuilder.BuildConfirmation(token, 0);
+                    _ = _push.PublishAsync(confirmation with { Payload = confirmation.Payload with
+                    {
+                        Body = message,
+                        Title = answer.ActionId.StartsWith("drink", StringComparison.Ordinal) ? "喝水记录" : "饮水总量"
+                    } }, _retirement.Token);
+                }
+            }
+            SaveRepliesLocked(new PhoneReplyState { TokenHash = state.TokenHash, Cursor = batch.Cursor, Sent = sent, DrinkActions = actions });
+            return true;
+        }
+    }
+
+    private string? ApplyPhoneReplyLocked(DateTime now, DateOnly day, string tokenHash, PushWardAnswerItem answer, string? expectedAction)
+    {
+        var exact = expectedAction is not null && expectedAction.StartsWith("drink-", StringComparison.Ordinal)
+            && string.Equals(answer.ActionId, expectedAction, StringComparison.Ordinal);
+        var drink = exact || (expectedAction is null or PushWardMessageBuilder.DrinkActionId
+            && string.Equals(answer.ActionId, PushWardMessageBuilder.DrinkActionId, StringComparison.Ordinal));
+        var correction = string.Equals(answer.ActionId, PushWardMessageBuilder.BuildTotalAction(day.ToDateTime(TimeOnly.MinValue)).Id,
+            StringComparison.Ordinal);
+        if (!drink && !correction) return null;
+        if (day != DateOnly.FromDateTime(now) || _progress.Today.Date != day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))
+            return "这条提醒已过期，请使用今天的提醒。";
+
+        int? total = null;
+        if (correction)
+        {
+            if (!WaterCalculator.TryParseTotal(answer.Text, out var corrected, out var error))
+                return $"未修改。{error}";
+            total = corrected;
+        }
+        var cup = WaterCalculator.CurrentCupMl(_settings, now);
+        if (exact && (!int.TryParse(expectedAction!.Split('-')[^1], NumberStyles.None, CultureInfo.InvariantCulture, out cup) || cup < 0))
+            return null;
+        var receipt = $"{tokenHash}:{answer.NotificationId}";
+        var delta = _progress.ApplyPhoneReply(now, receipt, total, cup);
+        if (delta is null) return null;
+        if (total is { } amount) return $"今日已喝总量为 {amount} ml";
+        return delta > 0 ? $"已记 {delta} ml" : "今日已达到饮水目标。";
+    }
+
+    private PhoneReplyState ReplyStateLocked(string token)
+    {
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+        _phoneReplies ??= _storage.LoadPhoneReplies();
+        return _phoneReplies?.TokenHash == hash ? _phoneReplies : new PhoneReplyState { TokenHash = hash };
+    }
+
+    private void SaveRepliesLocked(PhoneReplyState state)
+    {
+        _storage.SavePhoneReplies(state);
+        _phoneReplies = state;
+    }
+
+    /// <summary>Persists reminder fields and applies them immediately. A blank phone token keeps the existing credential.</summary>
+    public bool TryUpdateSettings(SettingsUpdate update, out string? error, string? pushWardToken = null)
+    {
+        lock (_gate)
+        {
+            EnsureActiveLocked();
             var fresh = _storage.LoadSettings();
-            var fileToken = fresh.PushWardApiToken;
+            var fileToken = string.IsNullOrWhiteSpace(pushWardToken) ? fresh.PushWardApiToken : pushWardToken.Trim();
             if (!SettingsEditor.TryApply(fresh, update, out error)) return false;
             fresh.PushWardApiToken = string.IsNullOrWhiteSpace(_pushToken?.Invoke()) ? fileToken : "";
             _storage.SaveSettings(fresh);
             ApplyOverlay(fresh);
+            var tokenChanged = fresh.PushWardApiToken != _settings.PushWardApiToken;
             Copy(fresh, _settings);
             _progress.SettingsChanged();
+            if (tokenChanged) _push.Stop();
+            EnsureAnswerLoopLocked();
             return true;
         }
     }
@@ -327,6 +468,7 @@ public sealed class ReminderEngine : IDisposable
     {
         lock (_gate)
         {
+            EnsureActiveLocked();
             if (_pendingDesktop is null || string.IsNullOrWhiteSpace(id)) return false;
             if (!string.Equals(_pendingDesktop.Id, id.Trim(), StringComparison.Ordinal)) return false;
             _pendingDesktop = null;
@@ -357,13 +499,43 @@ public sealed class ReminderEngine : IDisposable
         ]);
     }
 
-    public void Dispose() => _push.Dispose();
+    public string PhonePushToken
+    {
+        get
+        {
+            lock (_gate)
+            {
+                ReloadSettingsLocked();
+                return _settings.PushWardApiToken;
+            }
+        }
+    }
+
+    public void Retire()
+    {
+        lock (_gate)
+        {
+            if (_retired) return;
+            _retired = true;
+            _pendingDesktop = null;
+            _retirement.Cancel();
+            _push.Dispose();
+            _retirement.Dispose();
+        }
+    }
+
+    public void Dispose() => Retire();
+
+    private void EnsureActiveLocked()
+    {
+        if (_retired) throw new ObjectDisposedException(nameof(ReminderEngine));
+    }
 
     private DateTime RefreshLocked()
     {
         ReloadSettingsLocked();
         var now = _clock();
-        ExpirePauseLocked(now);
+        if (!_retired) ExpirePauseLocked(now);
         _progress.Reload();
         EnsureAnswerLoopLocked();
         var show = WaterCalculator.ShouldShowDesktop(_settings, now);
@@ -402,7 +574,7 @@ public sealed class ReminderEngine : IDisposable
 
     private void EnsureAnswerLoopLocked()
     {
-        if (!_options.PollAnswers) return;
+        if (_retired || !_options.PollAnswers) return;
         var should = _settings.MobilePushEnabled && _push.IsConfigured;
         if (should && !_push.IsRunning) _push.Start();
         else if (!should && _push.IsRunning) _push.Stop();

@@ -84,6 +84,24 @@ public sealed class ProgressTracker
         return delta;
     }
 
+    internal int? ApplyPhoneReply(DateTime now, string receipt, int? total, int cup)
+    {
+        if (Today.PhoneReceipts?.Contains(receipt) == true) return null;
+        var amount = total is { } corrected
+            ? WaterCalculator.AdjustmentFor(Today, corrected)
+            : Math.Min(cup, Math.Max(0, Settings.DailyGoalMl - Today.ConsumedMl));
+        if (amount != 0)
+            Today.Events.Add(new WaterEvent
+            {
+                AmountMl = amount,
+                Source = total.HasValue ? "adjust" : PushWardMessageBuilder.RecordSource,
+                At = now
+            });
+        (Today.PhoneReceipts ??= []).Add(receipt);
+        Commit();
+        return amount;
+    }
+
     public bool EditEvent(Guid id, int amount)
     {
         Reload();

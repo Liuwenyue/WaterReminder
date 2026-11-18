@@ -7,9 +7,9 @@
         Title="喝水提醒" Width="352" SizeToContent="Height"
         WindowStartupLocation="Manual" Topmost="True" ShowInTaskbar="False">
   <Border x:Name="Card" Style="{StaticResource WindowCard}">
-    <Grid>
+    <Grid ClipToBounds="True">
       <!-- ===== Expanded ===== -->
-      <Grid x:Name="ExpandedPanel" Margin="16,12,12,16">
+      <Grid x:Name="ExpandedPanel" VerticalAlignment="Top" Margin="16,12,12,16">
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
@@ -87,7 +87,7 @@
             <Button Style="{StaticResource ActionButton}" Click="CustomButton_Click" ToolTip="记录任意饮水量">
               <StackPanel><TextBlock Style="{StaticResource Glyph}" Text="&#xE70F;" HorizontalAlignment="Center"/><TextBlock Text="自定义" Margin="0,4,0,0" HorizontalAlignment="Center"/></StackPanel>
             </Button>
-            <Button Style="{StaticResource ActionButton}" Click="RecordsButton_Click" ToolTip="查看和编辑今日记录">
+            <Button Style="{StaticResource ActionButton}" Click="RecordsButton_Click" ToolTip="查看历史与家庭成员的饮水记录">
               <StackPanel><TextBlock Style="{StaticResource Glyph}" Text="&#xE81C;" HorizontalAlignment="Center"/><TextBlock Text="记录" Margin="0,4,0,0" HorizontalAlignment="Center"/></StackPanel>
             </Button>
             <Button x:Name="PauseButton" Style="{StaticResource ActionButton}" Click="PauseButton_Click">
@@ -106,7 +106,7 @@
       </Grid>
 
       <!-- ===== Compact ===== -->
-      <Grid x:Name="CompactPanel" Margin="12" Visibility="Collapsed">
+      <Grid x:Name="CompactPanel" VerticalAlignment="Top" Margin="12" Visibility="Collapsed">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>

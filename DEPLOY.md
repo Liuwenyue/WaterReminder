@@ -115,7 +115,7 @@ dotnet publish .\WaterReminder.Client\WaterReminder.Client.csproj -c Release -o 
 
 Put `client.json` next to the exe or at `%LocalAppData%\WaterReminderClient\client.json`. On startup the original desktop floating widget is shown (today's amount, progress, and **喝一杯**). Click the amount (tooltip 「点击修正今日已喝量」) to set today's total, including a lower total or 0. **记录** opens the records window (today editable; past days read-only). Both write to the server immediately. The widget reads `GET /api/status` and logs new drinks with `POST /api/drinks`. It does not run its own scheduler. Hide it from the widget; open it again from the tray item **打开悬浮窗**, or with a left click on the tray icon. A second launch activates the existing instance. Tray items **暂停 30 分钟** / **今日暂停** / **恢复提醒** call `PUT /api/settings`. Local preferences in `client.json`: floating window, auto-start, shared window position, and optional `tunnel`.
 
-During work hours the tray shows a toast (`该喝水了` / `已喝 {已喝}/{目标} ml，建议 {建议} ml`) and **记录一杯** logs the work cup. After work end it does not show desktop toasts. Quiet hours stay silent. Phone recording is the PushWard **喝水了** action (no URL, no browser); the server polls `GET /notifications/answers` and dedupes `notification_id` whether it arrives as a string or a number.
+During work hours the tray shows a toast (`该喝水了` / `已喝 {已喝}/{目标} ml，建议 {建议} ml`) and **记录一杯** logs the work cup. After work end it does not show desktop toasts. Quiet hours stay silent. PushWard reminders offer **已喝水 · N ml** to log the quantity shown and **修改当前已喝水量** to set the day's total. The server resumes the answer stream from its saved cursor and applies each tracked notification only once.
 
 ## Settings
 
@@ -128,3 +128,13 @@ Open the tray icon and choose **设置**. The window is the original desktop set
 自定义数值在 Windows 托盘菜单「设置」里改，其中「显示桌面悬浮窗」和「开机自动启动」是本机偏好。启动后桌面上会看到原来的悬浮窗。点击已喝数字可以改今天的总量；「记录」可看历史天（只读）和编辑今天。托盘可暂停 30 分钟 / 今日暂停 / 恢复。数据来自服务器，不在本机计时。窗口位置在精简/完整模式间共用左上角锚点。窗口沿用原来的桌面设置界面，读取并保存到服务器的 `settings.json`（`PUT /api/settings`）。窗口里不能看也不能改任何令牌。
 
 默认不对外暴露 8787；若改绑到 `0.0.0.0`，才需要在主机防火墙和云安全列表里放行。只新增允许规则，不要清空现有规则，也不要改 SSH。systemd 示例见 `deploy/waterreminder.service`。
+
+## 家庭版使用与升级
+
+- 同时升级服务器和 Windows 客户端。服务器继续使用原数据目录，原 API 密钥仍是管理员密钥，原有个人记录继续归「我」。升级前备份整个数据目录。家庭账户在 `family.json`，成员数据在 `members/`，请一起保留。
+- Windows 客户端运行需要 .NET 8 桌面运行时。展开专业版，点击「记录」查看最近 30 天内有记录的日期，也可用「前一天」「后一天」查更早的日期。管理员从成员下拉框切换查看，其他成员的详情只读。
+- 管理员在「记录 → 添加成员」输入名称并生成访问码。把 Windows 客户端和访问码交给家人。家人复制 `client.sample.json` 为 `client.json`，在 `serverUrl` 填同一个可访问的服务地址，在 `apiToken` 填自己的访问码。跨设备接入应使用 HTTPS 或为该成员单独配置的 SSH 隧道。停用后旧访问码失效，历史仍可查看。
+- 管理员在「记录 → 家庭成员」选中家人，再点「成员设置」。可调整每日目标、工作杯和家庭杯、上下班、午休、免打扰开始时间、提醒间隔、提醒日期和手机推送。开机启动、悬浮窗及窗口位置由各台电脑自行设置。
+- 只用手机的家人可跳过 Windows 客户端配置。管理员在创建成员时填写该成员的 PushWard 集成密钥，或在「成员设置」里填写新密钥并开启手机推送。密钥留空会保留当前值。每人的集成应只投递到自己的设备。
+- 在 iPhone 上展开提醒，点「已喝水 · N ml」记录按钮显示的水量，或点「修改当前已喝水量」输入当天累计水量。输入 `1200` 会将当天总量设为 1200 ml。同一条通知只能选择一次操作。请使用支持通知文本回复的 PushWard 版本。
+- Windows 客户端继续可从旧服务读取个人逐日记录。家庭成员和手机文本回复需要新版服务器。

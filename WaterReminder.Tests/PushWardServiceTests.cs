@@ -88,9 +88,12 @@ public sealed class PushWardServiceTests
         Assert.Equal("time-sensitive", message.Payload.Level);
         Assert.Equal("water-evening", message.Payload.CollapseId);
 
-        var action = Assert.Single(message.Payload.Actions!);
-        Assert.Equal("drink", action.Id);
-        Assert.Equal("喝水了", action.Title);
+        Assert.Equal(2, message.Payload.Actions!.Count);
+        var action = message.Payload.Actions[0];
+        Assert.StartsWith("drink-", action.Id);
+        Assert.Equal("已喝水 · 300 ml", action.Title);
+        Assert.Equal("修改当前已喝水量", message.Payload.Actions[1].Title);
+        Assert.True(message.Payload.Actions[1].TextInput);
         Assert.Equal("drop.fill", action.Icon);
 
         using var doc = JsonDocument.Parse(message.Json);
@@ -134,16 +137,27 @@ public sealed class PushWardServiceTests
         var settings = Settings();
         settings.DailyGoalMl = 2000;
         settings.HomeCupCapacityMl = 800;
-        var message = PushWardMessageBuilder.BuildTest(settings, 400);
+        var day = new DateTime(2026, 11, 3, 19, 0, 0);
+        var message = PushWardMessageBuilder.BuildTest(settings, 400, day);
         Assert.Equal("该喝水了", message.Payload.Title);
         Assert.Equal("water-test", message.Payload.CollapseId);
         Assert.Equal("已喝 400/2000 ml，建议 800 ml", message.Payload.Body);
 
-        var action = Assert.Single(message.Payload.Actions!);
-        Assert.Equal(PushWardMessageBuilder.BuildDrinkAction(), action);
+        Assert.Equal(2, message.Payload.Actions!.Count);
+        Assert.Equal(PushWardMessageBuilder.BuildDrinkAction(day, 800), message.Payload.Actions[0]);
+        Assert.Equal(PushWardMessageBuilder.BuildTotalAction(day), message.Payload.Actions[1]);
     }
 
     // ---------- publish ----------
+
+    [Fact]
+    public void Reminder_ButtonUsesCupWhileBodyKeepsSuggestion()
+    {
+        var message = PushWardMessageBuilder.BuildReminder(Token, 100, 0, 3000,
+            new DateTime(2026, 11, 3, 10, 0, 0), cupMl: 370);
+        Assert.Equal("已喝 0/3000 ml，建议 100 ml", message.Payload.Body);
+        Assert.Equal("已喝水 · 370 ml", message.Payload.Actions![0].Title);
+    }
 
     [Fact]
     public async Task PublishReminder_201_SendsBearerJson_AndNeverPutsTokenInBody()
@@ -161,10 +175,21 @@ public sealed class PushWardServiceTests
         Assert.Equal(Token, request.AuthorizationParameter);
         Assert.Equal("application/json", request.MediaType);
         Assert.Contains("\"title\":\"该喝水了\"", request.Body);
-        Assert.Contains("\"id\":\"drink\"", request.Body);
+        Assert.Contains("\"id\":\"drink-", request.Body);
         Assert.DoesNotContain("\"url\"", request.Body);       // Answer 动作不带 url
         Assert.DoesNotContain("foreground", request.Body);    // 也不带 foreground
         Assert.DoesNotContain(Token, request.Body);           // 令牌只在 Authorization 头里
+    }
+
+    [Fact]
+    public async Task StandaloneLegacyCallbackKeepsItsSupportedDrinkAction()
+    {
+        var handler = new FakeHandler();
+        using var http = new HttpClient(handler);
+        using var service = new PushWardService(Settings(), http, recordDrink: () => 500);
+        Assert.True(await service.PublishTestAsync());
+        using var body = JsonDocument.Parse(Assert.Single(handler.Requests).Body!);
+        Assert.Equal("drink", Assert.Single(body.RootElement.GetProperty("actions").EnumerateArray()).GetProperty("id").GetString());
     }
 
     [Fact]

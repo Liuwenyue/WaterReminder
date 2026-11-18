@@ -11,32 +11,33 @@ public sealed class WindowPlacementTests
     private const double W = 352, CompactH = 76, ExpandedH = 520;
 
     [Fact]
-    public void ToggleKeepsTopLeft_ThenClamps()
+    public void ToggleReturnsToCompactAnchor_AfterExpandedClamp()
     {
         var s = new UserSettings();
         WindowPlacement.Remember(s, 1189.6, 673.6);
-        var compact = new ScreenRect(1189.6, 673.6, W, CompactH);
-        // Expand: same top-left, taller window is clamped up into the work area.
-        var exp = WindowPlacement.ClampToVisible(compact.Left, compact.Top, W, ExpandedH, One);
+        var compactPoint = WindowPlacement.Place(s, compact: true, W, CompactH, One);
+        var compact = new ScreenRect(compactPoint.Left, compactPoint.Top, W, CompactH);
+        // Expand: start at the compact anchor, then pull the taller window fully onto the desktop.
+        var exp = WindowPlacement.Place(s, compact: false, W, ExpandedH, One);
         Assert.Equal(1184, exp.Left); // right edge pulled in
         Assert.True(exp.Top <= compact.Top);
         Assert.True(Primary.Contains(new ScreenRect(exp.Left, exp.Top, W, ExpandedH)));
 
-        // Collapse: keep that top-left (shared anchor).
-        var back = WindowPlacement.ClampToVisible(exp.Left, exp.Top, W, CompactH, One);
-        Assert.Equal(exp.Left, back.Left);
-        Assert.Equal(exp.Top, back.Top);
+        // Collapse: return to the compact spot the user originally chose.
+        var back = WindowPlacement.Place(s, compact: true, W, CompactH, One);
+        Assert.Equal(compact.Left, back.Left);
+        Assert.Equal(compact.Top, back.Top);
     }
 
     [Fact]
-    public void SharedRemember_IsUsedByBothModes()
+    public void CompactAnchor_IsUsedByBothModes()
     {
         var s = new UserSettings();
         WindowPlacement.Remember(s, 900, 600);
         Assert.Equal((900.0, 600.0), WindowPlacement.Saved(s));
-        Assert.Equal((900.0, 600.0), WindowPlacement.Resolve(s, W, CompactH, One));
+        Assert.Equal((900.0, 600.0), WindowPlacement.Place(s, compact: true, W, CompactH, One));
         // Expanded is taller: same left, top pulled up so the window stays on screen.
-        Assert.Equal((900.0, Primary.Bottom - ExpandedH), WindowPlacement.Resolve(s, W, ExpandedH, One));
+        Assert.Equal((900.0, Primary.Bottom - ExpandedH), WindowPlacement.Place(s, compact: false, W, ExpandedH, One));
         Assert.Equal(900, s.CompactLeft);
         Assert.Equal(900, s.ExpandedLeft);
     }

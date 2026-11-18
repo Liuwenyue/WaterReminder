@@ -1,13 +1,11 @@
-using WaterReminder.Services;
-
 namespace WaterReminder.Server;
 
 /// <summary>30-second reminder loop. Failures stay inside the process so a bad tick cannot exit the service.</summary>
-public sealed class ReminderScheduler : BackgroundService
+internal sealed class ReminderScheduler : BackgroundService
 {
-    private readonly ReminderEngine _engine;
+    private readonly FamilyAccounts _accounts;
 
-    public ReminderScheduler(ReminderEngine engine) => _engine = engine;
+    public ReminderScheduler(FamilyAccounts accounts) => _accounts = accounts;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -15,7 +13,8 @@ public sealed class ReminderScheduler : BackgroundService
         {
             try
             {
-                await _engine.TickAsync(stoppingToken).ConfigureAwait(false);
+                await Task.WhenAll(_accounts.ActiveEngines().Select(engine => engine.TickAsync(stoppingToken)))
+                    .ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

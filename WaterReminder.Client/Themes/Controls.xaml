@@ -67,6 +67,17 @@
     <Setter Property="VerticalAlignment" Value="Center"/>
   </Style>
 
+  <!-- Keyboard navigation shows a focus ring; mouse clicks keep the normal button outline. -->
+  <Style x:Key="ButtonKeyboardFocus" TargetType="Control">
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Control">
+          <Border Margin="-3" BorderBrush="{DynamicResource Accent}" BorderThickness="2" CornerRadius="8"/>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <!-- Buttons -->
   <Style x:Key="ButtonBase" TargetType="Button">
     <Setter Property="FontFamily" Value="{StaticResource UiFont}"/>
@@ -74,7 +85,7 @@
     <Setter Property="Cursor" Value="Hand"/>
     <Setter Property="Padding" Value="16,0"/>
     <Setter Property="Height" Value="36"/>
-    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="FocusVisualStyle" Value="{StaticResource ButtonKeyboardFocus}"/>
     <Setter Property="HorizontalContentAlignment" Value="Center"/>
     <Setter Property="VerticalContentAlignment" Value="Center"/>
     <Setter Property="Tag" Value="6"/>
@@ -253,6 +264,107 @@
               <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource Danger}"/>
               <Setter TargetName="line" Property="Background" Value="{DynamicResource Danger}"/>
             </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- Native ComboBox behavior with a theme-aware popup and keyboard focus. -->
+  <Style x:Key="FluentComboBoxItem" TargetType="ComboBoxItem">
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Padding" Value="10,8"/>
+    <Setter Property="MinHeight" Value="36"/>
+    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ComboBoxItem">
+          <Border x:Name="itemBorder" Background="{TemplateBinding Background}" BorderBrush="Transparent"
+                  BorderThickness="2" CornerRadius="4" Margin="2,1" Padding="{TemplateBinding Padding}">
+            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                              VerticalAlignment="Center"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsSelected" Value="True">
+              <Setter TargetName="itemBorder" Property="Background" Value="{DynamicResource AccentSoft}"/>
+              <Setter Property="Foreground" Value="{DynamicResource AccentText}"/>
+            </Trigger>
+            <Trigger Property="IsHighlighted" Value="True">
+              <Setter TargetName="itemBorder" Property="Background" Value="{DynamicResource ControlHover}"/>
+              <Setter TargetName="itemBorder" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="itemBorder" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="FluentComboBox" TargetType="ComboBox">
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}"/>
+    <Setter Property="FontSize" Value="14"/>
+    <Setter Property="MinHeight" Value="36"/>
+    <Setter Property="Padding" Value="10,7,36,7"/>
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+    <Setter Property="Background" Value="{DynamicResource ControlBg}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Stroke}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+    <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+    <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto"/>
+    <Setter Property="ScrollViewer.CanContentScroll" Value="True"/>
+    <Setter Property="MaxDropDownHeight" Value="280"/>
+    <Setter Property="IsTextSearchEnabled" Value="True"/>
+    <Setter Property="ItemContainerStyle" Value="{StaticResource FluentComboBoxItem}"/>
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ComboBox">
+          <Grid>
+            <Border x:Name="comboBorder" Background="{TemplateBinding Background}" CornerRadius="6"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"/>
+            <ContentPresenter Margin="{TemplateBinding Padding}" IsHitTestVisible="False"
+                              Content="{TemplateBinding SelectionBoxItem}"
+                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                              ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                              HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+            <ToggleButton Focusable="False" IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
+                          ClickMode="Press" Background="Transparent" BorderThickness="0">
+              <ToggleButton.Template>
+                <ControlTemplate TargetType="ToggleButton">
+                  <Border Background="Transparent">
+                    <TextBlock Text="&#xE70D;" FontFamily="{StaticResource IconFont}" FontSize="12"
+                               Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                  </Border>
+                </ControlTemplate>
+              </ToggleButton.Template>
+            </ToggleButton>
+            <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True" Focusable="False"
+                   IsOpen="{TemplateBinding IsDropDownOpen}" PopupAnimation="Fade">
+              <Border Background="{DynamicResource WindowBg}" BorderBrush="{DynamicResource StrokeStrong}" BorderThickness="1"
+                      CornerRadius="6" Padding="3" Margin="0,4,0,0"
+                      Width="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                      MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                <ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                  <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
+                </ScrollViewer>
+              </Border>
+            </Popup>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="comboBorder" Property="BorderBrush" Value="{DynamicResource StrokeStrong}"/></Trigger>
+            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+              <Setter TargetName="comboBorder" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+              <Setter TargetName="comboBorder" Property="BorderThickness" Value="2"/>
+            </Trigger>
+            <Trigger Property="IsDropDownOpen" Value="True"><Setter TargetName="comboBorder" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
+            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>

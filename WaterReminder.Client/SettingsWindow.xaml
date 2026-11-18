@@ -12,14 +12,14 @@
         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
         <Image Source="{StaticResource DropImage}" Width="40" Height="40" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality"/>
         <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
-          <TextBlock Text="设置" Style="{StaticResource Title}"/>
-          <TextBlock Style="{StaticResource Caption}" FontSize="13" Margin="0,2,0,0" Text="保存在服务器上，保存后立即生效"/>
+          <TextBlock x:Name="SettingsTitle" Text="设置" Style="{StaticResource Title}" TextWrapping="Wrap"/>
+          <TextBlock x:Name="SettingsSubtitle" Style="{StaticResource Caption}" FontSize="13" Margin="0,2,0,0" Text="保存在服务器上，保存后立即生效" TextWrapping="Wrap"/>
         </StackPanel>
         <Button Grid.Column="2" Style="{StaticResource CloseButton}" Content="&#xE8BB;" VerticalAlignment="Top" ToolTip="关闭" Click="Cancel_Click"/>
       </Grid>
 
       <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="24,8,20,0" Focusable="False">
-        <StackPanel Margin="0,0,4,0">
+        <StackPanel x:Name="SettingsContent" Margin="0,0,4,0">
           <TextBlock Text="饮水目标" Style="{StaticResource SectionHeader}"/>
           <Border Style="{StaticResource SectionCard}" Padding="16">
             <StackPanel>
@@ -118,16 +118,23 @@
 
           <TextBlock Text="手机推送" Style="{StaticResource SectionHeader}"/>
           <Border Style="{StaticResource SectionCard}" Padding="16">
-            <CheckBox x:Name="MobilePushBox" Style="{StaticResource ToggleSwitch}" Click="MobilePush_Click">
-              <StackPanel>
-                <TextBlock Text="开启手机推送" FontSize="13"/>
-                <TextBlock Text="由服务器发送。密钥只留在服务器上，这里不能查看或修改。" Style="{StaticResource Caption}" TextWrapping="Wrap"/>
+            <StackPanel>
+              <CheckBox x:Name="MobilePushBox" Style="{StaticResource ToggleSwitch}" Click="MobilePush_Click">
+                <StackPanel>
+                  <TextBlock Text="开启手机推送" FontSize="13"/>
+                  <TextBlock x:Name="MobilePushHint" Text="由服务器发送。密钥只留在服务器上，这里不能查看或修改。" Style="{StaticResource Caption}" TextWrapping="Wrap"/>
+                </StackPanel>
+              </CheckBox>
+              <StackPanel x:Name="MemberPushTokenPanel" Visibility="Collapsed" Margin="0,12,0,8">
+                <TextBlock Text="更换该成员的 PushWard 密钥" FontSize="13" Margin="0,0,0,8"/>
+                <PasswordBox x:Name="MemberPushToken" Style="{StaticResource FluentPasswordBox}" MaxLength="512" AutomationProperties.Name="该成员的新 PushWard 密钥"/>
+                <TextBlock Text="留空保留现有密钥，不会显示原密钥。" Style="{StaticResource Caption}" Margin="0,6,0,0"/>
               </StackPanel>
-            </CheckBox>
+            </StackPanel>
           </Border>
 
-          <TextBlock Text="通用" Style="{StaticResource SectionHeader}"/>
-          <Border Style="{StaticResource SectionCard}" Padding="16,4">
+          <TextBlock x:Name="LocalPreferencesHeader" Text="通用" Style="{StaticResource SectionHeader}"/>
+          <Border x:Name="LocalPreferencesCard" Style="{StaticResource SectionCard}" Padding="16,4">
             <StackPanel>
               <CheckBox x:Name="FloatingBox" Style="{StaticResource ToggleSwitch}">
                 <StackPanel>
@@ -148,8 +155,9 @@
 
       <Border Grid.Row="2" Background="{DynamicResource SurfaceAlt}" CornerRadius="0,0,12,12" Padding="24,16" BorderBrush="{DynamicResource Stroke}" BorderThickness="0,1,0,0">
         <Grid>
-          <TextBlock x:Name="SaveError" Style="{StaticResource ErrorText}" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="280" HorizontalAlignment="Left"/>
-          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+          <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <TextBlock x:Name="SaveError" Style="{StaticResource ErrorText}" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,12,0"/>
+          <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button x:Name="CancelButton" Style="{StaticResource SecondaryButton}" Content="取消" MinWidth="96" Margin="0,0,8,0" IsCancel="True" Click="Cancel_Click"/>
             <Button x:Name="SaveButton" Style="{StaticResource PrimaryButton}" Content="保存" MinWidth="112" IsDefault="True" Click="Save_Click"/>
           </StackPanel>

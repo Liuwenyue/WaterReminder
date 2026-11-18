@@ -20,8 +20,8 @@ public readonly record struct ScreenRect(double Left, double Top, double Width, 
 }
 
 /// <summary>
-/// Shared top-left anchor for compact and expanded modes (pure logic, unit-tested).
-/// Switching modes keeps Left/Top and only changes size; the window is then clamped into a work area.
+/// Compact-mode top-left is the stable anchor (pure logic, unit-tested).
+/// Expanding may move the window so the taller frame stays on screen; collapsing returns to the anchor.
 /// </summary>
 public static class WindowPlacement
 {
@@ -52,7 +52,9 @@ public static class WindowPlacement
     /// <summary>Obsolete per-mode lookup kept for older call sites; both modes share the same anchor.</summary>
     public static (double Left, double Top)? Saved(UserSettings s, bool compact) => Saved(s);
 
-    /// <summary>Stores the shared top-left after a drag. Compact and expanded use the same spot.</summary>
+    /// <summary>
+    /// Stores the compact-mode anchor. Expanded placement is derived from it and is not remembered separately.
+    /// </summary>
     public static void Remember(UserSettings s, double left, double top)
     {
         s.WindowLeft = left; s.WindowTop = top;
@@ -60,13 +62,24 @@ public static class WindowPlacement
         s.ExpandedLeft = left; s.ExpandedTop = top;
     }
 
-    /// <summary>Obsolete signature: mode is ignored because the anchor is shared.</summary>
+    /// <summary>Obsolete signature: the compact anchor is stored either way. Expanded placement is derived.</summary>
     public static void Remember(UserSettings s, bool compact, double left, double top)
         => Remember(s, left, top);
 
     /// <summary>
-    /// Where to put the window. Uses the saved shared spot; otherwise keeps the current top-left
-    /// (size may change when switching modes); with nothing saved, bottom-right of the primary work area.
+    /// Compact mode returns the saved anchor. Expanded mode starts there, then moves only as far as needed
+    /// to keep the taller window inside a work area.
+    /// </summary>
+    public static (double Left, double Top) Place(UserSettings s, bool compact, double width, double height,
+        IReadOnlyList<ScreenRect> workAreas, ScreenRect? current = null)
+    {
+        var anchor = Resolve(s, width, height, workAreas, current);
+        return compact ? anchor : ClampToVisible(anchor.Left, anchor.Top, width, height, workAreas);
+    }
+
+    /// <summary>
+    /// Where the compact anchor is. Uses the saved spot; otherwise keeps the current top-left;
+    /// with nothing saved, bottom-right of the primary work area.
     /// Always pulled fully into a visible work area. If the saved monitor is gone, the primary area is used.
     /// </summary>
     public static (double Left, double Top) Resolve(UserSettings s, double width, double height,
