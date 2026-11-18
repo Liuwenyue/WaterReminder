@@ -1,0 +1,78 @@
+<import src="../../templates/entry.wxml" />
+<view class="page" aria-hidden="{{amountOpen}}">
+  <view class="page-head">
+    <view>
+      <text class="eyebrow">{{dateLabel}}</text>
+      <text class="page-title">今日</text>
+    </view>
+    <view class="phase"><view class="phase-dot"></view>{{phaseLabel}}</view>
+  </view>
+
+  <view class="tide arrive">
+    <image class="tide-art" src="/assets/tide.jpg" mode="aspectFill" aria-hidden="true" />
+    <view class="tide-shade"></view>
+    <view wx:for="{{sipPulse}}" wx:key="*this" class="sip-ripple" aria-hidden="true"></view>
+    <view class="tide-content">
+      <view class="tide-label"><image src="/assets/glyphs/drop.png" aria-hidden="true" />今日饮水量</view>
+      <view class="tide-reading numerals">
+        <text class="tide-value">{{consumedText}}</text><text class="tide-unit">mL</text>
+      </view>
+      <view class="tide-foot">
+        <view class="spread tide-goal numerals">
+          <text>每日目标 {{goalText}} mL</text>
+          <text class="tide-percent">{{done ? '已达标 · ' : ''}}{{percent}}%</text>
+        </view>
+        <view class="tide-track"><view class="tide-fill" style="transform: scaleX({{fraction}});"></view></view>
+      </view>
+    </view>
+  </view>
+
+  <view class="actions">
+    <button class="button log-cup" hover-class="press" hover-start-time="0" bindtap="drinkCup" aria-label="记一杯，{{cupLabel}} {{cupAmount}} 毫升">
+      <view class="action-symbol" aria-hidden="true">
+        <view wx:if="{{feedback}}" class="check-mark"></view>
+        <view wx:else class="plus-mark"></view>
+      </view>
+      <view class="action-copy" aria-live="polite">
+        <text class="action-name">{{feedback ? '已记下' : '记一杯'}}</text>
+        <text class="action-detail numerals">{{feedback || (cupLabel + ' · ' + cupAmount + ' mL')}}</text>
+      </view>
+    </button>
+    <button class="button custom" hover-class="press" hover-start-time="0" bindtap="customAmount" aria-label="自定义饮水量">
+      <image src="/assets/glyphs/measure.png" aria-hidden="true" />
+      <text>自定义</text>
+    </button>
+  </view>
+
+  <view class="section-head">
+    <text class="section-title">饮水提醒</text>
+    <button class="button link" hover-class="press" bindtap="togglePause">{{paused ? '恢复提醒' : '暂停今天'}}</button>
+  </view>
+  <view class="surface reminder">
+    <view class="reminder-main">
+      <view class="glyph-tile tile-bell"><image src="/assets/glyphs/bell.png" aria-hidden="true" /></view>
+      <view class="reminder-copy">
+        <text class="caption">{{hasNext ? '下一次提醒' : '提醒状态'}}</text>
+        <text class="reminder-value numerals {{hasNext ? 'has-time' : ''}}">{{nextText}}</text>
+      </view>
+    </view>
+    <text class="reminder-detail">{{planHint}}</text>
+    <view wx:if="{{showTip}}" class="foreground-tip">
+      <text>打开小程序时会弹出到点提醒。</text>
+      <button class="button link" hover-class="press" bindtap="dismissTip">知道了</button>
+    </view>
+  </view>
+
+  <view class="section-head">
+    <text class="section-title">最近记录</text>
+    <button class="button link all-link" hover-class="press" bindtap="goRecords">查看全部<view class="chevron"></view></button>
+  </view>
+  <view class="surface group">
+    <block wx:for="{{recent}}" wx:key="id"><template is="entry" data="{{entry: item}}" /></block>
+    <view wx:if="{{!recent.length}}" class="recent-empty">
+      <view class="glyph-tile"><image src="/assets/glyphs/cup.png" aria-hidden="true" /></view>
+      <text>记下第一杯，这里就会出现记录。</text>
+    </view>
+  </view>
+</view>
+<amount-sheet wx:if="{{amountOpen}}" id="amountSheet" heading="自定义水量" presets="{{presets}}" bind:confirm="addCustom" bind:close="closeAmount" />

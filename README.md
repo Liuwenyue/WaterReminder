@@ -53,6 +53,16 @@ PushWard 令牌和客户端 API 令牌放在服务器的数据目录或环境变
 dotnet publish .\WaterReminder\WaterReminder.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=none -o .\publish
 ```
 
+## 微信小程序
+
+`miniprogram/` 是同一套喝水规则的手机版本：今日进度、喝一杯、自定义毫升、记录和设置都在微信本地。用微信开发者工具导入 `miniprogram` 目录即可预览，说明见 [miniprogram/README.md](miniprogram/README.md)。
+
+小程序不能代替原来的后台提醒。Windows 悬浮窗和 PushWard 照旧；打开小程序时，如果已经到点，会弹出「该喝水了」。
+
+```bash
+node ./miniprogram-tests/calculator.test.js
+```
+
 ## 许可
 
 MIT，见 [LICENSE](LICENSE)。

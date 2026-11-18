@@ -1,0 +1,44 @@
+{
+  "pages": [
+    "pages/today/today",
+    "pages/records/records",
+    "pages/settings/settings"
+  ],
+  "darkmode": true,
+  "themeLocation": "theme.json",
+  "window": {
+    "navigationBarTitleText": "汐杯记",
+    "navigationBarBackgroundColor": "@page",
+    "navigationBarTextStyle": "@navText",
+    "backgroundColor": "@page",
+    "backgroundTextStyle": "@backgroundText"
+  },
+  "tabBar": {
+    "color": "@tabText",
+    "selectedColor": "@accent",
+    "backgroundColor": "@tabSurface",
+    "borderStyle": "@tabBorder",
+    "list": [
+      {
+        "pagePath": "pages/today/today",
+        "text": "今日",
+        "iconPath": "assets/tab-today.png",
+        "selectedIconPath": "assets/tab-today-on.png"
+      },
+      {
+        "pagePath": "pages/records/records",
+        "text": "记录",
+        "iconPath": "assets/tab-records.png",
+        "selectedIconPath": "assets/tab-records-on.png"
+      },
+      {
+        "pagePath": "pages/settings/settings",
+        "text": "设置",
+        "iconPath": "assets/tab-settings.png",
+        "selectedIconPath": "assets/tab-settings-on.png"
+      }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

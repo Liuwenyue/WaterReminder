@@ -46,3 +46,7 @@ client.json
 /data/
 WaterReminder.Server/data/
 *.token
+
+# WeChat DevTools local project file
+miniprogram/project.private.config.json
+!miniprogram/pages/settings/settings.json

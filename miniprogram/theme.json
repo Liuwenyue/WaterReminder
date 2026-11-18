@@ -1,0 +1,20 @@
+{
+  "light": {
+    "page": "#F4F6FA",
+    "navText": "black",
+    "backgroundText": "dark",
+    "tabText": "#606D80",
+    "accent": "#255CD5",
+    "tabSurface": "#FFFFFF",
+    "tabBorder": "white"
+  },
+  "dark": {
+    "page": "#10141D",
+    "navText": "white",
+    "backgroundText": "light",
+    "tabText": "#A2AEC2",
+    "accent": "#8BB3FF",
+    "tabSurface": "#191F2B",
+    "tabBorder": "black"
+  }
+}

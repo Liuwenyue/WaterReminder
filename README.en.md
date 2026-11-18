@@ -53,6 +53,16 @@ The original WPF app can still be published on Windows:
 dotnet publish .\WaterReminder\WaterReminder.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=none -o .\publish
 ```
 
+## WeChat mini program
+
+`miniprogram/` is the same drinking plan on a phone: today's progress, one cup, a custom amount, the log, and settings stay in WeChat local storage. Import the `miniprogram` folder with WeChat DevTools. See [miniprogram/README.md](miniprogram/README.md).
+
+A mini program cannot replace the background reminder. The Windows popup and PushWard stay as they are. Opening the mini program shows "time to drink" when a reminder is already due.
+
+```bash
+node ./miniprogram-tests/calculator.test.js
+```
+
 ## License
 
 MIT, see [LICENSE](LICENSE).

@@ -1,0 +1,99 @@
+.phase {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 10rpx 21rpx;
+  border: 1rpx solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: 40rpx;
+  font-size: 24rpx;
+  font-weight: 550;
+}
+.phase-dot { width: 12rpx; height: 12rpx; border-radius: 50%; background: var(--accent); }
+.tide {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: 39rpx;
+  background: #06276a;
+  color: #fff;
+  box-shadow: 0 13rpx 29rpx rgba(15, 55, 126, .18);
+}
+.tide-art, .tide-shade { position: absolute; width: 100%; height: 100%; top: 0; left: 0; }
+.tide-shade {
+  background: linear-gradient(0deg, rgba(3, 18, 61, .82), transparent 50%), linear-gradient(90deg, rgba(11, 38, 105, .36), transparent 74%);
+}
+.sip-ripple {
+  position: absolute; top: 42%; left: 78%; width: 145rpx; height: 55rpx;
+  border: 3rpx solid #d2f6ff; border-radius: 50%; opacity: 0;
+  pointer-events: none; animation: sip-ripple var(--flow) ease-out;
+}
+@keyframes sip-ripple {
+  from { opacity: .78; transform: translate(-50%, -50%) rotate(-14deg) scale(.24); }
+  to { opacity: 0; transform: translate(-50%, -50%) rotate(-14deg) scale(1.45); }
+}
+@media (prefers-reduced-motion: reduce) { .sip-ripple { display: none; } }
+.tide-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-height: 335rpx;
+  padding: 31rpx 34rpx 32rpx;
+}
+.tide-label { display: flex; align-items: center; gap: 9rpx; font-size: 26rpx; font-weight: 550; }
+.tide-label image { width: 34rpx; height: 34rpx; }
+.tide-reading { display: flex; align-items: baseline; gap: 12rpx; margin: 12rpx 0 29rpx; line-height: 1.1; }
+.tide-value { font-size: 99rpx; font-weight: 660; letter-spacing: -4rpx; }
+.tide-unit { color: #d9eafe; font-size: 31rpx; font-weight: 520; }
+.tide-foot { margin-top: auto; }
+.tide-goal { margin-bottom: 13rpx; font-size: 24rpx; font-weight: 540; color: #f1f6ff; }
+.tide-percent { color: #fff; font-weight: 650; }
+.tide-track { height: 10rpx; overflow: hidden; background: rgba(255,255,255,.30); border-radius: 20rpx; }
+.tide-fill {
+  width: 100%; height: 100%; border-radius: inherit; background: #b9f4ff;
+  transform-origin: left center;
+  transition: transform var(--flow) var(--ease);
+}
+.actions { display: flex; gap: 18rpx; margin-top: 21rpx; }
+.log-cup, .custom {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 111rpx; border-radius: 28rpx; gap: 17rpx;
+}
+.log-cup { flex: 1.65; background: var(--button); color: #fff; }
+.custom { flex: 1; background: var(--surface); color: var(--accent); font-size: 29rpx; box-shadow: var(--shadow); }
+.custom image { width: 36rpx; height: 36rpx; }
+.action-symbol {
+  display: flex; align-items: center; justify-content: center;
+  width: 52rpx; height: 52rpx; border-radius: 50%; background: rgba(255,255,255,.17);
+}
+.plus-mark { position: relative; width: 25rpx; height: 4rpx; border-radius: 3rpx; background: #fff; }
+.plus-mark::after {
+  content: ""; position: absolute; width: 100%; height: 100%; top: 0; left: 0;
+  background: #fff; border-radius: inherit; transform: rotate(90deg);
+}
+.check-mark {
+  width: 21rpx; height: 11rpx; border-left: 4rpx solid #fff; border-bottom: 4rpx solid #fff;
+  transform: translateY(-3rpx) rotate(-45deg); animation: check-in var(--arrive) var(--ease);
+}
+@keyframes check-in { from { opacity: 0; transform: scale(.65) rotate(-45deg); } }
+.action-copy { text-align: left; }
+.action-name, .action-detail { display: block; }
+.action-name { font-size: 31rpx; font-weight: 640; }
+.action-detail { margin-top: 4rpx; font-size: 22rpx; font-weight: 500; color: #edf4ff; }
+.reminder { padding: 26rpx 28rpx 24rpx; }
+.reminder-main, .recent-empty { display: flex; gap: 20rpx; align-items: center; }
+.reminder-copy { flex: 1; min-width: 0; }
+.reminder-value { display: block; margin-top: 1rpx; font-size: 32rpx; font-weight: 650; }
+.has-time { font-size: 44rpx; letter-spacing: -1.6rpx; line-height: 1.16; }
+.reminder-detail { display: block; margin-top: 18rpx; font-size: 26rpx; color: var(--muted); }
+.foreground-tip {
+  display: flex; justify-content: space-between; align-items: center; gap: 9rpx;
+  margin-top: 18rpx; border-top: 1rpx solid var(--line);
+  color: var(--muted); font-size: 24rpx;
+}
+.foreground-tip .link { flex: none; }
+.all-link { gap: 10rpx; }
+.recent-empty { min-height: 111rpx; color: var(--muted); font-size: 26rpx; }
+.recent-empty .glyph-tile { width: 64rpx; height: 64rpx; }
