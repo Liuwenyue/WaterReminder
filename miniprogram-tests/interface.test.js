@@ -14,14 +14,17 @@ let tabVisible;
 global.App = options => { app = options; };
 global.getApp = () => app;
 global.Page = global.Component = options => { definition = options; };
+let requestHandler = options => options.fail({ errMsg: 'request:fail' });
 global.wx = {
   getStorageSync: key => structuredClone(storage.get(key)),
   setStorageSync: (key, value) => storage.set(key, structuredClone(value)),
+  removeStorageSync: key => storage.delete(key),
   hideTabBar: () => { tabVisible = false; },
   showTabBar: () => { tabVisible = true; },
   showModal: options => { modal = options; },
   switchTab() {},
-  showToast() {}
+  showToast() {},
+  request: options => requestHandler(options)
 };
 require('../miniprogram/app.js');
 
@@ -48,6 +51,7 @@ function control(key, value) {
 }
 beforeEach(() => {
   storage.clear();
+  requestHandler = options => options.fail({ errMsg: 'request:fail' });
   app.globalData.prompting = app.globalData.amountEditorOpen = false;
   app.globalData.openTodayRecords = false;
   tabVisible = true;
@@ -139,29 +143,119 @@ test('chart selection and total corrections target the selected day, including t
   assert.equal(app.globalData.openTodayRecords, false);
 });
 
-test('settings preserve unsaved edits between tabs, validate before writing and preview the chosen days', () => {
+function serverSettings(extra) {
+  return Object.assign({
+    dailyGoalMl: 2500,
+    workCupMl: 370,
+    homeCupMl: 800,
+    workStart: '08:30',
+    workEnd: '17:30',
+    lunchEnabled: true,
+    lunchStart: '11:50',
+    lunchEnd: '13:30',
+    noDrinkBeforeEndMinutes: 30,
+    quietStart: '23:00',
+    minReminderGapMinutes: 20,
+    mobilePushEnabled: true,
+    activeDays: [true, true, true, true, true, false, false],
+    remindersPaused: true,
+    pauseUntil: '2026-11-18T23:59:00'
+  }, extra);
+}
+
+test('settings read and write the server configuration without sending the token', async () => {
+  const serverApi = require('../miniprogram/utils/server.js');
+  const requests = [];
+  let remote = serverSettings();
+  requestHandler = options => {
+    requests.push({
+      url: options.url,
+      method: options.method || 'GET',
+      data: options.data,
+      authorization: options.header && options.header.Authorization
+    });
+    if ((options.method || 'GET') === 'GET') options.success({ statusCode: 200, data: remote });
+    else {
+      remote = Object.assign({}, remote, options.data);
+      options.success({ statusCode: 200, data: remote });
+    }
+  };
+  assert.equal(serverApi.saveConnection({ serverUrl: 'https://cup.example.com/api/settings', apiToken: 'desktop-api-token' }).serverUrl, 'https://cup.example.com');
   const settings = mount(settingsPage);
-  settings.onShow();
+  assert.equal(await settings.onShow(), true);
+  assert.equal(settings.data.loaded, true);
+  assert.equal(settings.data.dailyGoalMl, '2500');
+  assert.equal(settings.data.mobilePushEnabled, true);
+  assert.equal(settings.data.serverPaused, true);
+  assert.equal(requests[0].url, 'https://cup.example.com/api/settings');
+  assert.equal(requests[0].authorization, 'Bearer desktop-api-token');
+  assert.equal(store.load().settings.dailyGoalMl, 2500);
+  assert.equal(store.load().settings.remindersPaused, false);
+
   settings.updateField(control('dailyGoalMl', '0'));
-  settings.save();
-  assert.ok(settings.data.error);
-  assert.equal(store.load().settings.dailyGoalMl, calc.defaultSettings().dailyGoalMl);
+  assert.equal(await settings.save(), false);
+  assert.match(settings.data.error, /100–10000/);
+  assert.equal(requests.length, 1);
+  assert.equal(remote.dailyGoalMl, 2500);
+
   settings.updateField(control('dailyGoalMl', '1800'));
   settings.onShow();
   assert.equal(settings.data.dailyGoalMl, '1800');
   settings.updateField(control('lunchEnabled', false));
+  settings.updateField(control('mobilePushEnabled', false));
   settings.data.activeDays.slice().forEach((active, index) => {
     if (active) settings.onDay({ currentTarget: { dataset: { index } } });
   });
   assert.equal(settings.data.dayCount, 0);
   assert.match(settings.data.preview, /未选择提醒日/);
+  assert.equal(await settings.save(), false);
+  assert.match(settings.data.error, /至少选择一天/);
   settings.onDay({ currentTarget: { dataset: { index: 6 } } });
   assert.equal(settings.data.dayCount, 1);
   assert.match(settings.data.preview, /首次约在/);
-  settings.save();
+  assert.equal(await settings.save(), true);
   assert.equal(settings.data.dirty, false);
-  const saved = store.load().settings;
-  assert.equal(saved.dailyGoalMl, 1800);
-  assert.equal(saved.lunchEnabled, false);
-  assert.deepEqual(saved.activeDays, [false, false, false, false, false, false, true]);
+  assert.equal(settings.data.apiToken, '');
+  const put = requests.at(-1);
+  assert.equal(put.method, 'PUT');
+  assert.equal(put.authorization, 'Bearer desktop-api-token');
+  assert.deepEqual(Object.keys(put.data).sort(), [
+    'activeDays', 'dailyGoalMl', 'homeCupMl', 'lunchEnabled', 'lunchEnd', 'lunchStart',
+    'minReminderGapMinutes', 'mobilePushEnabled', 'noDrinkBeforeEndMinutes', 'pauseUntil',
+    'quietStart', 'remindersPaused', 'workCupMl', 'workEnd', 'workStart'
+  ]);
+  assert.equal(JSON.stringify(put.data).includes('desktop-api-token'), false);
+  assert.equal(put.data.dailyGoalMl, 1800);
+  assert.equal(put.data.workCupMl, 370);
+  assert.equal(put.data.lunchEnabled, false);
+  assert.equal(put.data.mobilePushEnabled, false);
+  assert.equal(put.data.remindersPaused, true);
+  assert.equal(put.data.pauseUntil, '2026-11-18T23:59:00');
+  assert.deepEqual(put.data.activeDays, [false, false, false, false, false, false, true]);
+  assert.equal(store.load().settings.dailyGoalMl, 1800);
+  assert.equal(store.load().settings.remindersPaused, false);
+  assert.equal(JSON.stringify(wx.getStorageSync('water-reminder-v1')).includes('desktop-api-token'), false);
+
+  settings.disconnect();
+  assert.equal(serverApi.loadConnection().configured, false);
+  assert.equal(settings.data.loaded, false);
+});
+
+test('a rejected server save keeps the draft and the previous server values', async () => {
+  const serverApi = require('../miniprogram/utils/server.js');
+  const remote = serverSettings();
+  requestHandler = options => {
+    if ((options.method || 'GET') === 'GET') options.success({ statusCode: 200, data: remote });
+    else options.success({ statusCode: 400, data: { error: '每日目标需为 100–10000 ml 的整数。' } });
+  };
+  serverApi.saveConnection({ serverUrl: 'https://cup.example.com', apiToken: 'desktop-api-token' });
+  const settings = mount(settingsPage);
+  await settings.onShow();
+  settings.updateField(control('dailyGoalMl', '1800'));
+  assert.equal(await settings.save(), false);
+  assert.equal(settings.data.dirty, true);
+  assert.equal(settings.data.dailyGoalMl, '1800');
+  assert.match(settings.data.error, /100–10000/);
+  assert.equal(store.load().settings.dailyGoalMl, 2500);
+  assert.equal(remote.dailyGoalMl, 2500);
 });

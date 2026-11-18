@@ -38,3 +38,9 @@
 .save { margin-top: 31rpx; }
 .validation { display: block; color: var(--danger); font-size: 26rpx; margin-top: 20rpx; }
 .device-note { display: block; margin: 20rpx 9rpx 0; color: var(--muted); font-size: 24rpx; }
+
+.form-row.stack { flex-direction: column; align-items: stretch; justify-content: center; min-height: 128rpx; padding: 14rpx 0 8rpx; }
+.server-input { width: 100%; min-height: 44px; margin-top: 2rpx; color: var(--ink); font-size: 28rpx; }
+.connection-actions { display: flex; align-items: center; gap: 16rpx; margin-top: 18rpx; }
+.connection-actions .connect.primary { flex: 1; width: auto; }
+.disconnect { flex: none; min-height: 44px; padding: 0 8rpx; }

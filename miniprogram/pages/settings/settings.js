@@ -2,63 +2,18 @@
 
 const store = require('../../utils/storage.js');
 const calc = require('../../utils/calculator.js');
+const server = require('../../utils/server.js');
 
 const DAY_LABELS = ['一', '二', '三', '四', '五', '六', '日'];
 
-function readInt(text) {
-  const value = String(text == null ? '' : text).trim();
-  if (!/^\d+$/.test(value)) return null;
-  return Number(value);
-}
-
-function timeValue(text) {
-  return /^\d{2}:\d{2}$/.test(text) ? text : null;
-}
-
-function minutes(text) {
-  const parts = String(text).split(':');
-  return Number(parts[0]) * 60 + Number(parts[1]);
-}
-
-function validate(data) {
-  const goal = readInt(data.dailyGoalMl);
-  const workCup = readInt(data.workCupCapacityMl);
-  const homeCup = readInt(data.homeCupCapacityMl);
-  const noDrink = readInt(data.noDrinkBeforeEndMinutes);
-  const gap = readInt(data.minReminderGapMinutes);
-  if (goal == null || goal < 1 || goal > 20000) return { error: '每日目标请填 1 到 20000' };
-  if (workCup == null || workCup < 1 || workCup > 5000) return { error: '工作杯请填 1 到 5000' };
-  if (homeCup == null || homeCup < 1 || homeCup > 5000) return { error: '家庭杯请填 1 到 5000' };
-  if (noDrink == null || noDrink > 600) return { error: '下班前不喝水请填 0 到 600 分钟' };
-  if (gap == null || gap < 1 || gap > 240) return { error: '最小间隔请填 1 到 240 分钟' };
-  if (!timeValue(data.workStart) || !timeValue(data.workEnd) || !timeValue(data.lunchStart) || !timeValue(data.lunchEnd) || !timeValue(data.quietStart)) {
-    return { error: '时间格式应为 HH:mm' };
-  }
-  if (minutes(data.workStart) >= minutes(data.workEnd)) return { error: '上班时间要早于下班时间' };
-  if (data.lunchEnabled && minutes(data.lunchStart) >= minutes(data.lunchEnd)) return { error: '午休开始要早于结束' };
-  return {
-    error: '',
-    settings: {
-      dailyGoalMl: goal,
-      workCupCapacityMl: workCup,
-      homeCupCapacityMl: homeCup,
-      workStart: data.workStart,
-      workEnd: data.workEnd,
-      lunchEnabled: !!data.lunchEnabled,
-      lunchStart: data.lunchStart,
-      lunchEnd: data.lunchEnd,
-      noDrinkBeforeEndMinutes: noDrink,
-      minReminderGapMinutes: gap,
-      quietStart: data.quietStart,
-      activeDays: data.activeDays
-    }
-  };
-}
-
 function previewFor(data) {
-  const checked = validate(data);
+  const days = Array.isArray(data.activeDays) ? data.activeDays : [];
+  if (days.length === 7 && days.every(function (active) { return !active; })) {
+    return '未选择提醒日，仍可随时手动记水。';
+  }
+  const checked = server.validateSettings(data);
   if (checked.error) return '';
-  const settings = calc.normalizeSettings(checked.settings);
+  const settings = calc.normalizeSettings(server.toLocal(checked.update));
   const firstDay = settings.activeDays.indexOf(true);
   if (firstDay < 0) return '未选择提醒日，仍可随时手动记水。';
   const morning = new Date();
@@ -73,6 +28,13 @@ function previewFor(data) {
 Page({
   data: {
     dayLabels: DAY_LABELS,
+    serverUrl: '',
+    apiToken: '',
+    connected: false,
+    loaded: false,
+    loading: false,
+    saving: false,
+    connectionText: '未连接服务器',
     dailyGoalMl: '',
     workCupCapacityMl: '',
     homeCupCapacityMl: '',
@@ -86,22 +48,40 @@ Page({
     quietStart: '23:00',
     activeDays: [],
     dayCount: 0,
+    mobilePushEnabled: false,
+    serverPaused: false,
+    serverPauseUntil: null,
     dirty: false,
     preview: '',
     error: ''
   },
   onShow() {
-    if (!this.data.dirty) this.loadFromDisk();
+    const connection = server.loadConnection();
+    const patch = {
+      serverUrl: this.data.serverUrl || connection.serverUrl,
+      connected: connection.configured
+    };
+    if (!connection.configured) {
+      patch.connectionText = '未连接服务器';
+      patch.loading = false;
+      this.setData(patch);
+      return Promise.resolve(false);
+    }
+    this.setData(patch);
+    if (this.data.dirty) {
+      this.setData({ connectionText: '已连接，未保存的修改还在' });
+      return Promise.resolve(true);
+    }
+    return this.loadFromServer(false);
   },
-  loadFromDisk() {
-    const settings = store.load().settings;
+  applyLoaded(settings, extra) {
     const data = {
       dailyGoalMl: String(settings.dailyGoalMl),
-      workCupCapacityMl: String(settings.workCupCapacityMl),
-      homeCupCapacityMl: String(settings.homeCupCapacityMl),
+      workCupCapacityMl: String(settings.workCupMl),
+      homeCupCapacityMl: String(settings.homeCupMl),
       workStart: settings.workStart,
       workEnd: settings.workEnd,
-      lunchEnabled: settings.lunchEnabled,
+      lunchEnabled: !!settings.lunchEnabled,
       lunchStart: settings.lunchStart,
       lunchEnd: settings.lunchEnd,
       noDrinkBeforeEndMinutes: String(settings.noDrinkBeforeEndMinutes),
@@ -109,16 +89,84 @@ Page({
       quietStart: settings.quietStart,
       activeDays: settings.activeDays.slice(),
       dayCount: settings.activeDays.filter(Boolean).length,
+      mobilePushEnabled: !!settings.mobilePushEnabled,
+      serverPaused: !!settings.remindersPaused,
+      serverPauseUntil: settings.pauseUntil || null,
+      loaded: true,
+      connected: true,
+      loading: false,
+      saving: false,
       dirty: false,
-      error: ''
+      error: '',
+      connectionText: server.connectionLabel(server.loadConnection().serverUrl)
     };
     data.preview = previewFor(data);
-    this.setData(data);
+    this.setData(Object.assign(data, extra || {}));
+  },
+  loadFromServer(force) {
+    this.setData({ loading: true, error: '' });
+    return server.getSettings().then((result) => {
+      if (result.stale) {
+        this.setData({ loading: false });
+        return false;
+      }
+      if (!result.ok) {
+        this.setData({
+          loading: false,
+          connected: server.loadConnection().configured,
+          connectionText: result.error,
+          error: result.error
+        });
+        return false;
+      }
+      if (this.data.dirty && !force) {
+        this.setData({ loading: false, connected: true, connectionText: '已连接，未保存的修改还在' });
+        return true;
+      }
+      store.saveSettings(server.toLocal(result.settings));
+      this.applyLoaded(result.settings);
+      return true;
+    }).catch(() => {
+      this.setData({ loading: false, error: '读取设置失败', connectionText: '读取设置失败' });
+      return false;
+    });
+  },
+  updateServer(event) {
+    this.setData({ [event.currentTarget.dataset.key]: event.detail.value });
+  },
+  connect() {
+    const existing = server.loadConnection();
+    const token = String(this.data.apiToken || '').trim() || existing.apiToken;
+    const saved = server.saveConnection({ serverUrl: this.data.serverUrl, apiToken: token });
+    if (saved.error) {
+      this.setData({ error: saved.error, connectionText: saved.error, connected: false });
+      return Promise.resolve(false);
+    }
+    this.setData({ serverUrl: saved.serverUrl, apiToken: '', connected: true });
+    return this.loadFromServer(true);
+  },
+  disconnect() {
+    server.clearConnection();
+    this.setData({
+      connected: false,
+      loaded: false,
+      apiToken: '',
+      dirty: false,
+      loading: false,
+      saving: false,
+      serverPaused: false,
+      serverPauseUntil: null,
+      connectionText: '未连接服务器',
+      error: ''
+    });
   },
   edit(patch) {
     const draft = Object.assign({}, this.data, patch);
     this.setData(Object.assign({}, patch, {
-      dirty: true, error: '', preview: previewFor(draft), dayCount: draft.activeDays.filter(Boolean).length
+      dirty: true,
+      error: '',
+      preview: previewFor(draft),
+      dayCount: (draft.activeDays || []).filter(Boolean).length
     }));
   },
   updateField(event) {
@@ -131,14 +179,30 @@ Page({
     this.edit({ activeDays: days });
   },
   save() {
-    const checked = validate(this.data);
+    if (this.data.saving) return Promise.resolve(false);
+    if (!this.data.loaded) {
+      this.setData({ error: '请先连接服务器' });
+      return Promise.resolve(false);
+    }
+    const checked = server.validateSettings(this.data);
     if (checked.error) {
       this.setData({ error: checked.error });
-      wx.showToast({ title: checked.error, icon: 'none' });
-      return;
+      wx.showToast({ title: '设置有误', icon: 'none' });
+      return Promise.resolve(false);
     }
-    store.saveSettings(checked.settings);
-    wx.showToast({ title: '已保存', icon: 'success' });
-    this.loadFromDisk();
+    this.setData({ saving: true, error: '' });
+    return server.saveSettings(checked.update).then((result) => {
+      if (!result.ok) {
+        this.setData({ saving: false, dirty: true, error: result.error });
+        wx.showToast({ title: '保存失败', icon: 'none' });
+        return false;
+      }
+      this.applyLoaded(result.settings);
+      wx.showToast({ title: '已保存', icon: 'success' });
+      return true;
+    }).catch(() => {
+      this.setData({ saving: false, dirty: true, error: '保存失败' });
+      return false;
+    });
   }
 });
