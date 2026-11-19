@@ -195,7 +195,7 @@ test('settings read and write the server configuration without sending the token
   settings.updateField(control('dailyGoalMl', '0'));
   assert.equal(await settings.save(), false);
   assert.match(settings.data.error, /100–10000/);
-  assert.equal(requests.length, 1);
+  assert.equal(requests.filter(item => item.method === 'PUT').length, 0);
   assert.equal(remote.dailyGoalMl, 2500);
 
   settings.updateField(control('dailyGoalMl', '1800'));

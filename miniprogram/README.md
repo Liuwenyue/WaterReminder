@@ -15,7 +15,7 @@
 
 ## 和桌面版的差别
 
-小程序不能在完全退出后自己响铃。到点时如果小程序还开着，会弹出「该喝水了」；关掉之后再打开，如果已经到点，也会补弹一次。后台推送仍然用原来的 Windows 悬浮窗和 PushWard。
+到点的手机提醒由服务器发送微信服务通知。第一次点「允许微信提醒」会弹出授权；勾选「总是保持以上选择」后，再点记一杯、自定义水量或校正总量，都不会再弹窗，每点一次多攒一条。人一直不打开小程序，次数用完就停。点开通知进入小程序，在这里记账。服务器还没填写模板和 AppSecret 时，原来的 PushWard 继续负责手机提醒。
 
 「设置」和桌面端改的是服务器上的同一份配置。先填写地址和 API 令牌，再点「连接服务器」。令牌与桌面端 `client.json` 的 `apiToken` 相同，只保存在手机本地，不会写入仓库，也不会出现在请求正文里。保存时会原样带回服务器当前的暂停状态，避免把桌面端的暂停清掉。「开启手机推送」就是原来的 `MobilePushEnabled`，不能在这里查看或修改 PushWard 密钥。
 
@@ -27,7 +27,7 @@
 
 ```bash
 node ./miniprogram-tests/calculator.test.js
-node --test ./miniprogram-tests/interface.test.js ./miniprogram-tests/server.test.js
+node --test ./miniprogram-tests/interface.test.js ./miniprogram-tests/server.test.js ./miniprogram-tests/wechat.test.js
 ```
 
 <details>

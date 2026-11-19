@@ -188,3 +188,22 @@ public sealed class SyncSnapshotResponse
     public string MemberName { get; set; } = "";
     public List<TodayRecordsResponse> Days { get; set; } = [];
 }
+
+public sealed class WeChatStatusResponse
+{
+    public bool Enabled { get; set; }
+    public string TemplateId { get; set; } = "";
+    public bool Bound { get; set; }
+    public int Credits { get; set; }
+}
+
+public sealed class WeChatCodeRequest
+{
+    public string? Code { get; set; }
+}
+
+public sealed class WeChatSubscriptionRequest
+{
+    public string? Id { get; set; }
+    public string? Status { get; set; }
+}

@@ -57,11 +57,11 @@ dotnet publish .\WaterReminder\WaterReminder.csproj -c Release -r win-x64 --self
 
 `miniprogram/` 连接后，饮水记录、暂停和当日目标都写入服务器，和 Windows、PushWard 是同一本账。断网时手机会显示待同步，恢复后同一笔只补记一次。设置页也可以扫描电脑上的 15 分钟邀请码加入，确认姓名后才保存访问码。用微信开发者工具导入 `miniprogram` 目录即可预览，说明见 [miniprogram/README.md](miniprogram/README.md)。
 
-小程序不能代替原来的后台提醒。Windows 悬浮窗和 PushWard 照旧；打开小程序时，如果已经到点，会弹出「该喝水了」。
+手机提醒在服务器配好微信模板和 AppSecret 后改走服务通知。第一次点「允许微信提醒」会弹出授权；勾选「总是保持以上选择」后，再点喝水或改水量不再弹窗，每点一次多攒一条。次数用完前不再发 PushWard。通知点开只进入小程序，没有两个记账按钮。还没配好时，原来的 PushWard 继续用。
 
 ```bash
 node ./miniprogram-tests/calculator.test.js
-node --test ./miniprogram-tests/interface.test.js ./miniprogram-tests/server.test.js
+node --test ./miniprogram-tests/interface.test.js ./miniprogram-tests/server.test.js ./miniprogram-tests/wechat.test.js
 ```
 
 ## 许可

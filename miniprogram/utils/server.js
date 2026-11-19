@@ -18,7 +18,7 @@ function loadConnection() {
   const apiToken = typeof raw.apiToken === 'string' ? raw.apiToken : '';
   const memberName = typeof raw.memberName === 'string' ? raw.memberName : '';
   const memberId = typeof raw.memberId === 'string' ? raw.memberId : '';
-  return { serverUrl: serverUrl, apiToken: apiToken, memberName: memberName, memberId: memberId, configured: !!(serverUrl && apiToken) };
+  return { serverUrl: serverUrl, apiToken: apiToken, memberName: memberName, memberId: memberId, sharedWithOwner: raw.sharedWithOwner === true, configured: !!(serverUrl && apiToken) };
 }
 
 function validateConnection(serverUrl, apiToken) {
@@ -26,21 +26,21 @@ function validateConnection(serverUrl, apiToken) {
   const rawUrl = String(serverUrl == null ? '' : serverUrl).trim();
   if (!rawUrl || !token) return { error: '请填写服务器地址和 API 令牌' };
   if (token.length > 2000) return { error: 'API 令牌太长' };
-  let parsed;
-  try {
-    parsed = new URL(rawUrl);
-  } catch (error) {
-    return { error: '服务器地址需要以 http:// 或 https:// 开头' };
+  if (/[?#]/.test(rawUrl)) return { error: '服务器地址不要带参数' };
+  const match = /^(https?):\/\/([^/]+)(\/.*)?$/i.exec(rawUrl);
+  if (!match) return { error: '服务器地址需要以 http:// 或 https:// 开头' };
+  const authority = match[2];
+  if (authority.indexOf('@') !== -1) return { error: '不要把令牌写在地址里' };
+  const hostMatch = /^([a-z0-9.-]+|\[[0-9a-f:.]+\])(?::(\d{1,5}))?$/i.exec(authority);
+  if (!hostMatch || /(^\.|\.$|\.\.)/.test(hostMatch[1]) ||
+      (hostMatch[2] && (+hostMatch[2] < 1 || +hostMatch[2] > 65535)) ||
+      /[\s\\]/.test(rawUrl)) {
+    return { error: '服务器地址格式不正确' };
   }
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    return { error: '服务器地址需要以 http:// 或 https:// 开头' };
-  }
-  if (parsed.username || parsed.password) return { error: '不要把令牌写在地址里' };
-  if (parsed.search || parsed.hash) return { error: '服务器地址不要带参数' };
-  let path = parsed.pathname.replace(/\/+$/, '');
+  let path = (match[3] || '').replace(/\/+$/, '');
   if (/\/api\/settings$/i.test(path)) path = path.replace(/\/api\/settings$/i, '');
   path = path.replace(/\/+$/, '');
-  return { error: '', serverUrl: parsed.origin + path, apiToken: token };
+  return { error: '', serverUrl: match[1].toLowerCase() + '://' + authority.toLowerCase() + path, apiToken: token };
 }
 
 function saveConnection(connection) {
@@ -51,7 +51,9 @@ function saveConnection(connection) {
     serverUrl: checked.serverUrl,
     apiToken: checked.apiToken,
     memberId: connection.memberId || (current.serverUrl === checked.serverUrl && current.apiToken === checked.apiToken ? current.memberId : ''),
-    memberName: connection.memberName || (current.serverUrl === checked.serverUrl && current.apiToken === checked.apiToken ? current.memberName : '')
+    memberName: connection.memberName || (current.serverUrl === checked.serverUrl && current.apiToken === checked.apiToken ? current.memberName : ''),
+    sharedWithOwner: typeof connection.sharedWithOwner === 'boolean' ? connection.sharedWithOwner :
+      (current.serverUrl === checked.serverUrl && current.apiToken === checked.apiToken && current.sharedWithOwner)
   });
   return { error: '', serverUrl: checked.serverUrl };
 }
@@ -66,15 +68,9 @@ function clearConnection() {
 }
 
 function connectionLabel(serverUrl) {
-  let host = serverUrl || '服务器';
-  let insecure = false;
-  try {
-    const url = new URL(serverUrl);
-    host = url.host;
-    insecure = url.protocol === 'http:';
-  } catch (error) {
-    host = serverUrl || '服务器';
-  }
+  const match = /^(https?):\/\/([^/]+)/i.exec(serverUrl || '');
+  const host = match ? match[2] : (serverUrl || '服务器');
+  const insecure = !!match && match[1].toLowerCase() === 'http';
   const text = '已连接 ' + host + '，保存后和桌面端是同一份设置';
   return insecure ? text + '。手机正式版需要 https，http 只能在开发者工具里调试' : text;
 }
@@ -360,6 +356,49 @@ function syncLedger() {
   }).finally(function () { syncing = null; });
   return syncing;
 }
+function wechatStatus() {
+  return request('GET', '/api/wechat');
+}
+function bindWeChat(code) {
+  return request('POST', '/api/wechat/bind', { code: code });
+}
+function reportSubscription(body) {
+  return request('POST', '/api/wechat/subscription', body);
+}
+function createShare() {
+  return request('POST', '/api/family/share', {});
+}
+function loginWeChat(serverUrl, shareToken) {
+  const checked = validateConnection(serverUrl, 'login');
+  if (checked.error || !/^https:\/\//.test(checked.serverUrl || ''))
+    return Promise.resolve({ ok: false, error: '暂时无法连接，请稍后重试。' });
+  if (typeof wx.login !== 'function') return Promise.resolve({ ok: false, error: '无法使用微信登录。' });
+  return new Promise(function (resolve) {
+    wx.login({
+      success: function (login) {
+        if (!login || !login.code) return resolve({ ok: false, error: '微信登录失败，请重试。' });
+        wx.request({
+          url: checked.serverUrl + '/api/wechat/login', method: 'POST',
+          header: { 'content-type': 'application/json' }, timeout: 15000,
+          data: { code: login.code, shareToken: shareToken || null },
+          success: function (res) {
+            const data = res.data || {};
+            if (res.statusCode < 200 || res.statusCode >= 300)
+              return resolve({ ok: false, error: httpError(res.statusCode, data) });
+            if (typeof data.accessCode !== 'string' || !/^wr_[0-9a-f]{64}$/.test(data.accessCode) ||
+                typeof data.memberId !== 'string' || typeof data.memberName !== 'string')
+              return resolve({ ok: false, error: '登录结果无法识别。' });
+            const saved = saveConnection({ serverUrl: checked.serverUrl, apiToken: data.accessCode,
+              memberId: data.memberId, memberName: data.memberName, sharedWithOwner: data.sharedWithOwner === true });
+            resolve(saved.error ? { ok: false, error: saved.error } : { ok: true });
+          },
+          fail: function () { resolve({ ok: false, error: '暂时无法连接，请稍后重试。' }); }
+        });
+      },
+      fail: function () { resolve({ ok: false, error: '微信登录失败，请重试。' }); }
+    });
+  });
+}
 function refreshCachedSettings() {
   if (!loadConnection().configured) return Promise.resolve(false);
   return getSettings().then(function (result) {
@@ -383,5 +422,10 @@ module.exports = {
   parseInvite: parseInvite,
   previewInvite: previewInvite,
   redeemInvite: redeemInvite,
-  syncLedger: syncLedger
+  syncLedger: syncLedger,
+  wechatStatus: wechatStatus,
+  bindWeChat: bindWeChat,
+  reportSubscription: reportSubscription,
+  createShare: createShare,
+  loginWeChat: loginWeChat
 };

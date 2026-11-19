@@ -4,12 +4,24 @@ const calc = require('./calculator.js');
 
 const KEY = 'water-reminder-v1';
 const TIP_KEY = 'water-reminder-tip-dismissed';
-function accountKey() {
-  let c; try { c = wx.getStorageSync('water-reminder-server') || {}; } catch (_) { return ''; }
-  if (!c.serverUrl || !c.apiToken) return '';
+function legacyAccountKey(c) {
   let hash = 2166136261;
   for (let i = 0; i < c.apiToken.length; i++) hash = Math.imul(hash ^ c.apiToken.charCodeAt(i), 16777619);
   return 'water-member:' + c.serverUrl + ':' + (hash >>> 0).toString(16) + ':' + c.apiToken.length;
+}
+function accountKey() {
+  let c; try { c = wx.getStorageSync('water-reminder-server') || {}; } catch (_) { return ''; }
+  if (!c.serverUrl || !c.apiToken) return '';
+  const legacy = legacyAccountKey(c);
+  if (!c.memberId) return legacy;
+  const stable = 'water-member-id:' + c.serverUrl + ':' + c.memberId;
+  try {
+    if (!wx.getStorageSync(stable)) {
+      const previous = wx.getStorageSync(legacy);
+      if (previous) wx.setStorageSync(stable, previous);
+    }
+  } catch (_) {}
+  return stable;
 }
 function storageKey() { return accountKey() || KEY; }
 

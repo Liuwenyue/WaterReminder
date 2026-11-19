@@ -8,7 +8,7 @@ namespace WaterReminder.Server;
 
 internal sealed class FamilyAccounts : IDisposable
 {
-    private sealed record Entry(Guid Id, string Name, string CodeHash, bool Archived = false, string? InviteHash = null, DateTimeOffset? InviteExpiresAt = null, string? InviteServerUrl = null)
+    private sealed record Entry(Guid Id, string Name, string CodeHash, bool Archived = false, string? InviteHash = null, DateTimeOffset? InviteExpiresAt = null, string? InviteServerUrl = null, string? WeChatIdentityHash = null, bool SharedWithOwner = true, List<string>? WeChatSessionHashes = null, string? UsedShareHash = null)
     {
         public FamilyMember View => new(Id, Name, Archived);
     }
@@ -33,8 +33,80 @@ internal sealed class FamilyAccounts : IDisposable
         lock (_gate)
         {
             return caller == Guid.Empty
-                ? new(true, [new(Guid.Empty, "我"), .. _entries.Select(entry => entry.View)])
+                ? new(true, [new(Guid.Empty, "我"), .. _entries.Where(entry => entry.SharedWithOwner).Select(entry => entry.View)])
                 : new(false, [_entries.Single(entry => entry.Id == caller).View]);
+        }
+    }
+
+    // Owner management endpoints must not reveal accounts created for independent use.
+    public bool OwnerCanAccess(Guid id)
+    {
+        lock (_gate) return _entries.Any(entry => entry.Id == id && entry.SharedWithOwner);
+    }
+
+    private sealed record ShareInvite(string Hash, DateTimeOffset ExpiresAt);
+    internal sealed record WeChatLoginResult(string AccessCode, Guid MemberId, string MemberName, bool SharedWithOwner);
+
+    private string SharePath => Path.Combine(_options.DataDirectory, "wechat-shares.json");
+
+    public string CreateWeChatShare()
+    {
+        lock (_gate)
+        {
+            var invitations = ReadShares().Where(i => i.ExpiresAt > DateTimeOffset.UtcNow).TakeLast(99).ToList();
+            var token = "ws_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
+            invitations.Add(new(Convert.ToHexString(Hash(token)), DateTimeOffset.UtcNow.AddDays(1)));
+            Directory.CreateDirectory(_options.DataDirectory);
+            File.WriteAllText(SharePath + ".tmp", JsonSerializer.Serialize(invitations));
+            File.Move(SharePath + ".tmp", SharePath, overwrite: true);
+            return token;
+        }
+    }
+
+    private List<ShareInvite> ReadShares()
+        => File.Exists(SharePath)
+            ? JsonSerializer.Deserialize<List<ShareInvite>>(File.ReadAllText(SharePath)) ?? []
+            : [];
+
+    public WeChatLoginResult? LogInWeChat(string openId, string? shareToken, out string? error)
+    {
+        var identity = Convert.ToHexString(Hash(openId));
+        lock (_gate)
+        {
+            var entry = _entries.Find(item => item.WeChatIdentityHash == identity);
+            if (entry?.Archived == true) { error = "账号已停用。"; return null; }
+            string? shareHash = null;
+            if (!string.IsNullOrEmpty(shareToken))
+            {
+                if (shareToken.Length != 51 || !shareToken.StartsWith("ws_", StringComparison.Ordinal))
+                { error = "邀请无效或已过期。"; return null; }
+                shareHash = Convert.ToHexString(Hash(shareToken));
+                if (!ReadShares().Any(i => i.Hash == shareHash && i.ExpiresAt > DateTimeOffset.UtcNow) ||
+                    _entries.Any(i => i.UsedShareHash == shareHash && i.WeChatIdentityHash != identity))
+                { error = "邀请无效、已过期或已使用。"; return null; }
+                if (entry is not null && !entry.SharedWithOwner)
+                { error = "已有独立账号，不能自动共享历史记录。"; return null; }
+            }
+            var session = "wr_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+            var sessionHash = Convert.ToHexString(Hash(session));
+            if (entry is null)
+            {
+                if (_entries.Count >= 50) { error = "当前账号数量已达上限。"; return null; }
+                var id = Guid.NewGuid();
+                entry = new Entry(id, "成员" + id.ToString("N")[..6], sessionHash,
+                    WeChatIdentityHash: identity, SharedWithOwner: shareHash is not null,
+                    WeChatSessionHashes: [], UsedShareHash: shareHash);
+                Save([.. _entries, entry]);
+            }
+            else
+            {
+                var sessions = (entry.WeChatSessionHashes ?? []).TakeLast(9).Append(sessionHash).ToList();
+                entry = entry with { WeChatSessionHashes = sessions, UsedShareHash = entry.UsedShareHash ?? shareHash };
+                Save(_entries.Select(item => item.Id == entry.Id ? entry : item).ToList());
+            }
+            Engine(entry).BindVerifiedWeChat(openId);
+            error = null;
+            return new(session, entry.Id, entry.Name, entry.SharedWithOwner);
         }
     }
 
@@ -50,7 +122,8 @@ internal sealed class FamilyAccounts : IDisposable
         {
             foreach (var entry in _entries.Where(item => !item.Archived))
             {
-                if (CryptographicOperations.FixedTimeEquals(hash, Convert.FromHexString(entry.CodeHash)))
+                if (CryptographicOperations.FixedTimeEquals(hash, Convert.FromHexString(entry.CodeHash)) ||
+                    (entry.WeChatSessionHashes?.Any(s => CryptographicOperations.FixedTimeEquals(hash, Convert.FromHexString(s))) ?? false))
                     return entry.Id;
             }
             return null;
@@ -132,7 +205,7 @@ internal sealed class FamilyAccounts : IDisposable
             Entry? entry;
             if (request.MemberId is { } id)
             {
-                entry = _entries.Find(item => item.Id == id && !item.Archived);
+                entry = _entries.Find(item => item.Id == id && !item.Archived && item.SharedWithOwner);
                 if (entry is null) { error = "成员不存在或已停用。"; return null; }
             }
             else
@@ -220,7 +293,7 @@ internal sealed class FamilyAccounts : IDisposable
     {
         lock (_gate)
         {
-            var entry = _entries.Find(item => item.Id == id && !item.Archived);
+            var entry = _entries.Find(item => item.Id == id && !item.Archived && item.SharedWithOwner);
             return entry is null ? null : Engine(entry).ClientSettings();
         }
     }
@@ -230,7 +303,7 @@ internal sealed class FamilyAccounts : IDisposable
         lock (_gate)
         {
             error = null;
-            var entry = _entries.Find(item => item.Id == id && !item.Archived);
+            var entry = _entries.Find(item => item.Id == id && !item.Archived && item.SharedWithOwner);
             if (entry is null) return null;
             var push = request.PushWardToken?.Trim() ?? "";
             if (!ValidPushToken(push))
@@ -261,7 +334,7 @@ internal sealed class FamilyAccounts : IDisposable
     {
         lock (_gate)
         {
-            var entry = _entries.Find(item => item.Id == id);
+            var entry = _entries.Find(item => item.Id == id && item.SharedWithOwner);
             if (entry is null) return false;
             if (entry.Archived) return true;
             Save(_entries.Select(item => item.Id == id ? item with { Archived = true } : item).ToList());
@@ -276,7 +349,8 @@ internal sealed class FamilyAccounts : IDisposable
         var engine = new ReminderEngine(new ReminderEngineOptions
         {
             DataDirectory = MemberDirectory(entry.Id),
-            PollAnswers = _options.RunScheduler && !entry.Archived
+            PollAnswers = _options.RunScheduler && !entry.Archived,
+            WeChat = _options.WeChat,
         });
         if (entry.Archived) engine.Retire();
         _engines.Add(entry.Id, engine);
@@ -303,11 +377,15 @@ internal sealed class FamilyAccounts : IDisposable
         public string? InviteHash { get; set; }
         public DateTimeOffset? InviteExpiresAt { get; set; }
         public string? InviteServerUrl { get; set; }
+        public string? WeChatIdentityHash { get; set; }
+        public bool SharedWithOwner { get; set; } = true;
+        public List<string>? WeChatSessionHashes { get; set; }
+        public string? UsedShareHash { get; set; }
     }
 
     private static List<Entry> ReadEntries(string json)
         => JsonSerializer.Deserialize<List<EntryDto>>(json)?.Select(item => new Entry(
-            item.Id, item.Name, item.CodeHash, item.Archived, item.InviteHash, item.InviteExpiresAt, item.InviteServerUrl)).ToList()
+            item.Id, item.Name, item.CodeHash, item.Archived, item.InviteHash, item.InviteExpiresAt, item.InviteServerUrl, item.WeChatIdentityHash, item.SharedWithOwner, item.WeChatSessionHashes, item.UsedShareHash)).ToList()
             ?? throw new InvalidDataException("Invalid family registry");
 
     private static byte[] Hash(string value) => SHA256.HashData(Encoding.UTF8.GetBytes(value));

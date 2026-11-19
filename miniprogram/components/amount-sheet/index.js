@@ -1,6 +1,7 @@
 'use strict';
 
 const calc = require('../../utils/calculator.js');
+const wechat = require('../../utils/wechat.js');
 
 Component({
   properties: {
@@ -37,7 +38,9 @@ Component({
         this.showError('请输入 ' + this.data.minimum + ' 到 ' + this.data.maximum + ' 之间的整数毫升数。');
         return;
       }
+      const subscription = wechat.capture();
       this.triggerEvent('confirm', { amount: parsed.total });
+      subscription.then(wechat.report);
     },
     startDrag(event) {
       this._startY = event.touches[0].clientY;

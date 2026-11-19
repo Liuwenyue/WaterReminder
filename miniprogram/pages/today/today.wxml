@@ -9,6 +9,11 @@
   </view>
 
   <text wx:if="{{identity || syncText}}" class="sync-note">{{identity}}{{identity && syncText ? ' · ' : ''}}{{syncText}}</text>
+  <text wx:if="{{sharedNotice}}" class="sync-note">{{sharedNotice}}</text>
+  <view wx:if="{{loginText}}" class="sync-note">
+    <text>{{loginText}}</text>
+    <button wx:if="{{loginFailed}}" class="button link" bindtap="retryLogin">重试</button>
+  </view>
   <view class="tide arrive">
     <image class="tide-art" src="/assets/tide.jpg" mode="aspectFill" aria-hidden="true" />
     <view class="tide-shade"></view>

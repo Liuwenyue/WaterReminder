@@ -46,6 +46,21 @@ test('connection keeps the token local and rejects addresses that would expose i
   assert.equal(server.loadConnection().configured, false);
 });
 
+test('phone connection validation does not depend on a browser URL global', () => {
+  const previous = global.URL;
+  try {
+    global.URL = undefined;
+    const valid = server.validateConnection('https://wednesday-holly-warcraft-beef.trycloudflare.com', 'test-token');
+    assert.equal(valid.error, '');
+    assert.equal(valid.serverUrl, 'https://wednesday-holly-warcraft-beef.trycloudflare.com');
+    assert.match(server.connectionLabel(valid.serverUrl), /已连接/);
+    assert.ok(server.validateConnection('https://example.com\\@evil.com', 'token').error);
+    assert.ok(server.validateConnection('https://example.com:99999', 'token').error);
+  } finally {
+    global.URL = previous;
+  }
+});
+
 test('validation matches the server rules and echoes pause without a secret', () => {
   const form = {
     dailyGoalMl: '1800',

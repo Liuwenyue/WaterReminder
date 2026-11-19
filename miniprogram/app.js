@@ -3,16 +3,47 @@
 const store = require('./utils/storage.js');
 const calc = require('./utils/calculator.js');
 const server = require('./utils/server.js');
+const endpoint = require('./utils/endpoint.js');
 
 App({
-  globalData: { prompting: false, amountEditorOpen: false, openTodayRecords: false },
-  onShow() {
+  globalData: { prompting: false, amountEditorOpen: false, openTodayRecords: false, authState: 'idle', authError: '' },
+  onShow(options) {
     this.startWatch();
+    const share = options && options.query && options.query.share || '';
+    if (share && server.loadConnection().configured) {
+      if (wx.showToast) wx.showToast({ title: '已登录的账号不会自动共享记录', icon: 'none' });
+    } else if (share) {
+      this._pendingShare = share;
+    }
+    this.startSession(share);
+  },
+  startSession(share) {
     const ticket = (this._settingsSync || 0) + 1;
     this._settingsSync = ticket;
-    server.syncLedger().catch(() => false).then(() => server.refreshCachedSettings()).then(() => {
+    if (!server.loadConnection().configured) this.globalData.authState = 'loading';
+    const ready = server.loadConnection().configured
+      ? Promise.resolve({ ok: true })
+      : server.loginWeChat(endpoint.serverUrl, share || this._pendingShare || '');
+    return ready.then((result) => {
+      if (ticket !== this._settingsSync) return false;
+      if (!result.ok) {
+        this.globalData.authState = 'error';
+        this.globalData.authError = result.error || '连接失败，请重试。';
+        this.refreshPages();
+        return false;
+      }
+      this.globalData.authState = 'ready';
+      this._pendingShare = '';
+      this.globalData.authError = '';
+      this.refreshPages();
+      return server.syncLedger().catch(() => false).then(() => server.refreshCachedSettings());
+    }).then(() => {
       if (ticket === this._settingsSync) this.refreshPages();
-    }).catch(() => {});
+    }).catch(() => {
+      this.globalData.authState = 'error';
+      this.globalData.authError = '连接失败，请重试。';
+      this.refreshPages();
+    });
   },
   onHide() {
     this.stopWatch();
@@ -32,6 +63,7 @@ App({
     });
   },
   checkReminder() {
+    if (!server.loadConnection().configured) return;
     if (this.globalData.prompting || this.globalData.amountEditorOpen) return;
     const now = new Date();
     const snap = store.snapshot(now);

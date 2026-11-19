@@ -12,6 +12,11 @@ Keep these only on the server, in the environment or in the data directory. Do n
 | --- | --- | --- |
 | Client API token | `WATERREMINDER_API_TOKEN` | `api.token` |
 | PushWard token | `WATERREMINDER_PUSHWARD_TOKEN` | `pushward.token` |
+| WeChat AppSecret | `WATERREMINDER_WECHAT_APP_SECRET` | `wechat.json` 的 `appSecret` |
+| WeChat template ID | `WATERREMINDER_WECHAT_TEMPLATE_ID` | `wechat.json` 的 `templateId` |
+
+
+微信服务通知配好 AppSecret 和模板 ID 后，会代替 PushWard 给已绑定的成员发提醒。`wechat.json` 还可以写 `miniprogramState`（开发阶段用 `developer`）和 `fields`。默认字段是 `thing1`、`time2`、`thing3`，分别放「该喝水了」、提醒时间和「建议喝{suggested}毫升」。字段名必须和公众平台模板一致。AppSecret 不要提交。
 
 Environment wins over the file. A token found that way is not copied into `settings.json` when the service saves a pause. `settings.json` in the data directory may still contain `PushWardApiToken` for a hand-edited install; that file stays on the server and is gitignored.
 

@@ -3,6 +3,7 @@
 const store = require('../../utils/storage.js');
 const calc = require('../../utils/calculator.js');
 const server = require('../../utils/server.js');
+const wechat = require('../../utils/wechat.js');
 
 const DAY_LABELS = ['一', '二', '三', '四', '五', '六', '日'];
 
@@ -58,7 +59,9 @@ Page({
     memberName: '',
     syncText: '',
     syncBlocked: false,
-    legacyCount: 0
+    legacyCount: 0,
+    wechatText: '连接服务器后可以开启微信提醒。',
+    shareToken: '', showAdvanced: false
   },
   onShow() {
     const connection = server.loadConnection();
@@ -83,6 +86,21 @@ Page({
     }
     return this.loadFromServer(false);
   },
+  prepareShare() {
+    if (!server.loadConnection().configured) return;
+    server.createShare().then((result) => {
+      const token = result.ok && result.data && result.data.token;
+      this.setData({ shareToken: typeof token === 'string' ? token : '' });
+    });
+  },
+  onShareAppMessage() {
+    const token = this.data.shareToken;
+    setTimeout(() => this.prepareShare(), 0);
+    return token
+      ? { title: '邀请你一起记录喝水，邀请人可查看和设置你的记录', path: '/pages/today/today?share=' + encodeURIComponent(token) }
+      : { title: '一起记录每天的喝水量', path: '/pages/today/today' };
+  },
+  toggleAdvanced() { this.setData({ showAdvanced: !this.data.showAdvanced }); },
   applyLoaded(settings, extra) {
     const data = {
       dailyGoalMl: String(settings.dailyGoalMl),
@@ -134,10 +152,26 @@ Page({
       }
       store.saveSettings(server.toLocal(result.settings));
       this.applyLoaded(result.settings);
+      wechat.prepare().then((status) => this.setData({ wechatText: wechat.describe(status) }));
       return true;
     }).catch(() => {
       this.setData({ loading: false, error: '读取设置失败', connectionText: '读取设置失败' });
       return false;
+    });
+  },
+
+  enableWeChat() {
+    const subscription = wechat.capture();
+    return Promise.resolve(subscription).then((result) => {
+      if (result.status === 'skip') {
+        wx.showToast({ title: '服务器还没配好微信模板', icon: 'none' });
+        return null;
+      }
+      if (result.status === 'accept') wx.showToast({ title: '已加上 1 次提醒', icon: 'none' });
+      else if (result.status === 'reject' || result.status === 'ban') wx.showToast({ title: '没有允许，次数没增加', icon: 'none' });
+      return wechat.report(result);
+    }).then(() => wechat.prepare()).then((status) => {
+      this.setData({ wechatText: wechat.describe(status) });
     });
   },
   updateServer(event) {

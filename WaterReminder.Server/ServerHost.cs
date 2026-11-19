@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading.RateLimiting;
 using WaterReminder;
 using WaterReminder.Services;
 
@@ -21,15 +22,31 @@ public static class ServerHost
         builder.Logging.SetMinimumLevel(LogLevel.Warning);
 
         builder.Services.AddSingleton(_ => new FamilyAccounts(options, engine));
+        builder.Services.AddRateLimiter(limiter =>
+        {
+            limiter.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+            limiter.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+                context.Request.Path.StartsWithSegments("/api")
+                    ? RateLimitPartition.GetFixedWindowLimiter("public-api", _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 120,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueLimit = 0,
+                    })
+                    : RateLimitPartition.GetNoLimiter("other"));
+        });
         if (options.RunScheduler)
             builder.Services.AddHostedService<ReminderScheduler>();
 
         var app = builder.Build();
 
+        app.UseRateLimiter();
+
         app.Use(async (context, next) =>
         {
             if (context.Request.Path.StartsWithSegments("/health") ||
-                context.Request.Path == "/api/invitations/preview" || context.Request.Path == "/api/invitations/redeem")
+                context.Request.Path == "/api/invitations/preview" || context.Request.Path == "/api/invitations/redeem" ||
+                context.Request.Path == "/api/wechat/login")
             {
                 await next();
                 return;
@@ -180,12 +197,14 @@ public static class ServerHost
         app.MapGet("/api/family/{id:guid}/history", (HttpContext context, FamilyAccounts accounts, Guid id, int? days) =>
         {
             if (Caller(context) != Guid.Empty) return Results.StatusCode(403);
+            if (!accounts.OwnerCanAccess(id)) return Results.NotFound();
             return accounts.Find(id, includeArchived: true) is { } member
                 ? Results.Ok(member.History(days ?? 30)) : Results.NotFound();
         });
         app.MapGet("/api/family/{id:guid}/records", (HttpContext context, FamilyAccounts accounts, Guid id, string date) =>
         {
             if (Caller(context) != Guid.Empty) return Results.StatusCode(403);
+            if (!accounts.OwnerCanAccess(id)) return Results.NotFound();
             if (accounts.Find(id, includeArchived: true) is not { } member) return Results.NotFound();
             var records = member.RecordsFor(date);
             if (records is null) return Results.BadRequest(new { error = "日期格式应为 yyyy-MM-dd。" });
@@ -226,6 +245,27 @@ public static class ServerHost
             var e = CurrentEngine(context);
             e.TryClearToday();
             return Results.Ok(e.TodayRecords());
+        });
+
+
+        app.MapGet("/api/wechat", (HttpContext context) => Results.Ok(CurrentEngine(context).WeChatStatus()));
+        app.MapPost("/api/wechat/bind", async (HttpRequest request, CancellationToken cancellationToken) =>
+        {
+            WeChatCodeRequest? body;
+            try { body = await request.ReadFromJsonAsync<WeChatCodeRequest>(cancellationToken); }
+            catch (Exception error) when (error is JsonException or InvalidOperationException or BadHttpRequestException)
+            { body = null; }
+            var (ok, status, errorText) = await CurrentEngine(request.HttpContext).BindWeChatAsync(body?.Code, cancellationToken);
+            return ok ? Results.Ok(status) : Results.BadRequest(new { error = errorText });
+        });
+        app.MapPost("/api/wechat/subscription", async (HttpRequest request, CancellationToken cancellationToken) =>
+        {
+            WeChatSubscriptionRequest? body;
+            try { body = await request.ReadFromJsonAsync<WeChatSubscriptionRequest>(cancellationToken); }
+            catch (Exception error) when (error is JsonException or InvalidOperationException or BadHttpRequestException)
+            { body = null; }
+            var (ok, status, errorText) = CurrentEngine(request.HttpContext).AcceptWeChatSubscription(body?.Id, body?.Status);
+            return ok ? Results.Ok(status) : Results.BadRequest(new { error = errorText });
         });
 
         app.MapFamilyRoutes(options);

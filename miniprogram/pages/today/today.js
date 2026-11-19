@@ -4,6 +4,7 @@ const store = require('../../utils/storage.js');
 const calc = require('../../utils/calculator.js');
 const journal = require('../../utils/journal.js');
 const serverApi = require('../../utils/server.js');
+const wechat = require('../../utils/wechat.js');
 
 function planHint(settings, model, plan, now) {
   const remaining = Math.max(0, settings.dailyGoalMl - calc.consumedMl(model));
@@ -22,7 +23,7 @@ Page({
     done: false, cupAmount: 0, cupLabel: '', paused: false, nextText: '', hasNext: false,
     planHint: '', showTip: false, recent: [], feedback: '', sipPulse: [], amountOpen: false, presets: [150, 250, 500]
   },
-  onShow() { this.reload(); },
+  onShow() { this.reload(); wechat.prepare(); },
   onHide() { this.resetTransient(); },
   onUnload() { clearTimeout(this._feedbackTimer); },
   resetTransient() {
@@ -54,10 +55,18 @@ Page({
       paused, hasNext, nextText, planHint: planHint(settings, snap.model, plan, now),
       recent: journal.entries(snap.model).slice(0, 2), showTip: !store.tipDismissed(),
       identity: serverApi.loadConnection().memberName ? ('正在为 ' + serverApi.loadConnection().memberName + ' 记录') : '',
-      syncText: serverApi.loadConnection().configured ? store.syncInfo().text : ''
+      syncText: serverApi.loadConnection().configured ? store.syncInfo().text : '',
+      sharedNotice: serverApi.loadConnection().sharedWithOwner ? '你的饮水记录可由邀请人查看和设置。' : '',
+      loginText: getApp().globalData.authState === 'loading' ? '正在连接…' :
+        (getApp().globalData.authState === 'error' ? getApp().globalData.authError : ''),
+      loginFailed: getApp().globalData.authState === 'error'
     });
   },
+  retryLogin() { getApp().startSession(''); },
   recordAmount(amount, source) {
+    if (!serverApi.loadConnection().configured && ['loading', 'error'].includes(getApp().globalData.authState)) {
+      return { ok: false, error: '请先连接账号' };
+    }
     const result = store.addEvent(amount, source);
     if (!result.ok) return result;
     this.reload();
@@ -71,9 +80,11 @@ Page({
   drinkCup() {
     const now = Date.now();
     if (!this.data.cupAmount || now - (this._lastCupAt || 0) < 350) return;
+    const subscription = wechat.capture();
     this._lastCupAt = now;
     const result = this.recordAmount(this.data.cupAmount, 'cup');
     if (!result.ok) wx.showToast({ title: result.error, icon: 'none' });
+    subscription.then(wechat.report);
   },
   customAmount() { this.setData({ amountOpen: true }); },
   addCustom(event) {

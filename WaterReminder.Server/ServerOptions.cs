@@ -1,3 +1,5 @@
+using WaterReminder.Services;
+
 namespace WaterReminder.Server;
 
 public sealed class ServerOptions
@@ -10,6 +12,7 @@ public sealed class ServerOptions
     /// <summary>Default is loopback; the Windows client reaches the VM through an SSH tunnel.</summary>
     public string BindAddress { get; init; } = "127.0.0.1";
     public bool RunScheduler { get; init; } = true;
+    public WeChatClient WeChat { get; set; } = WeChatClient.Disabled;
 
     public string ListenUrl => $"http://{BindAddress}:{Port}";
 

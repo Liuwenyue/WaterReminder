@@ -26,6 +26,13 @@
     <button wx:if="{{loaded && dirty}}" class="button link top-save" hover-class="press" disabled="{{saving}}" bindtap="save">保存</button>
   </view>
 
+  <view wx:if="{{connected}}" class="connection-actions">
+    <button wx:if="{{!shareToken}}" class="button link" bindtap="prepareShare">准备邀请</button>
+    <button wx:else class="button primary connect" open-type="share">邀请家人</button>
+  </view>
+  <text wx:if="{{shareToken}}" class="device-note">每份邀请仅供一人使用；受邀人的饮水记录可由你查看和设置。</text>
+  <button class="button link" bindtap="toggleAdvanced">{{showAdvanced ? '收起高级连接' : '高级连接'}}</button>
+  <block wx:if="{{showAdvanced}}">
   <view class="section-head"><text class="section-title">服务器</text></view>
   <view class="surface form-group">
     <view class="form-row stack">
@@ -57,6 +64,7 @@
     <button class="button primary connect" hover-class="press" disabled="{{loading || saving}}" bindtap="redeem">加入家庭账本</button>
     <button class="button link" hover-class="press" bindtap="scanInvite">扫码</button>
   </view>
+  </block>
   <view wx:if="{{legacyCount || syncBlocked}}" class="connection-actions">
     <button wx:if="{{legacyCount}}" class="button link" hover-class="press" bindtap="importOld">导入手机上的旧记录（{{legacyCount}} 笔）</button>
     <button wx:if="{{syncBlocked}}" class="button link" hover-class="press" bindtap="dropPending">放弃待同步</button>
@@ -124,14 +132,18 @@
       <text wx:if="{{preview}}" class="schedule-preview">{{preview}}</text>
     </view>
 
-    <view class="section-head"><text class="section-title">手机推送</text></view>
+    <view class="section-head"><text class="section-title">微信提醒</text></view>
     <view class="surface form-group">
-      <view class="form-row last">
-        <text class="row-name">开启手机推送</text>
-        <switch checked="{{mobilePushEnabled}}" color="#3875DC" data-key="mobilePushEnabled" bindchange="updateField" aria-label="开启手机推送" />
+      <view class="form-row">
+        <text class="row-name">开启手机提醒</text>
+        <switch checked="{{mobilePushEnabled}}" color="#3875DC" data-key="mobilePushEnabled" bindchange="updateField" aria-label="开启手机提醒" />
+      </view>
+      <view class="form-row last stack">
+        <text class="row-name">{{wechatText}}</text>
+        <button class="button link" hover-class="press" bindtap="enableWeChat">允许微信提醒</button>
       </view>
     </view>
-    <text class="device-note">由服务器发送。密钥只留在服务器上，这里不能查看或修改。</text>
+    <text class="device-note">第一次会弹出微信授权。勾选「总是保持以上选择」后，再点喝水或改水量就不再弹窗，每点一次多攒一条。点开通知进入小程序记账。服务器还没配好时，仍暂时用原来的手机推送。</text>
 
     <text wx:if="{{error}}" class="validation" aria-live="polite">{{error}}</text>
     <button class="button primary save" hover-class="press" disabled="{{saving}}" bindtap="save">保存设置</button>

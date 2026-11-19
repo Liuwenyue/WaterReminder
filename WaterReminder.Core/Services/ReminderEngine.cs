@@ -14,6 +14,8 @@ public sealed class ReminderEngineOptions
     public HttpClient? Http { get; init; }
     /// <summary>When false, ticks publish reminders but do not start the answers loop (tests).</summary>
     public bool PollAnswers { get; init; } = true;
+    /// <summary>Shared WeChat client. Null or unconfigured keeps the PushWard phone channel.</summary>
+    public WeChatClient? WeChat { get; init; }
 }
 
 /// <summary>
@@ -31,6 +33,7 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
     private readonly UserSettings _settings;
     private readonly ProgressTracker _progress;
     private readonly PushWardService _push;
+    private readonly WeChatClient? _wechat;
     private readonly object _gate = new();
     private DateTime _pushNextAttempt = DateTime.MinValue;
     private bool _pushInFlight;
@@ -48,7 +51,7 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
         public string Body { get; init; } = "";
     }
 
-    private readonly record struct OutboundPush(PushWardMessage Message, DateTime At);
+    private readonly record struct OutboundPush(PushWardMessage? Push, WeChatReminder? WeChat, DateTime At);
 
     public ReminderEngine(ReminderEngineOptions options)
     {
@@ -60,6 +63,7 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
         ApplyOverlay(_settings);
         _progress = new ProgressTracker(_settings, _storage.LoadDailyRecord, _storage.SaveDailyRecord, () => _clock());
         _push = new PushWardService(_settings, options.Http, replies: this);
+        _wechat = options.WeChat;
     }
 
     public async Task TickAsync(CancellationToken ct = default)
@@ -77,19 +81,28 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
             if (desktop) StageDesktopLocked(plan, now);
 
             var pushWindow = WaterCalculator.ShouldSendMobilePush(_settings, now);
-            var canPush = ReminderRouting.ShouldPublishPushWard(_settings, _push.IsConfigured);
-            if (pushWindow && canPush)
+            var channel = ReminderRouting.Choose(
+                _settings.MobilePushEnabled, _push.IsConfigured, _wechat?.IsConfigured == true);
+            if (pushWindow && channel == PhoneChannel.WeChat && ReadyForWeChatLocked())
+            {
+                if (!MobilePushDeliveryPolicy.ShouldAttempt(now, _pushNextAttempt, _pushInFlight))
+                    return;
+                _pushInFlight = true;
+                var user = WeChatUsers.Load(_options.DataDirectory);
+                outbound = new OutboundPush(null, new WeChatReminder(user.OpenId, plan.SuggestedMl,
+                    _progress.Today.ConsumedMl, _settings.DailyGoalMl, now), now);
+            }
+            else if (pushWindow && channel == PhoneChannel.PushWard)
             {
                 if (!MobilePushDeliveryPolicy.ShouldAttempt(now, _pushNextAttempt, _pushInFlight))
                     return;
                 _pushInFlight = true;
                 outbound = new OutboundPush(PushWardMessageBuilder.BuildReminder(_settings.PushWardApiToken,
                     plan.SuggestedMl, _progress.Today.ConsumedMl, _settings.DailyGoalMl, now,
-                    WaterCalculator.CurrentCupMl(_settings, now)), now);
+                    WaterCalculator.CurrentCupMl(_settings, now)), null, now);
             }
             else if (desktop)
             {
-                // Push is off or not configured: the desktop slot still has to advance.
                 _progress.MarkReminded(now);
             }
         }
@@ -97,11 +110,21 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
         if (outbound is null) return;
 
         var published = false;
+        var quotaExhausted = false;
         try
         {
             using var send = CancellationTokenSource.CreateLinkedTokenSource(ct, _retirement.Token);
-            published = await _push.PublishTrackedAsync(outbound.Value.Message, outbound.Value.At, send.Token)
-                .ConfigureAwait(false);
+            if (outbound.Value.WeChat is { } reminder)
+            {
+                var result = await _wechat!.SendAsync(reminder, send.Token).ConfigureAwait(false);
+                published = result.Sent;
+                quotaExhausted = result.QuotaExhausted;
+            }
+            else
+            {
+                published = await _push.PublishTrackedAsync(outbound.Value.Push!, outbound.Value.At, send.Token)
+                    .ConfigureAwait(false);
+            }
         }
         catch
         {
@@ -112,8 +135,15 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
         {
             if (_retired) return;
             _pushInFlight = false;
+            if (outbound.Value.WeChat is not null)
+                ApplyWeChatResultLocked(published, quotaExhausted);
             _progress.Reload();
             if (DateOnly.FromDateTime(_clock()) != DateOnly.FromDateTime(outbound.Value.At)) return;
+            if (quotaExhausted)
+            {
+                _pushNextAttempt = DateTime.MinValue;
+                return;
+            }
             var outcome = MobilePushDeliveryPolicy.AfterPublish(published, outbound.Value.At);
             if (outcome.MarkReminded) _progress.MarkReminded(outbound.Value.At);
             _pushNextAttempt = outcome.NextAttempt;
@@ -522,6 +552,100 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
                 return _settings.PushWardApiToken;
             }
         }
+    }
+
+    public WeChatStatusResponse WeChatStatus()
+    {
+        lock (_gate)
+        {
+            var user = WeChatUsers.Load(_options.DataDirectory);
+            var configured = _wechat?.IsConfigured == true;
+            return new WeChatStatusResponse
+            {
+                Enabled = configured,
+                TemplateId = configured ? _wechat!.TemplateId : "",
+                Bound = !string.IsNullOrWhiteSpace(user.OpenId),
+                Credits = Math.Max(0, user.Credits),
+            };
+        }
+    }
+
+    public async Task<(bool Ok, WeChatStatusResponse Status, string? Error)> BindWeChatAsync(string? code, CancellationToken cancellationToken = default)
+    {
+        if (_wechat is not { IsConfigured: true })
+            return (false, WeChatStatus(), "服务器还没有配置微信提醒。");
+        var trimmed = code?.Trim() ?? "";
+        if (trimmed.Length is < 8 or > 128 || trimmed.Any(char.IsWhiteSpace) || trimmed.Any(char.IsControl))
+            return (false, WeChatStatus(), "微信登录码不正确。");
+        string? openId;
+        try
+        {
+            openId = await _wechat.ExchangeOpenIdAsync(trimmed, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException)
+        {
+            return (false, WeChatStatus(), "暂时连不上微信。");
+        }
+        if (string.IsNullOrEmpty(openId))
+            return (false, WeChatStatus(), "微信没有返回用户标识。");
+        BindVerifiedWeChat(openId);
+        return (true, WeChatStatus(), null);
+    }
+
+    public void BindVerifiedWeChat(string openId)
+    {
+        if (string.IsNullOrWhiteSpace(openId)) throw new ArgumentException("Missing verified WeChat identity.", nameof(openId));
+        lock (_gate)
+        {
+            EnsureActiveLocked();
+            var user = WeChatUsers.Load(_options.DataDirectory);
+            if (user.OpenId != openId)
+            {
+                user.Credits = 0;
+                user.Seen.Clear();
+            }
+            user.OpenId = openId;
+            WeChatUsers.Save(_options.DataDirectory, user);
+        }
+    }
+
+    public (bool Ok, WeChatStatusResponse Status, string? Error) AcceptWeChatSubscription(string? id, string? status)
+    {
+        if (_wechat is not { IsConfigured: true })
+            return (false, WeChatStatus(), "服务器还没有配置微信提醒。");
+        var operation = id?.Trim() ?? "";
+        if (operation.Length is < 8 or > 64 || operation.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '_' and not '-'))
+            return (false, WeChatStatus(), "订阅编号不正确。");
+        var decision = status?.Trim() ?? "";
+        if (decision is not ("accept" or "reject" or "ban" or "filter"))
+            return (false, WeChatStatus(), "订阅结果不正确。");
+        lock (_gate)
+        {
+            EnsureActiveLocked();
+            var user = WeChatUsers.Load(_options.DataDirectory);
+            if (!user.Seen.Contains(operation, StringComparer.Ordinal))
+            {
+                user.Seen.Add(operation);
+                if (user.Seen.Count > 80) user.Seen.RemoveRange(0, user.Seen.Count - 80);
+                if (decision == "accept" && user.Credits < 100) user.Credits++;
+            }
+            WeChatUsers.Save(_options.DataDirectory, user);
+        }
+        return (true, WeChatStatus(), null);
+    }
+
+    private bool ReadyForWeChatLocked()
+    {
+        var user = WeChatUsers.Load(_options.DataDirectory);
+        return user.Credits > 0 && !string.IsNullOrWhiteSpace(user.OpenId);
+    }
+
+    private void ApplyWeChatResultLocked(bool published, bool quotaExhausted)
+    {
+        var user = WeChatUsers.Load(_options.DataDirectory);
+        if (published) user.Credits = Math.Max(0, user.Credits - 1);
+        else if (quotaExhausted) user.Credits = 0;
+        WeChatUsers.Save(_options.DataDirectory, user);
     }
 
     public void Retire()
