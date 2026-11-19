@@ -43,8 +43,9 @@ public sealed partial class ReminderEngine
                 return unavailable;
             }
             action = "test-ack-" + Guid.NewGuid().ToString("N");
-            message = new(_settings.PushWardApiToken, new PushWardPayload("water-safe-test", "喝水提醒 · 连接测试",
-                "这是一条安全测试。点击“确认收到”仅反馈设备连接，不记录饮水。", null, null, null,
+            message = new(_settings.PushWardApiToken, new PushWardPayload("喝水提醒 · 连接测试",
+                "请点击“确认收到”反馈设备连接。", PushWardMessageBuilder.Source, PushWardMessageBuilder.SourceDisplayName,
+                PushWardMessageBuilder.ConfirmationLevel, null,
                 [new(action, "确认收到", "checkmark.circle")]));
             SaveSafeTest(new(action, now.AddMinutes(15), new("sending", "正在交给推送渠道…", now)));
             _pushInFlight = true;

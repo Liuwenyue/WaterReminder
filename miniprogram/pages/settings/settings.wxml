@@ -20,18 +20,20 @@
 <view class="page">
   <view class="page-head">
     <view>
-      <text class="eyebrow">每周 {{dayCount}} 天提醒</text>
+      <text wx:if="{{loaded}}" class="eyebrow">每周 {{dayCount}} 天提醒</text>
       <text class="page-title">设置</text>
     </view>
     <button wx:if="{{loaded && dirty}}" class="button link top-save" hover-class="press" disabled="{{saving}}" bindtap="save">保存</button>
   </view>
 
-  <view wx:if="{{connected}}" class="connection-actions">
+  <view wx:if="{{isOwner}}" class="connection-actions">
     <button wx:if="{{!shareToken}}" class="button link" bindtap="prepareShare">准备邀请</button>
     <button wx:else class="button primary connect" open-type="share">邀请家人</button>
   </view>
   <text wx:if="{{shareToken}}" class="device-note">每份邀请仅供一人使用；受邀人的饮水记录可由你查看和设置。</text>
-  <button class="button link" bindtap="toggleAdvanced">{{showAdvanced ? '收起高级连接' : '高级连接'}}</button>
+  <text wx:if="{{connected && memberName}}" class="device-note">当前账本 · {{memberName}}</text>
+  <text wx:if="{{connected && sharedWithOwner}}" class="device-note">邀请人可以查看你的记录和修改设置。</text>
+  <button wx:if="{{connected}}" class="button link" bindtap="toggleAdvanced">{{showAdvanced ? '收起连接设置' : '更换账本'}}</button>
   <block wx:if="{{showAdvanced}}">
   <view class="section-head"><text class="section-title">服务器</text></view>
   <view class="surface form-group">
@@ -48,11 +50,13 @@
   </view>
   <view class="connection-actions">
     <button class="button primary connect" hover-class="press" disabled="{{loading || saving}}" bindtap="connect">{{connected ? '重新读取' : '连接服务器'}}</button>
-    <button wx:if="{{connected}}" class="button link disconnect" hover-class="press" bindtap="disconnect">断开</button>
+    <button wx:if="{{connected}}" disabled="{{loading || saving}}" class="button link disconnect" hover-class="press" bindtap="disconnect">断开</button>
   </view>
   <text class="device-note">{{connectionText}}</text>
-  <text wx:if="{{memberName}}" class="device-note">正在为 {{memberName}} 记录</text>
-  <text wx:if="{{syncText}}" class="device-note">{{syncText}}</text>
+  <view wx:if="{{pendingShare && !connected}}" class="device-note">
+    <text>收到家人邀请。请向邀请人确认上方的 HTTPS 地址，加入后对方可以查看记录和修改设置。</text>
+    <button class="button link" disabled="{{loading}}" bindtap="joinSharedAccount">微信登录并接受邀请</button>
+  </view>
   <view class="section-head"><text class="section-title">加入家庭</text></view>
   <view class="surface form-group">
     <view class="form-row stack last">
@@ -65,9 +69,10 @@
     <button class="button link" hover-class="press" bindtap="scanInvite">扫码</button>
   </view>
   </block>
+  <text wx:if="{{connected && syncText && (showAdvanced || syncBlocked)}}" class="device-note">{{syncText}}</text>
   <view wx:if="{{legacyCount || syncBlocked}}" class="connection-actions">
-    <button wx:if="{{legacyCount}}" class="button link" hover-class="press" bindtap="importOld">导入手机上的旧记录（{{legacyCount}} 笔）</button>
-    <button wx:if="{{syncBlocked}}" class="button link" hover-class="press" bindtap="dropPending">放弃待同步</button>
+    <button wx:if="{{legacyCount}}" class="button link" hover-class="press" bindtap="importOld">手动导入本机旧记录（{{legacyCount}} 笔）</button>
+    <button wx:if="{{syncBlocked}}" class="button link" hover-class="press" bindtap="dropPending">丢弃未同步更改</button>
   </view>
 
   <block wx:if="{{loaded}}">
@@ -132,22 +137,24 @@
       <text wx:if="{{preview}}" class="schedule-preview">{{preview}}</text>
     </view>
 
-    <view class="section-head"><text class="section-title">微信提醒</text></view>
+    <view class="section-head"><text class="section-title">手机提醒</text></view>
     <view class="surface form-group">
       <view class="form-row">
         <text class="row-name">开启手机提醒</text>
         <switch checked="{{mobilePushEnabled}}" color="#3875DC" data-key="mobilePushEnabled" bindchange="updateField" aria-label="开启手机提醒" />
       </view>
-      <view class="form-row last stack">
+      <picker wx:if="{{mobilePushEnabled}}" range="{{phoneModeLabels}}" value="{{phoneModeIndex}}" bindchange="changePhoneMode">
+        <view class="form-row"><text class="row-name">提醒方式</text><text class="time-value">{{phoneModeLabels[phoneModeIndex]}}</text></view>
+      </picker>
+      <view wx:if="{{mobilePushEnabled && phoneMode !== 'PushWard'}}" class="form-row last stack">
         <text class="row-name">{{wechatText}}</text>
-        <button class="button link" hover-class="press" bindtap="enableWeChat">允许微信提醒</button>
+        <button class="button link" hover-class="press" disabled="{{!wechatReady || dirty}}" bindtap="enableWeChat">授权一次提醒</button>
       </view>
     </view>
-    <text class="device-note">第一次会弹出微信授权。勾选「总是保持以上选择」后，再点喝水或改水量就不再弹窗，每点一次多攒一条。点开通知进入小程序记账。服务器还没配好时，仍暂时用原来的手机推送。</text>
+    <text wx:if="{{mobilePushEnabled && phoneMode === 'Auto'}}" class="device-note">微信未绑定或订阅次数用完时，服务器使用本账本已配置的 PushWard。</text>
 
-    <text wx:if="{{error}}" class="validation" aria-live="polite">{{error}}</text>
     <button class="button primary save" hover-class="press" disabled="{{saving}}" bindtap="save">保存设置</button>
-    <text class="device-note">目标、水杯和提醒时间写入服务器，桌面端用的是同一份。饮水记录和今日暂停仍只在这台手机。</text>
   </block>
-  <text wx:else class="device-note">先连接服务器。这里改的是服务器上的设置，桌面端会一起变。令牌只保存在这台手机。</text>
+  <text wx:if="{{error}}" class="validation" aria-live="polite">{{error}}</text>
+  <button wx:if="{{loaded && conflict}}" class="button link" disabled="{{loading || saving}}" bindtap="reloadConflict">重新读取服务器设置</button>
 </view>

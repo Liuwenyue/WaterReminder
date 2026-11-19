@@ -9,10 +9,9 @@
   </view>
 
   <text wx:if="{{identity || syncText}}" class="sync-note">{{identity}}{{identity && syncText ? ' · ' : ''}}{{syncText}}</text>
-  <text wx:if="{{sharedNotice}}" class="sync-note">{{sharedNotice}}</text>
-  <view wx:if="{{loginText}}" class="sync-note">
-    <text>{{loginText}}</text>
-    <button wx:if="{{loginFailed}}" class="button link" bindtap="retryLogin">重试</button>
+  <view wx:if="{{needsConnection}}" class="sync-note">
+    <text>当前记录仅保存在本机</text>
+    <button class="button link" bindtap="openSettings">连接账本</button>
   </view>
   <view class="tide arrive">
     <image class="tide-art" src="/assets/tide.jpg" mode="aspectFill" aria-hidden="true" />
@@ -63,10 +62,6 @@
       </view>
     </view>
     <text class="reminder-detail">{{planHint}}</text>
-    <view wx:if="{{showTip}}" class="foreground-tip">
-      <text>打开小程序时会弹出到点提醒。</text>
-      <button class="button link" hover-class="press" bindtap="dismissTip">知道了</button>
-    </view>
   </view>
 
   <view class="section-head">

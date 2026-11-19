@@ -17,7 +17,7 @@ public sealed class WeChatSubscribeTests
     private static readonly DateTime Tuesday = new(2026, 11, 3, 10, 0, 0);
 
     [Fact]
-    public void ConfiguredWeChat_ReplacesPushWard()
+    public void Auto_PrefersReadyWeChat()
     {
         Assert.Equal(PhoneChannel.WeChat, ReminderRouting.Choose(true, true, true));
         Assert.Equal(PhoneChannel.PushWard, ReminderRouting.Choose(true, true, false));
@@ -79,6 +79,36 @@ public sealed class WeChatSubscribeTests
         finally { TryDelete(dir); }
     }
 
+    [Theory]
+    [InlineData(PhoneDeliveryMode.Auto, 0, true, false)]
+    [InlineData(PhoneDeliveryMode.WeChat, 0, false, false)]
+    [InlineData(PhoneDeliveryMode.PushWard, 1, true, false)]
+    [InlineData(PhoneDeliveryMode.Both, 1, true, true)]
+    public async Task SavedMode_SelectsChannelsOnce(PhoneDeliveryMode mode, int credits, bool expectPush, bool expectWeChat)
+    {
+        var dir = Temp();
+        var push = new Recorder();
+        var wechat = new Recorder(WeChatOk);
+        try
+        {
+            WeChatUsersSave(dir, "openid-test", credits);
+            using var client = new WeChatClient(Config(), wechat);
+            using var engine = Engine(dir, push, client, () => Tuesday);
+            var update = SettingsEditor.FromResponse(engine.ClientSettings());
+            update.PhoneMode = mode;
+            Assert.True(engine.TryUpdateSettings(update, out var error), error);
+            update.PhoneMode = null;
+            Assert.True(engine.TryUpdateSettings(update, out error), error);
+            Assert.Equal(mode, engine.ClientSettings().PhoneMode);
+            await engine.TickAsync();
+            await engine.TickAsync();
+            Assert.Equal(expectPush ? 1 : 0, push.Requests.Count(request => request.Body is not null));
+            Assert.Equal(expectWeChat ? 1 : 0, wechat.Requests.Count(request => request.Path.Contains("/subscribe/send")));
+            Assert.Equal(credits - (expectWeChat ? 1 : 0), engine.WeChatStatus().Credits);
+        }
+        finally { TryDelete(dir); }
+    }
+
     [Fact]
     public async Task QuotaError_ClearsCredits_WithoutAnotherSend()
     {
@@ -87,16 +117,18 @@ public sealed class WeChatSubscribeTests
             ? (HttpStatusCode.OK, """{"access_token":"token-1","expires_in":7200}""")
             : (HttpStatusCode.OK, """{"errcode":43101,"errmsg":"user refuse"}"""));
         var now = Tuesday;
+        var push = new Recorder();
         try
         {
             WeChatUsersSave(dir, "openid-test", 2);
             using var client = new WeChatClient(Config(), wechat);
-            using var engine = Engine(dir, new Recorder(), client, () => now);
+            using var engine = Engine(dir, push, client, () => now);
             await engine.TickAsync();
             Assert.Equal(0, engine.WeChatStatus().Credits);
             now = now.AddMinutes(1);
             await engine.TickAsync();
             Assert.Single(wechat.Requests, item => item.Path.Contains("/message/subscribe/send", StringComparison.Ordinal));
+            Assert.Single(push.Requests, item => item.Body is not null);
         }
         finally { TryDelete(dir); }
     }

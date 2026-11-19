@@ -28,6 +28,7 @@ public static class SettingsEditor
 {
     public const string SecretRejected = "不能在设置里提交密钥。";
     public const string Unreadable = "设置内容无法识别。";
+    public const string StaleSettings = "其他设备已修改设置，请重新读取后再保存。";
 
     private static readonly string[] SecretNames =
     [
@@ -48,6 +49,7 @@ public static class SettingsEditor
         QuietStart = settings.QuietStart,
         MinReminderGapMinutes = settings.MinReminderGapMinutes,
         MobilePushEnabled = settings.MobilePushEnabled,
+        PhoneMode = settings.PhoneMode,
         ActiveDays = settings.ActiveDays is { Length: 7 } days ? (bool[])days.Clone() : [],
         RemindersPaused = settings.RemindersPaused,
         PauseUntil = settings.PauseUntil,
@@ -96,6 +98,8 @@ public static class SettingsEditor
 
     public static SettingsValidation Validate(SettingsUpdate update)
     {
+        if (update.PhoneMode is { } mode && !Enum.IsDefined(mode))
+            return new SettingsValidation { GoalError = "请选择有效的手机提醒方式。" };
         string? goal = null;
         if (update.DailyGoalMl is < 100 or > 10000) goal = "每日目标需为 100–10000 ml 的整数。";
         else if (update.WorkCupMl is < 50 or > 3000 || update.HomeCupMl is < 50 or > 3000)
@@ -192,9 +196,13 @@ public static class SettingsEditor
         target.QuietStart = quietStart;
         target.MinReminderGapMinutes = update.MinReminderGapMinutes;
         target.MobilePushEnabled = update.MobilePushEnabled;
+        if (update.PhoneMode is { } mode) target.PhoneMode = mode;
         target.ActiveDays = (bool[])update.ActiveDays.Clone();
-        target.RemindersPaused = update.RemindersPaused;
-        target.PauseUntil = ParsePauseUntil(update.PauseUntil);
+        if (!update.PreservePause)
+        {
+            target.RemindersPaused = update.RemindersPaused;
+            target.PauseUntil = ParsePauseUntil(update.PauseUntil);
+        }
     }
 
     public static bool TryParseClock(string? text, out TimeSpan time)

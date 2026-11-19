@@ -180,6 +180,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             now = parsed;
 
         var update = SettingsEditor.FromResponse(settings.Value);
+        update.PauseOnly = true;
         update.RemindersPaused = true;
         update.PauseUntil = forDuration is { } span
             ? now.Add(span).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture)
@@ -203,6 +204,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
         var update = SettingsEditor.FromResponse(settings.Value);
+        update.PauseOnly = true;
         update.RemindersPaused = false;
         update.PauseUntil = null;
         var saved = await _api.SaveSettingsAsync(update);

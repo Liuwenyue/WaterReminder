@@ -125,6 +125,13 @@
                   <TextBlock x:Name="MobilePushHint" Text="由服务器发送。密钥只留在服务器上，这里不能查看或修改。" Style="{StaticResource Caption}" TextWrapping="Wrap"/>
                 </StackPanel>
               </CheckBox>
+              <ComboBox x:Name="PhoneModeBox" AutomationProperties.Name="手机提醒方式" Margin="0,8,0,0"
+                        IsEnabled="{Binding IsChecked, ElementName=MobilePushBox}">
+                <ComboBoxItem>自动（微信可用时优先）</ComboBoxItem>
+                <ComboBoxItem>仅微信</ComboBoxItem>
+                <ComboBoxItem>仅 PushWard</ComboBoxItem>
+                <ComboBoxItem>微信和 PushWard</ComboBoxItem>
+              </ComboBox>
               <StackPanel x:Name="MemberPushTokenPanel" Visibility="Collapsed" Margin="0,12,0,8">
                 <TextBlock Text="更换该成员的 PushWard 密钥" FontSize="13" Margin="0,0,0,8"/>
                 <PasswordBox x:Name="MemberPushToken" Style="{StaticResource FluentPasswordBox}" MaxLength="512" AutomationProperties.Name="该成员的新 PushWard 密钥"/>

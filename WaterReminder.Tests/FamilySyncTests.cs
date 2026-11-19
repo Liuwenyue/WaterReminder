@@ -70,6 +70,80 @@ public sealed class FamilySyncTests
     }
 
     [Fact]
+    public void BatchAcrossMidnightIsAtomicAndSnapshotIncludesEmptiedDays()
+    {
+        using var files = new TestFiles();
+        using var engine = new ReminderEngine(new ReminderEngineOptions
+        {
+            DataDirectory = files.Path, Clock = () => new DateTime(2026, 11, 19, 10, 0, 0), PollAnswers = false,
+        });
+        const string today = "2026-11-19", yesterday = "2026-11-18";
+        var yesterdayDrink = Operation(yesterday, "drink", 3500);
+        var todayDrink = Operation(today, "drink", 250);
+        var stalePause = new SyncOperation { Id = Guid.NewGuid(), Kind = "pause", Date = yesterday };
+        var batch = new SyncOperationsRequest { Operations = [yesterdayDrink, stalePause, todayDrink] };
+        Assert.True(engine.TrySyncOperations(batch, out var applied, out _, out _));
+        Assert.False(applied!.Status.RemindersPaused);
+        var file = Path.Combine(files.Path, "daily-records.json");
+        Assert.DoesNotContain(yesterdayDrink.Id.ToString(), File.ReadAllText(file + ".bak"));
+        var before = File.ReadAllBytes(file);
+        var clear = new SyncOperation { Id = Guid.NewGuid(), Kind = "clear", Date = yesterday };
+        todayDrink.AmountMl++;
+        Assert.False(engine.TrySyncOperations(new() { Operations = [clear, todayDrink] }, out _, out _, out var conflict));
+        Assert.True(conflict);
+        Assert.Equal(before, File.ReadAllBytes(file));
+        Assert.True(engine.TrySyncOperations(new() { Operations = [clear] }, out _, out _, out _));
+        var snapshot = engine.SyncSnapshot(Guid.Empty, "我", 31);
+        Assert.Equal(31, snapshot.Days.Count);
+        Assert.Empty(snapshot.Days.Single(day => day.Date == yesterday).Events);
+        Assert.Equal(250, snapshot.Days[0].ConsumedMl);
+    }
+
+    [Fact]
+    public void DamagedLedgerRecoversFromBackupOrPreservesUnreadableFiles()
+    {
+        using var files = new TestFiles();
+        var storage = new StorageService(files.Path);
+        var first = new DailyRecord { Date = "2026-11-18", Events = [new WaterEvent { AmountMl = 240 }] };
+        storage.SaveDailyRecord(first);
+        storage.SaveDailyRecord(new DailyRecord { Date = "2026-11-19" });
+        var path = Path.Combine(files.Path, "daily-records.json");
+        File.WriteAllText(path, "{");
+        Assert.Equal(240, Assert.Single(storage.ListDailyRecords()).ConsumedMl);
+        Assert.Equal(File.ReadAllText(path + ".bak"), File.ReadAllText(path));
+        File.WriteAllText(path, "{");
+        File.WriteAllText(path + ".bak", "{");
+        Assert.ThrowsAny<JsonException>(() => storage.SaveDailyRecord(first));
+        Assert.Equal("{", File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void SettingsAndPauseOnlyChangeTheirOwnFieldsAndStaleDraftsAreRejected()
+    {
+        using var files = new TestFiles();
+        using var engine = new ReminderEngine(new ReminderEngineOptions
+        {
+            DataDirectory = files.Path, Clock = () => new DateTime(2026, 11, 19, 10, 0, 0), PollAnswers = false,
+        });
+        var original = engine.ClientSettings();
+        var edit = SettingsEditor.FromResponse(original);
+        edit.ExpectedRevision = original.Revision;
+        edit.PreservePause = true;
+        edit.DailyGoalMl = 1800;
+        var pause = new SyncOperation { Id = Guid.NewGuid(), Kind = "pause", Date = "2026-11-19" };
+        Assert.True(engine.TrySyncOperations(new() { Operations = [pause] }, out _, out _, out _));
+        Assert.True(engine.TryUpdateSettings(edit, out _));
+        Assert.True(engine.Status().RemindersPaused);
+        Assert.False(engine.TryUpdateSettings(edit, out var stale));
+        Assert.Equal(SettingsEditor.StaleSettings, stale);
+        var resume = SettingsEditor.FromResponse(original);
+        resume.PauseOnly = true;
+        Assert.True(engine.TryUpdateSettings(resume, out _));
+        Assert.False(engine.Status().RemindersPaused);
+        Assert.Equal(1800, engine.ClientSettings().DailyGoalMl);
+    }
+
+    [Fact]
     public void ChangingTodaysGoalDoesNotRewriteYesterday()
     {
         using var files = new TestFiles();

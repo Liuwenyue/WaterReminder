@@ -18,7 +18,9 @@ function loadConnection() {
   const apiToken = typeof raw.apiToken === 'string' ? raw.apiToken : '';
   const memberName = typeof raw.memberName === 'string' ? raw.memberName : '';
   const memberId = typeof raw.memberId === 'string' ? raw.memberId : '';
-  return { serverUrl: serverUrl, apiToken: apiToken, memberName: memberName, memberId: memberId, sharedWithOwner: raw.sharedWithOwner === true, configured: !!(serverUrl && apiToken) };
+  const needsConfirmation = store.needsConnectionConfirmation(raw);
+  return { serverUrl, apiToken, memberName, memberId, sharedWithOwner: raw.sharedWithOwner === true,
+    configured: !!(serverUrl && apiToken && !needsConfirmation) };
 }
 
 function validateConnection(serverUrl, apiToken) {
@@ -47,7 +49,9 @@ function saveConnection(connection) {
   const checked = validateConnection(connection && connection.serverUrl, connection && connection.apiToken);
   if (checked.error) return checked;
   const current = loadConnection();
+  if (current.serverUrl !== checked.serverUrl || current.apiToken !== checked.apiToken) revision++;
   wx.setStorageSync(CONNECTION_KEY, {
+    confirmed: true,
     serverUrl: checked.serverUrl,
     apiToken: checked.apiToken,
     memberId: connection.memberId || (current.serverUrl === checked.serverUrl && current.apiToken === checked.apiToken ? current.memberId : ''),
@@ -59,6 +63,7 @@ function saveConnection(connection) {
 }
 
 function clearConnection() {
+  revision++;
   try {
     if (typeof wx.removeStorageSync === 'function') wx.removeStorageSync(CONNECTION_KEY);
     else wx.setStorageSync(CONNECTION_KEY, {});
@@ -71,7 +76,7 @@ function connectionLabel(serverUrl) {
   const match = /^(https?):\/\/([^/]+)/i.exec(serverUrl || '');
   const host = match ? match[2] : (serverUrl || '服务器');
   const insecure = !!match && match[1].toLowerCase() === 'http';
-  const text = '已连接 ' + host + '，保存后和桌面端是同一份设置';
+  const text = '已连接 ' + host;
   return insecure ? text + '。手机正式版需要 https，http 只能在开发者工具里调试' : text;
 }
 
@@ -121,6 +126,7 @@ function fromResponse(data) {
   }
   return {
     dailyGoalMl: dailyGoalMl,
+    revision: data.revision,
     workCupMl: workCupMl,
     homeCupMl: homeCupMl,
     workStart: clocks[0],
@@ -132,6 +138,7 @@ function fromResponse(data) {
     quietStart: clocks[4],
     minReminderGapMinutes: minReminderGapMinutes,
     mobilePushEnabled: !!data.mobilePushEnabled,
+    phoneMode: data.phoneMode || 'Auto',
     activeDays: data.activeDays.map(Boolean),
     remindersPaused: !!data.remindersPaused,
     pauseUntil: pauseUntil
@@ -140,6 +147,8 @@ function fromResponse(data) {
 
 function toLocal(settings) {
   return {
+    phoneMode: settings.phoneMode,
+    mobilePushEnabled: settings.mobilePushEnabled,
     dailyGoalMl: settings.dailyGoalMl,
     workCupCapacityMl: settings.workCupMl,
     homeCupCapacityMl: settings.homeCupMl,
@@ -153,7 +162,8 @@ function toLocal(settings) {
     quietStart: settings.quietStart,
     activeDays: (settings.activeDays || []).slice(),
     remindersPaused: !!settings.remindersPaused,
-    pauseUntil: settings.pauseUntil || null
+    pauseUntil: settings.pauseUntil && !/(?:Z|[+-]\d\d:\d\d)$/.test(settings.pauseUntil)
+      ? settings.pauseUntil + '+08:00' : settings.pauseUntil || null
   };
 }
 
@@ -210,7 +220,9 @@ function validateSettings(data) {
     quietStart: canonicalClock(data.quietStart),
     minReminderGapMinutes: gap,
     mobilePushEnabled: !!data.mobilePushEnabled,
+    phoneMode: data.phoneMode || 'Auto',
     activeDays: days,
+    preservePause: true,
     remindersPaused: !!data.serverPaused,
     pauseUntil: data.serverPauseUntil || null
   };
@@ -223,6 +235,7 @@ function validateSettings(data) {
   }
 
   const error = goalError || timeError || lunchError || noDrinkError || quietError || gapError || daysError || '';
+  if (data.settingsRevision) update.expectedRevision = data.settingsRevision;
   return error ? { error: error } : { error: '', update: update };
 }
 
@@ -233,9 +246,9 @@ function httpError(status, data) {
   return message;
 }
 
-function request(method, path, data) {
-  const connection = loadConnection();
-  if (!connection.configured) return Promise.resolve({ ok: false, error: '请先填写服务器地址和 API 令牌' });
+function request(method, path, data, candidate) {
+  const connection = candidate || loadConnection();
+  if (!candidate && !connection.configured) return Promise.resolve({ ok: false, error: '请先填写服务器地址和 API 令牌' });
   if (typeof wx.request !== 'function') return Promise.resolve({ ok: false, error: '当前环境不能发起网络请求' });
   return new Promise(function (resolve) {
     const header = { Authorization: 'Bearer ' + connection.apiToken };
@@ -247,7 +260,7 @@ function request(method, path, data) {
       success: function (res) {
         const status = res && res.statusCode;
         if (status >= 200 && status < 300) resolve({ ok: true, data: res.data });
-        else resolve({ ok: false, error: httpError(status || 0, res && res.data) });
+        else resolve({ ok: false, status, error: httpError(status || 0, res && res.data) });
       },
       fail: function () {
         resolve({ ok: false, error: '连不上服务器。手机需要能访问这个 https 域名，并在小程序后台把它配进 request 合法域名。' });
@@ -268,17 +281,18 @@ function interpret(result) {
   return { ok: true, settings: settings };
 }
 
-function getSettings() {
+function getSettings(candidate) {
   const seen = revision;
-  return request('GET', '/api/settings').then(interpret).then(function (result) {
+  return request('GET', '/api/settings', undefined, candidate).then(interpret).then(function (result) {
     if (result.ok) result.stale = seen !== revision;
     return result;
   });
 }
 
 function saveSettings(update) {
-  revision += 1;
+  const seen = ++revision;
   return request('PUT', '/api/settings', update).then(interpret).then(function (result) {
+    if (seen !== revision) return { ok: false, error: '账本已切换，请重新读取设置' };
     if (result.ok) store.saveSettings(toLocal(result.settings));
     return result;
   });
@@ -329,32 +343,67 @@ function redeemInvite(serverUrl, inviteToken) {
 }
 let syncing = null;
 function syncLedger() {
-  if (!loadConnection().configured) return Promise.resolve({ ok: false, skipped: true });
-  if (syncing) return syncing;
-  syncing = request('GET', '/api/sync/snapshot?days=30').then(function (result) {
+  const connection = loadConnection();
+  if (!connection.configured) return Promise.resolve({ ok: false, skipped: true });
+  if (syncing && syncing.apiToken === connection.apiToken && syncing.serverUrl === connection.serverUrl) return syncing.task;
+  const session = { apiToken: connection.apiToken, serverUrl: connection.serverUrl };
+  function active() {
+    const current = loadConnection();
+    return current.configured && current.serverUrl === connection.serverUrl && current.apiToken === connection.apiToken;
+  }
+  syncing = session;
+  session.task = runSession();
+  return session.task;
+
+  async function runSession() {
+    try {
+      return await sync();
+    } finally {
+      if (syncing === session) syncing = null;
+    }
+  }
+
+  async function sync() {
+    const result = await request('GET', '/api/sync/snapshot?days=31');
+    if (!active()) return { ok: false, skipped: true };
     if (!result.ok) {
-      store.syncFailure(result.error, result.error.indexOf('409') >= 0 || result.error.indexOf('已改变') >= 0);
+      store.syncFailure(result.error, store.load().blocked);
       return result;
     }
     const data = result.data || {};
+    if (!Array.isArray(data.days) || !data.status || !Number.isInteger(data.status.goalMl)) {
+      const error = '无法读取账本快照';
+      store.syncFailure(error, store.load().blocked);
+      return { ok: false, error };
+    }
     if (data.memberName) {
       const current = loadConnection();
       saveConnection({ serverUrl: current.serverUrl, apiToken: current.apiToken, memberId: data.memberId, memberName: data.memberName });
     }
     store.applyRemote({ days: data.days || [], status: data.status }, []);
-    const pending = store.load().queue;
-    if (!pending.length) return { ok: true };
-    return request('POST', '/api/sync/operations', { operations: pending.slice(0, 100) }).then(function (sent) {
+    while (active()) {
+      const batch = store.load().queue.slice(0, 100);
+      if (!batch.length) {
+        if (syncing === session) syncing = null;
+        return { ok: true };
+      }
+      const sent = await request('POST', '/api/sync/operations', { operations: batch });
+      if (!active()) return { ok: false, skipped: true };
       if (!sent.ok) {
-        store.syncFailure(sent.error, sent.error.indexOf('已改变') >= 0 || sent.error.indexOf('不一致') >= 0);
+        store.syncFailure(sent.error, sent.status === 400 || sent.status === 409);
         return sent;
       }
       const ids = ((sent.data && sent.data.results) || []).map(function (item) { return item.id; });
+      if (ids.length !== batch.length || !batch.every(op => ids.includes(op.id)) || !Array.isArray(sent.data.days) ||
+          !batch.every(op => sent.data.days.some(day => day.date === op.date))) {
+        const error = '同步回执不完整，请重试';
+        store.syncFailure(error, false);
+        return { ok: false, error };
+      }
       store.applyRemote(sent.data || {}, ids);
-      return { ok: true };
-    });
-  }).finally(function () { syncing = null; });
-  return syncing;
+    }
+    return { ok: false, skipped: true };
+  }
 }
 function wechatStatus() {
   return request('GET', '/api/wechat');

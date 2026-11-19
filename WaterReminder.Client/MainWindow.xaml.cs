@@ -348,6 +348,7 @@ internal partial class MainWindow : Window
             return;
         }
         var update = SettingsEditor.FromResponse(settings.Value);
+        update.PauseOnly = true;
         if (settings.Value.RemindersPaused)
         {
             update.RemindersPaused = false;

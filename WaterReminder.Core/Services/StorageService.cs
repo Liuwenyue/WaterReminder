@@ -20,7 +20,6 @@ public sealed class StorageService
     private readonly JsonSerializerOptions _options = new() { WriteIndented = true };
     private string SettingsPath => Path.Combine(_directory, "settings.json");
     private string RecordsPath => Path.Combine(_directory, "daily-records.json");
-    private string BackupPath => RecordsPath + ".bak";
     private string PhoneRepliesPath => Path.Combine(_directory, "phone-replies.json");
 
     internal PhoneReplyState? LoadPhoneReplies()
@@ -37,18 +36,7 @@ public sealed class StorageService
         => AtomicWrite(PhoneRepliesPath, JsonSerializer.Serialize(state, _options));
 
     public UserSettings LoadSettings()
-    {
-        try
-        {
-            if (File.Exists(SettingsPath))
-            {
-                var value = JsonSerializer.Deserialize<UserSettings>(File.ReadAllText(SettingsPath), _options);
-                if (value is not null) return Normalize(value);
-            }
-        }
-        catch { }
-        return new UserSettings();
-    }
+        => Normalize(ReadWithBackup<UserSettings>(SettingsPath));
 
     public DailyRecord LoadDailyRecord(DateOnly date)
     {
@@ -63,24 +51,39 @@ public sealed class StorageService
     public void SaveSettings(UserSettings settings) => AtomicWrite(SettingsPath, JsonSerializer.Serialize(Normalize(settings), _options));
 
     public void SaveDailyRecord(DailyRecord record)
+        => SaveDailyRecords([record]);
+
+    internal void SaveDailyRecords(IEnumerable<DailyRecord> changes)
     {
-        var records = LoadAllRecords();
-        var index = records.FindIndex(x => x.Date == record.Date);
-        if (index >= 0) records[index] = record; else records.Add(record);
-        AtomicWrite(RecordsPath, JsonSerializer.Serialize(records.OrderBy(x => x.Date).ToList(), _options));
+        var records = LoadAllRecords().ToDictionary(day => day.Date);
+        foreach (var day in changes) records[day.Date] = day;
+        AtomicWrite(RecordsPath, JsonSerializer.Serialize(records.Values.OrderBy(day => day.Date), _options));
     }
 
     private List<DailyRecord> LoadAllRecords()
+        => ReadWithBackup<List<DailyRecord>>(RecordsPath);
+
+    private T ReadWithBackup<T>(string path) where T : class, new()
     {
+        T Parse(string text) => JsonSerializer.Deserialize<T>(text, _options)
+            ?? throw new JsonException($"Invalid data in {Path.GetFileName(path)}.");
         try
         {
-            if (File.Exists(RecordsPath)) return JsonSerializer.Deserialize<List<DailyRecord>>(File.ReadAllText(RecordsPath), _options) ?? [];
+            return Parse(File.ReadAllText(path));
         }
-        catch
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException or JsonException)
         {
-            try { if (File.Exists(BackupPath)) return JsonSerializer.Deserialize<List<DailyRecord>>(File.ReadAllText(BackupPath), _options) ?? []; } catch { }
+            if (!File.Exists(path + ".bak"))
+            {
+                if (error is JsonException) throw;
+                return new T();
+            }
+            var backup = File.ReadAllText(path + ".bak");
+            var recovered = Parse(backup);
+            File.WriteAllText(path + ".recover", backup);
+            File.Move(path + ".recover", path, true);
+            return recovered;
         }
-        return [];
     }
 
     private void AtomicWrite(string path, string content)

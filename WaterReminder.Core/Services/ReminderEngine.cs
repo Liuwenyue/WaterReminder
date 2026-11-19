@@ -81,25 +81,21 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
             if (desktop) StageDesktopLocked(plan, now);
 
             var pushWindow = WaterCalculator.ShouldSendMobilePush(_settings, now);
-            var channel = ReminderRouting.Choose(
-                _settings.MobilePushEnabled, _push.IsConfigured, _wechat?.IsConfigured == true);
-            if (pushWindow && channel == PhoneChannel.WeChat && ReadyForWeChatLocked())
+            var user = pushWindow && _settings.PhoneMode != PhoneDeliveryMode.PushWard && _wechat?.IsConfigured == true
+                ? WeChatUsers.Load(_options.DataDirectory) : null;
+            var channels = ReminderRouting.Choose(_settings.MobilePushEnabled, _push.IsConfigured,
+                user is { Credits: > 0 } && !string.IsNullOrWhiteSpace(user.OpenId), _settings.PhoneMode);
+            if (pushWindow && channels != PhoneChannel.None)
             {
                 if (!MobilePushDeliveryPolicy.ShouldAttempt(now, _pushNextAttempt, _pushInFlight))
                     return;
                 _pushInFlight = true;
-                var user = WeChatUsers.Load(_options.DataDirectory);
-                outbound = new OutboundPush(null, new WeChatReminder(user.OpenId, plan.SuggestedMl,
-                    _progress.Today.ConsumedMl, _settings.DailyGoalMl, now), now);
-            }
-            else if (pushWindow && channel == PhoneChannel.PushWard)
-            {
-                if (!MobilePushDeliveryPolicy.ShouldAttempt(now, _pushNextAttempt, _pushInFlight))
-                    return;
-                _pushInFlight = true;
-                outbound = new OutboundPush(PushWardMessageBuilder.BuildReminder(_settings.PushWardApiToken,
+                var push = channels.HasFlag(PhoneChannel.PushWard) ? PushWardMessageBuilder.BuildReminder(_settings.PushWardApiToken,
                     plan.SuggestedMl, _progress.Today.ConsumedMl, _settings.DailyGoalMl, now,
-                    WaterCalculator.CurrentCupMl(_settings, now)), null, now);
+                    WaterCalculator.CurrentCupMl(_settings, now)) : null;
+                WeChatReminder? wechat = channels.HasFlag(PhoneChannel.WeChat) ? new WeChatReminder(user!.OpenId,
+                    plan.SuggestedMl, _progress.Today.ConsumedMl, _settings.DailyGoalMl, now) : null;
+                outbound = new OutboundPush(push, wechat, now);
             }
             else if (desktop)
             {
@@ -109,37 +105,26 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
 
         if (outbound is null) return;
 
-        var published = false;
-        var quotaExhausted = false;
-        try
+        var wechatResult = new WeChatSendResult();
+        using var send = CancellationTokenSource.CreateLinkedTokenSource(ct, _retirement.Token);
+        if (outbound.Value.WeChat is { } reminder)
         {
-            using var send = CancellationTokenSource.CreateLinkedTokenSource(ct, _retirement.Token);
-            if (outbound.Value.WeChat is { } reminder)
-            {
-                var result = await _wechat!.SendAsync(reminder, send.Token).ConfigureAwait(false);
-                published = result.Sent;
-                quotaExhausted = result.QuotaExhausted;
-            }
-            else
-            {
-                published = await _push.PublishTrackedAsync(outbound.Value.Push!, outbound.Value.At, send.Token)
-                    .ConfigureAwait(false);
-            }
+            try { wechatResult = await _wechat!.SendAsync(reminder, send.Token).ConfigureAwait(false); }
+            catch { wechatResult = default; }
         }
-        catch
-        {
-            published = false;
-        }
+        var published = wechatResult.Sent;
+        if (outbound.Value.Push is { } message)
+            published |= await _push.PublishTrackedAsync(message, outbound.Value.At, send.Token).ConfigureAwait(false);
 
         lock (_gate)
         {
             if (_retired) return;
             _pushInFlight = false;
-            if (outbound.Value.WeChat is not null)
-                ApplyWeChatResultLocked(published, quotaExhausted);
+            if (outbound.Value.WeChat is { } delivered)
+                ApplyWeChatResultLocked(delivered.OpenId, wechatResult.Sent, wechatResult.QuotaExhausted);
             _progress.Reload();
             if (DateOnly.FromDateTime(_clock()) != DateOnly.FromDateTime(outbound.Value.At)) return;
-            if (quotaExhausted)
+            if (wechatResult.QuotaExhausted && !published)
             {
                 _pushNextAttempt = DateTime.MinValue;
                 return;
@@ -164,25 +149,33 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
         lock (_gate)
         {
             RefreshLocked();
-            return new ClientSettingsResponse
-            {
-                DailyGoalMl = _settings.DailyGoalMl,
-                WorkCupMl = WaterCalculator.WorkCupMl(_settings),
-                HomeCupMl = WaterCalculator.HomeCupMl(_settings),
-                WorkStart = Clock(_settings.WorkStart),
-                WorkEnd = Clock(_settings.WorkEnd),
-                LunchEnabled = _settings.LunchEnabled,
-                LunchStart = Clock(_settings.LunchStart),
-                LunchEnd = Clock(_settings.LunchEnd),
-                NoDrinkBeforeEndMinutes = _settings.NoDrinkBeforeEndMinutes,
-                QuietStart = Clock(_settings.QuietStart),
-                MinReminderGapMinutes = _settings.MinReminderGapMinutes,
-                MobilePushEnabled = _settings.MobilePushEnabled,
-                ActiveDays = (bool[])_settings.ActiveDays.Clone(),
-                RemindersPaused = _settings.RemindersPaused,
-                PauseUntil = _settings.PauseUntil?.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture),
-            };
+            return CurrentSettingsLocked();
         }
+    }
+
+    private ClientSettingsResponse CurrentSettingsLocked()
+    {
+        var response = new ClientSettingsResponse
+        {
+            DailyGoalMl = _settings.DailyGoalMl,
+            WorkCupMl = WaterCalculator.WorkCupMl(_settings),
+            HomeCupMl = WaterCalculator.HomeCupMl(_settings),
+            WorkStart = Clock(_settings.WorkStart),
+            WorkEnd = Clock(_settings.WorkEnd),
+            LunchEnabled = _settings.LunchEnabled,
+            LunchStart = Clock(_settings.LunchStart),
+            LunchEnd = Clock(_settings.LunchEnd),
+            NoDrinkBeforeEndMinutes = _settings.NoDrinkBeforeEndMinutes,
+            QuietStart = Clock(_settings.QuietStart),
+            MinReminderGapMinutes = _settings.MinReminderGapMinutes,
+            MobilePushEnabled = _settings.MobilePushEnabled,
+            PhoneMode = _settings.PhoneMode,
+            ActiveDays = (bool[])_settings.ActiveDays.Clone(),
+        };
+        response.Revision = Convert.ToHexString(SHA256.HashData(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(response)));
+        response.RemindersPaused = _settings.RemindersPaused;
+        response.PauseUntil = _settings.PauseUntil?.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture);
+        return response;
     }
 
     /// <summary>Desktop tray action. Amount omitted means one work cup.</summary>
@@ -329,6 +322,8 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
         => new()
         {
             Date = record.Date,
+            LastReminderAt = record.LastReminderAt is { } last
+                ? new DateTimeOffset(DateTime.SpecifyKind(last, DateTimeKind.Unspecified), TimeSpan.FromHours(8)) : null,
             ConsumedMl = record.ConsumedMl,
             GoalMl = record.GoalSnapshotMl ?? 0,
             GoalKnown = record.GoalSnapshotMl.HasValue,
@@ -488,13 +483,25 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
             RefreshLocked();
             var fresh = _storage.LoadSettings();
             var fileToken = string.IsNullOrWhiteSpace(pushWardToken) ? fresh.PushWardApiToken : pushWardToken.Trim();
+            if (update.PauseOnly)
+            {
+                var pause = SettingsEditor.FromResponse(CurrentSettingsLocked());
+                pause.RemindersPaused = update.RemindersPaused;
+                pause.PauseUntil = update.PauseUntil;
+                update = pause;
+            }
+            else if (update.ExpectedRevision is { } revision && revision != CurrentSettingsLocked().Revision)
+            {
+                error = SettingsEditor.StaleSettings;
+                return false;
+            }
             if (!SettingsEditor.TryApply(fresh, update, out error)) return false;
             fresh.PushWardApiToken = string.IsNullOrWhiteSpace(_pushToken?.Invoke()) ? fileToken : "";
             _storage.SaveSettings(fresh);
             ApplyOverlay(fresh);
             var tokenChanged = fresh.PushWardApiToken != _settings.PushWardApiToken;
             Copy(fresh, _settings);
-            if (_progress.Today.RemindersPausedOverride.HasValue)
+            if (!update.PreservePause && _progress.Today.RemindersPausedOverride.HasValue)
             {
                 _progress.Today.RemindersPausedOverride = null;
                 _storage.SaveDailyRecord(_progress.Today);
@@ -626,23 +633,17 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
             if (!user.Seen.Contains(operation, StringComparer.Ordinal))
             {
                 user.Seen.Add(operation);
-                if (user.Seen.Count > 80) user.Seen.RemoveRange(0, user.Seen.Count - 80);
                 if (decision == "accept" && user.Credits < 100) user.Credits++;
+                WeChatUsers.Save(_options.DataDirectory, user);
             }
-            WeChatUsers.Save(_options.DataDirectory, user);
         }
         return (true, WeChatStatus(), null);
     }
 
-    private bool ReadyForWeChatLocked()
+    private void ApplyWeChatResultLocked(string openId, bool published, bool quotaExhausted)
     {
         var user = WeChatUsers.Load(_options.DataDirectory);
-        return user.Credits > 0 && !string.IsNullOrWhiteSpace(user.OpenId);
-    }
-
-    private void ApplyWeChatResultLocked(bool published, bool quotaExhausted)
-    {
-        var user = WeChatUsers.Load(_options.DataDirectory);
+        if (user.OpenId != openId) return;
         if (published) user.Credits = Math.Max(0, user.Credits - 1);
         else if (quotaExhausted) user.Credits = 0;
         WeChatUsers.Save(_options.DataDirectory, user);
@@ -718,7 +719,7 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
     private void EnsureAnswerLoopLocked()
     {
         if (_retired || !_options.PollAnswers) return;
-        var should = _settings.MobilePushEnabled && _push.IsConfigured;
+        var should = ReminderRouting.ShouldPublishPushWard(_settings, _push.IsConfigured);
         if (should && !_push.IsRunning) _push.Start();
         else if (!should && _push.IsRunning) _push.Stop();
     }
@@ -755,6 +756,8 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
             Phase = phase.ToString(),
             ShowDesktop = show,
             PushWindow = WaterCalculator.ShouldSendMobilePush(_settings, now),
+            PauseUntil = _settings.PauseUntil is { } until
+                ? new DateTimeOffset(DateTime.SpecifyKind(until, DateTimeKind.Unspecified), TimeSpan.FromHours(8)) : null,
             RemindersPaused = _settings.RemindersPaused,
             StatusText = WaterCalculator.StatusLine(_settings, _progress.Today, plan, now, compact: false),
             CompactStatusText = WaterCalculator.StatusLine(_settings, _progress.Today, plan, now, compact: true),
@@ -796,6 +799,7 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
         to.QuietStart = from.QuietStart;
         to.ActiveDays = from.ActiveDays is { Length: 7 } days ? (bool[])days.Clone() : [true, true, true, true, true, false, false];
         to.MobilePushEnabled = from.MobilePushEnabled;
+        to.PhoneMode = from.PhoneMode;
         to.PushWardApiToken = from.PushWardApiToken ?? "";
         to.SoundEnabled = from.SoundEnabled;
         to.AutoStart = from.AutoStart;

@@ -7,6 +7,25 @@ namespace WaterReminder.Services;
 
 public sealed partial class ReminderEngine
 {
+    public SyncSnapshotResponse SyncSnapshot(Guid memberId, string memberName, int days)
+    {
+        lock (_gate)
+        {
+            var now = RefreshLocked();
+            var today = DateOnly.FromDateTime(now);
+            var count = Math.Clamp(days <= 0 ? 30 : days, 1, 366);
+            var stored = _storage.ListDailyRecords().ToDictionary(day => day.Date);
+            var snapshot = new SyncSnapshotResponse { MemberId = memberId, MemberName = memberName, Status = BuildStatusLocked(now) };
+            for (var offset = 0; offset < count; offset++)
+            {
+                var date = today.AddDays(-offset).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                var record = offset == 0 ? _progress.Today : stored.GetValueOrDefault(date) ?? new DailyRecord { Date = date };
+                snapshot.Days.Add(MapRecords(record, offset == 0));
+            }
+            return snapshot;
+        }
+    }
+
     /// <summary>Member-scoped durable operations; ledger and receipt are saved in the same atomic file replacement.</summary>
     public bool TrySyncOperations(SyncOperationsRequest? request, out SyncOperationsResponse? response,
         out string? error, out bool conflict)
@@ -88,11 +107,10 @@ public sealed partial class ReminderEngine
                 result.Results.Add(new(operation.Id, operation.Date, false, changed));
             }
 
-            foreach (var record in working.Values)
-                _storage.SaveDailyRecord(record);
+            if (working.Count > 0) _storage.SaveDailyRecords(working.Values);
             now = RefreshLocked();
             result.Days = touched.OrderByDescending(date => date).Select(date =>
-                MapRecords(_storage.LoadDailyRecord(DateOnly.ParseExact(date, "yyyy-MM-dd", CultureInfo.InvariantCulture)),
+                MapRecords(ForDate(date),
                     date == today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))).ToList();
             result.Status = BuildStatusLocked(now);
             response = result;
@@ -107,11 +125,6 @@ public sealed partial class ReminderEngine
             !DateOnly.TryParseExact(operation.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)
             || date > today || date.Year < 1900 || operation.Source?.Length > 64) return false;
         if (operation.GoalMl is < 100 or > 10000) return false;
-        if (operation.Kind is "pause" or "resume" && date != today)
-        {
-            error = "只能暂停或恢复今天的提醒。";
-            return false;
-        }
         if (operation.At is { } text && (!TryOperationTime(text, out var at) || DateOnly.FromDateTime(at) != date))
         {
             error = "记录时间必须属于操作指定的上海日期。";
@@ -119,7 +132,7 @@ public sealed partial class ReminderEngine
         }
         var valid = operation.Kind switch
         {
-            "drink" => operation.AmountMl is > 0 and <= 3000,
+            "drink" => operation.AmountMl is > 0 and <= 5000,
             "import" => operation.AmountMl is not null and not 0 and >= -20000 and <= 20000
                 && operation.EventId is { } eventId && eventId != Guid.Empty && operation.At is not null,
             "setTotal" => operation.TotalMl is >= 0 and <= 20000,
@@ -202,6 +215,7 @@ public sealed partial class ReminderEngine
             case "clear": changed = record.Events.Count > 0; record.Events.Clear(); break;
             case "pause":
             case "resume":
+                if (date != today) break;
                 var paused = operation.Kind == "pause";
                 changed = record.RemindersPausedOverride != paused;
                 record.RemindersPausedOverride = paused;

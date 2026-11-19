@@ -17,6 +17,7 @@ public partial class SettingsWindow : Window
     private readonly DateTime _now;
     private readonly int _consumedMl;
     private readonly bool _remindersPaused;
+    private readonly string? _revision;
     private readonly string? _pauseUntil;
     private bool _saving;
 
@@ -39,6 +40,7 @@ public partial class SettingsWindow : Window
         _now = now;
         _consumedMl = consumedMl;
         _remindersPaused = current.RemindersPaused;
+        _revision = current.Revision;
         _pauseUntil = current.PauseUntil;
         _days = [Mon, Tue, Wed, Thu, Fri, Sat, Sun];
         MaxHeight = SystemParameters.WorkArea.Height - 16;
@@ -57,6 +59,7 @@ public partial class SettingsWindow : Window
         for (var i = 0; i < _days.Length && i < current.ActiveDays.Length; i++)
             _days[i].IsChecked = current.ActiveDays[i];
         MobilePushBox.IsChecked = current.MobilePushEnabled;
+        PhoneModeBox.SelectedIndex = (int)current.PhoneMode;
         FloatingBox.IsChecked = floatingWindow;
         AutoStartBox.IsChecked = autoStart;
         if (memberName is not null)
@@ -97,8 +100,11 @@ public partial class SettingsWindow : Window
         QuietStart = Clock(QuietStepper.Value),
         MinReminderGapMinutes = GapStepper.Value,
         MobilePushEnabled = MobilePushBox.IsChecked == true,
+        PhoneMode = (PhoneDeliveryMode)PhoneModeBox.SelectedIndex,
         ActiveDays = _days.Select(x => x.IsChecked == true).ToArray(),
         RemindersPaused = _remindersPaused,
+        PreservePause = true,
+        ExpectedRevision = _revision,
         PauseUntil = _pauseUntil,
     };
 

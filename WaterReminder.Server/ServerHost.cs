@@ -91,7 +91,7 @@ public static class ServerHost
             if (!SettingsEditor.TryParse(body, out var update, out var error) || update is null)
                 return Results.BadRequest(new { error = error ?? SettingsEditor.Unreadable });
             if (!e.TryUpdateSettings(update, out error))
-                return Results.BadRequest(new { error });
+                return error == SettingsEditor.StaleSettings ? Results.Conflict(new { error }) : Results.BadRequest(new { error });
             return Results.Ok(e.ClientSettings());
         });
 
@@ -112,12 +112,7 @@ public static class ServerHost
             var engine = CurrentEngine(context);
             var caller = Caller(context);
             var name = caller == Guid.Empty ? "我" : accounts.Overview(caller).Members[0].Name;
-            var history = engine.History(days ?? 30);
-            var dates = history.Days.Select(day => day.Date).ToHashSet(StringComparer.Ordinal);
-            var status = engine.Status();
-            dates.Add(status.Date);
-            var records = dates.OrderByDescending(date => date).Select(date => engine.RecordsFor(date)!).ToList();
-            return Results.Ok(new SyncSnapshotResponse { Status = status, MemberId = caller, MemberName = name, Days = records });
+            return Results.Ok(engine.SyncSnapshot(caller, name, days ?? 30));
         });
 
         app.MapPost("/api/drinks", async (HttpRequest request) =>
@@ -192,7 +187,9 @@ public static class ServerHost
             if (!TryReadFamilySettings(await reader.ReadToEndAsync(), out var update, out var error))
                 return Results.BadRequest(new { error });
             var saved = accounts.UpdateMemberSettings(id, update!, out error);
-            return saved is not null ? Results.Ok(saved) : error is null ? Results.NotFound() : Results.BadRequest(new { error });
+            if (saved is not null) return Results.Ok(saved);
+            if (error == SettingsEditor.StaleSettings) return Results.Conflict(new { error });
+            return error is null ? Results.NotFound() : Results.BadRequest(new { error });
         });
         app.MapGet("/api/family/{id:guid}/history", (HttpContext context, FamilyAccounts accounts, Guid id, int? days) =>
         {

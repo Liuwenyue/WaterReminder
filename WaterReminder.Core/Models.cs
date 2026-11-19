@@ -29,6 +29,7 @@ public sealed class UserSettings
     // Unknown keys in older settings.json files (removed ntfy / Pushover fields) are ignored
     // on load and are not written back. Never commit the token.
     public bool MobilePushEnabled { get; set; } = true;
+    public PhoneDeliveryMode PhoneMode { get; set; }
     /// <summary>PushWard integration token. Server data directory or environment only; the tray client never sees it.</summary>
     public string PushWardApiToken { get; set; } = "";
     public bool SoundEnabled { get; set; } = true;

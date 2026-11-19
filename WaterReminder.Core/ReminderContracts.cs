@@ -1,8 +1,12 @@
 namespace WaterReminder;
 
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<PhoneDeliveryMode>))]
+public enum PhoneDeliveryMode { Auto, WeChat, PushWard, Both }
+
 /// <summary>Today's status for the Windows client. Contains no PushWard credential.</summary>
 public sealed class StatusResponse
 {
+    public DateTimeOffset? PauseUntil { get; set; }
     public string Date { get; set; } = "";
     public string TimeZone { get; set; } = Services.ShanghaiClock.Id;
     public string Now { get; set; } = "";
@@ -40,6 +44,7 @@ public sealed class DesktopAlertResponse
 /// <summary>Settings the Windows client is allowed to cache. Secrets are omitted.</summary>
 public sealed class ClientSettingsResponse
 {
+    public string? Revision { get; set; }
     public int DailyGoalMl { get; set; }
     public int WorkCupMl { get; set; }
     public int HomeCupMl { get; set; }
@@ -52,6 +57,7 @@ public sealed class ClientSettingsResponse
     public string QuietStart { get; set; } = "";
     public int MinReminderGapMinutes { get; set; }
     public bool MobilePushEnabled { get; set; }
+    public PhoneDeliveryMode PhoneMode { get; set; }
     public bool[] ActiveDays { get; set; } = [];
     public bool RemindersPaused { get; set; }
     public string? PauseUntil { get; set; }
@@ -79,6 +85,7 @@ public sealed class AckRequest
 
 public sealed class TodayRecordsResponse
 {
+    public DateTimeOffset? LastReminderAt { get; set; }
     public string Date { get; set; } = "";
     public int ConsumedMl { get; set; }
     public int GoalMl { get; set; }
@@ -139,6 +146,9 @@ public sealed class EditRecordRequest
 /// <summary>Fields the desktop settings window may change. No credentials.</summary>
 public sealed class SettingsUpdate
 {
+    public string? ExpectedRevision { get; set; }
+    public bool PreservePause { get; set; }
+    public bool PauseOnly { get; set; }
     public int DailyGoalMl { get; set; }
     public int WorkCupMl { get; set; }
     public int HomeCupMl { get; set; }
@@ -151,6 +161,7 @@ public sealed class SettingsUpdate
     public string QuietStart { get; set; } = "";
     public int MinReminderGapMinutes { get; set; }
     public bool MobilePushEnabled { get; set; }
+    public PhoneDeliveryMode? PhoneMode { get; set; }
     public bool[] ActiveDays { get; set; } = [];
     public bool RemindersPaused { get; set; }
     public string? PauseUntil { get; set; }

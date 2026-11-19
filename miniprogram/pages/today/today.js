@@ -21,7 +21,7 @@ Page({
   data: {
     dateLabel: '', phaseLabel: '', consumedText: '0', goalText: '0', percent: 0, fraction: 0,
     done: false, cupAmount: 0, cupLabel: '', paused: false, nextText: '', hasNext: false,
-    planHint: '', showTip: false, recent: [], feedback: '', sipPulse: [], amountOpen: false, presets: [150, 250, 500]
+    planHint: '', recent: [], feedback: '', sipPulse: [], amountOpen: false, presets: [150, 250, 500]
   },
   onShow() { this.reload(); wechat.prepare(); },
   onHide() { this.resetTransient(); },
@@ -31,10 +31,18 @@ Page({
     if (this.data.amountOpen || this.data.feedback) this.setData({ amountOpen: false, feedback: '', sipPulse: [] });
   },
   reload() {
-    const now = new Date();
-    const snap = store.snapshot(now);
+    const instant = new Date();
+    const connection = serverApi.loadConnection();
+    const now = connection.configured ? store.shanghaiClock(instant) : instant;
+    const snap = store.snapshot(instant);
     const settings = snap.state.settings;
-    const plan = calc.calculateDynamic(settings, snap.model, now, snap.record.lastReminderAt);
+    let lastReminder = snap.record.lastReminderAt;
+    if (connection.configured) {
+      snap.model.events.forEach(event => { event.at = store.shanghaiClock(event.at); });
+      if (lastReminder) lastReminder = store.shanghaiClock(new Date(lastReminder));
+      if (settings.pauseUntil) settings.pauseUntil = store.shanghaiClock(new Date(settings.pauseUntil));
+    }
+    const plan = calc.calculateDynamic(settings, snap.model, now, lastReminder);
     const consumed = calc.consumedMl(snap.model);
     const goal = settings.dailyGoalMl;
     const fraction = goal > 0 ? Math.min(1, consumed / goal) : 0;
@@ -53,22 +61,17 @@ Page({
       fraction, percent: done ? 100 : Math.min(99, Math.round(fraction * 100)), done,
       cupAmount: calc.currentCupMl(settings, now), cupLabel: workCup ? '工作杯' : '家庭杯',
       paused, hasNext, nextText, planHint: planHint(settings, snap.model, plan, now),
-      recent: journal.entries(snap.model).slice(0, 2), showTip: !store.tipDismissed(),
-      identity: serverApi.loadConnection().memberName ? ('正在为 ' + serverApi.loadConnection().memberName + ' 记录') : '',
-      syncText: serverApi.loadConnection().configured ? store.syncInfo().text : '',
-      sharedNotice: serverApi.loadConnection().sharedWithOwner ? '你的饮水记录可由邀请人查看和设置。' : '',
-      loginText: getApp().globalData.authState === 'loading' ? '正在连接…' :
-        (getApp().globalData.authState === 'error' ? getApp().globalData.authError : ''),
-      loginFailed: getApp().globalData.authState === 'error'
+      recent: journal.entries(snap.model).slice(0, 2),
+      identity: connection.memberName,
+      syncText: connection.configured ? store.syncInfo().text : '',
+      needsConnection: !connection.configured
     });
   },
-  retryLogin() { getApp().startSession(''); },
+  openSettings() { wx.switchTab({ url: '/pages/settings/settings' }); },
   recordAmount(amount, source) {
-    if (!serverApi.loadConnection().configured && ['loading', 'error'].includes(getApp().globalData.authState)) {
-      return { ok: false, error: '请先连接账号' };
-    }
     const result = store.addEvent(amount, source);
     if (!result.ok) return result;
+    if (result.pending) getApp().syncChanges();
     this.reload();
     if (wx.vibrateShort) wx.vibrateShort({ type: 'light' });
     clearTimeout(this._feedbackTimer);
@@ -95,16 +98,13 @@ Page({
   },
   closeAmount() { this.setData({ amountOpen: false }); },
   togglePause() {
-    if (this.data.paused) store.resume();
-    else store.pauseToday(new Date());
+    const result = this.data.paused ? store.resume() : store.pauseToday(new Date());
+    if (result && result.pending) getApp().syncChanges();
+    if (result && !result.ok) wx.showToast({ title: result.error, icon: 'none' });
     this.reload();
   },
   goRecords() {
     getApp().globalData.openTodayRecords = true;
     wx.switchTab({ url: '/pages/records/records', fail: () => { getApp().globalData.openTodayRecords = false; } });
-  },
-  dismissTip() {
-    store.dismissTip();
-    this.setData({ showTip: false });
   }
 });

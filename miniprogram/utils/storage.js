@@ -3,24 +3,28 @@
 const calc = require('./calculator.js');
 
 const KEY = 'water-reminder-v1';
-const TIP_KEY = 'water-reminder-tip-dismissed';
 function legacyAccountKey(c) {
   let hash = 2166136261;
   for (let i = 0; i < c.apiToken.length; i++) hash = Math.imul(hash ^ c.apiToken.charCodeAt(i), 16777619);
   return 'water-member:' + c.serverUrl + ':' + (hash >>> 0).toString(16) + ':' + c.apiToken.length;
 }
+function needsConnectionConfirmation(connection) {
+  return !connection.confirmed && connection.serverUrl === 'https://wednesday-holly-warcraft-beef.trycloudflare.com';
+}
 function accountKey() {
-  let c; try { c = wx.getStorageSync('water-reminder-server') || {}; } catch (_) { return ''; }
-  if (!c.serverUrl || !c.apiToken) return '';
+  const c = wx.getStorageSync('water-reminder-server') || {};
+  if (!c.serverUrl || !c.apiToken || needsConnectionConfirmation(c)) return '';
   const legacy = legacyAccountKey(c);
   if (!c.memberId) return legacy;
   const stable = 'water-member-id:' + c.serverUrl + ':' + c.memberId;
-  try {
-    if (!wx.getStorageSync(stable)) {
-      const previous = wx.getStorageSync(legacy);
-      if (previous) wx.setStorageSync(stable, previous);
-    }
-  } catch (_) {}
+  const previous = wx.getStorageSync(legacy);
+  if (previous) {
+    const state = wx.getStorageSync(stable) || previous;
+    const known = new Set((state.queue || []).map(op => op.id));
+    state.queue = (state.queue || []).concat((previous.queue || []).filter(op => !known.has(op.id)));
+    wx.setStorageSync(stable, state);
+    wx.setStorageSync(legacy, null);
+  }
   return stable;
 }
 function storageKey() { return accountKey() || KEY; }
@@ -31,12 +35,7 @@ function formatNumber(n) {
 }
 
 function load() {
-  let raw = {};
-  try {
-    raw = wx.getStorageSync(storageKey()) || {};
-  } catch (error) {
-    raw = {};
-  }
+  const raw = wx.getStorageSync(storageKey()) || {};
   return {
     settings: calc.normalizeSettings(raw.settings || {}),
     records: raw.records && typeof raw.records === 'object' && !Array.isArray(raw.records) ? raw.records : {},
@@ -95,7 +94,6 @@ function snapshot(now) {
   const view = accountKey() ? projected(state) : state;
   const day = accountKey() ? new Date(shanghaiDate(now) + "T12:00:00") : now;
   const record = ensure(view, day);
-  if (accountKey() && state.lastReminderAt) record.lastReminderAt = state.lastReminderAt;
   return { state: view, record: record, model: model(record) };
 }
 
@@ -131,27 +129,6 @@ function addEvent(amount, source, at) {
   rememberGoal(state, record, now);
   save(state);
   return { ok: true, total: calc.consumedMl(model(record)) };
-}
-
-function markReminded(now, amount) {
-  if (accountKey()) {
-    const state = load();
-    state.lastReminderAt = now.toISOString();
-    save(state);
-    return amount > 0 ? addEvent(amount, 'reminder', now) : { ok: true };
-  }
-  const state = load();
-  const record = ensure(state, now);
-  record.lastReminderAt = now.toISOString();
-  if (amount > 0 && rawSum(record) + amount <= calc.MAX_DAILY_TOTAL_ML) {
-    record.events.push({
-      id: newId(),
-      at: now.toISOString(),
-      amountMl: amount,
-      source: 'reminder'
-    });
-  }
-  save(state);
 }
 
 function setTotal(date, total) {
@@ -214,14 +191,6 @@ function saveSettings(settings) {
   save(state);
 }
 
-function tipDismissed() {
-  try { return !!wx.getStorageSync(TIP_KEY); } catch (error) { return false; }
-}
-
-function dismissTip() {
-  wx.setStorageSync(TIP_KEY, 1);
-}
-
 function sourceLabel(source) {
   if (source === 'cup') return '喝一杯';
   if (source === 'reminder') return '提醒记下';
@@ -244,18 +213,24 @@ function uuid() {
 }
 function shanghaiTime(date) { return new Date(date.getTime() + 8 * 3600000).toISOString().slice(0, 19); }
 function shanghaiDate(date) { return shanghaiTime(date).slice(0, 10); }
+function shanghaiClock(date) { return new Date(shanghaiTime(date)); }
 function projected(state) {
   const view = JSON.parse(JSON.stringify(state));
   view.queue.forEach(function (op) {
     const day = view.records[op.date] || (view.records[op.date] = { date: op.date, events: [], goalKnown: false });
-    if (op.kind === 'drink' || op.kind === 'import') day.events.push({ id: op.eventId || op.id, at: op.at + '+08:00', amountMl: op.amountMl, source: op.source });
+    if ((op.kind === 'drink' || op.kind === 'import') && !day.events.some(event => event.id === (op.eventId || op.id)))
+      day.events.push({ id: op.eventId || op.id, at: op.at + '+08:00', amountMl: op.amountMl, source: op.source });
     if (op.kind === 'setTotal') {
-      const delta = op.totalMl - calc.consumedMl(model(day));
+      const delta = op.totalMl - rawSum(day);
       if (delta) day.events.push({ id: op.id, at: op.date + 'T12:00:00+08:00', amountMl: delta, source: 'adjust' });
     }
     if (op.kind === 'delete') day.events = day.events.filter(function (event) { return event.id !== op.eventId; });
     if (op.kind === 'clear') day.events = [];
-    if (op.date === shanghaiDate(new Date()) && (op.kind === 'pause' || op.kind === 'resume')) view.settings.remindersPaused = op.kind === 'pause';
+    if (op.date === shanghaiDate(new Date()) && (op.kind === 'pause' || op.kind === 'resume')) {
+      view.settings.remindersPaused = op.kind === 'pause';
+      view.settings.pauseUntil = op.kind === 'pause'
+        ? new Date(Date.parse(op.date + 'T00:00:00+08:00') + 86400000).toISOString() : null;
+    }
   });
   return view;
 }
@@ -279,17 +254,20 @@ function applyRemote(payload, receiptIds) {
   });
   if (payload.status) {
     state.status = payload.status; state.settings.remindersPaused = !!payload.status.remindersPaused;
-    state.settings.pauseUntil = null; state.settings.dailyGoalMl = payload.status.goalMl;
+    state.settings.pauseUntil = payload.status.pauseUntil || null; state.settings.dailyGoalMl = payload.status.goalMl;
   }
   state.syncError = ''; state.blocked = false; state.syncedAt = new Date().toISOString(); save(state);
 }
 function syncFailure(error, blocked) { const state = load(); state.syncError = error; state.blocked = !!blocked; save(state); }
-function dropQueue() {
+function dropQueue(ids) {
   const state = load();
+  if (!state.blocked || state.queue.length !== ids.length || !state.queue.every((op, index) => op.id === ids[index])) return false;
+  if (state.queue.some(op => op.kind === 'import')) state.imported = false;
   state.queue = [];
   state.blocked = false;
   state.syncError = '';
   save(state);
+  return true;
 }
 function syncInfo() {
   const state = load(); const count = state.queue.length;
@@ -306,30 +284,38 @@ function importLegacy() {
   if (!accountKey() || !state.status || state.imported) return { ok: false, error: '请先同步成员账本' };
   if (state.blocked) return { ok: false, error: '请先处理同步失败' };
   const legacy = wx.getStorageSync(KEY) || {};
-  Object.keys(legacy.records || {}).sort().forEach(function (date) {
-    (legacy.records[date].events || []).forEach(function (event) {
-      state.queue.push({ id: uuid(), kind: 'import', date: date, amountMl: Number(event.amountMl), at: shanghaiTime(new Date(event.at)), eventId: uuid(), source: event.source || 'legacy' });
-    });
-  });
+  const guid = /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+  for (const day of Object.values(legacy.records || {})) {
+    for (const event of day.events || []) {
+      const when = new Date(event.at);
+      const amount = Number(event.amountMl);
+      if (!Number.isFinite(when.getTime()) || !Number.isInteger(amount) || !amount || Math.abs(amount) > calc.MAX_DAILY_TOTAL_ML)
+        return { ok: false, error: '旧记录中有无效的时间或水量，请先检查本机记录' };
+      const at = shanghaiTime(when);
+      event.importId = event.importId || uuid();
+      event.importEventId = guid.test(event.id) ? event.id.toLowerCase() : event.importEventId || uuid();
+      state.queue.push({ id: event.importId, kind: 'import', date: at.slice(0, 10), amountMl: amount,
+        at, eventId: event.importEventId, source: event.source || 'legacy' });
+    }
+  }
+  wx.setStorageSync(KEY, legacy);
   state.imported = true; save(state); return { ok: true };
 }
 
 module.exports = {
-  accountKey, uuid, shanghaiDate, shanghaiTime, projected, applyRemote, syncFailure, syncInfo, dropQueue, legacyCount, importLegacy,
+  needsConnectionConfirmation, legacyAccountKey,
+  accountKey, uuid, shanghaiDate, shanghaiTime, shanghaiClock, projected, applyRemote, syncFailure, syncInfo, dropQueue, legacyCount, importLegacy,
   formatNumber: formatNumber,
   load: load,
   snapshot: snapshot,
   recordOn: recordOn,
   model: model,
   addEvent: addEvent,
-  markReminded: markReminded,
   setTotal: setTotal,
   deleteEvent: deleteEvent,
   clearDay: clearDay,
   pauseToday: pauseToday,
   resume: resume,
   saveSettings: saveSettings,
-  tipDismissed: tipDismissed,
-  dismissTip: dismissTip,
   sourceLabel: sourceLabel
 };

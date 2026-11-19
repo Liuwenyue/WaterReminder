@@ -85,6 +85,8 @@ function normalizeSettings(raw) {
   const src = raw || {};
   const workCup = src.workCupCapacityMl == null ? src.cupCapacityMl : src.workCupCapacityMl;
   const s = {
+    phoneMode: src.phoneMode || 'Auto',
+    mobilePushEnabled: src.mobilePushEnabled !== false,
     dailyGoalMl: clampInt(src.dailyGoalMl == null ? d.dailyGoalMl : src.dailyGoalMl, d.dailyGoalMl),
     cupCapacityMl: clampInt(src.cupCapacityMl == null ? d.cupCapacityMl : src.cupCapacityMl, d.cupCapacityMl),
     workCupCapacityMl: clampInt(workCup == null ? d.workCupCapacityMl : workCup, d.workCupCapacityMl),

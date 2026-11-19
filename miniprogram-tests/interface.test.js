@@ -75,6 +75,36 @@ test('one tap updates the amount, progress and recent entry; a rapid second tap 
   assert.equal(today.data.feedback, '');
 });
 
+test('opening the app or a family share never silently creates a separate account', () => {
+  wx.login = () => assert.fail('unexpected WeChat login');
+  requestHandler = () => assert.fail('unexpected server request');
+  app.onShow({});
+  const settings = mount(settingsPage);
+  settings.onShow();
+  assert.equal(settings.data.showAdvanced, true);
+  app.onShow({ query: { share: 'test-share' } });
+  settings.onShow();
+  assert.equal(settings.data.pendingShare, true);
+  assert.equal(settings.data.connected, false);
+  app.globalData.pendingShare = '';
+  delete wx.login;
+});
+
+test('changing server requires a fresh token and a successful settings read', async () => {
+  const api = require('../miniprogram/utils/server.js');
+  api.saveConnection({ serverUrl: 'https://first.example.com', apiToken: 'first-token' });
+  const page = mount(settingsPage, { serverUrl: 'https://second.example.com' });
+  requestHandler = () => assert.fail('old credential sent to new server');
+  assert.equal(await page.connect(), false);
+  page.data.apiToken = 'second-token';
+  requestHandler = options => {
+    assert.equal(options.header.Authorization, 'Bearer second-token');
+    options.success({ statusCode: 401 });
+  };
+  assert.equal(await page.connect(), false);
+  assert.equal(api.loadConnection().serverUrl, 'https://first.example.com');
+});
+
 test('custom entry validates, persists once and releases the reminder and tab bar on dismissal', () => {
   const today = mount(todayPage);
   today.onShow();
@@ -203,6 +233,7 @@ test('settings read and write the server configuration without sending the token
   assert.equal(settings.data.dailyGoalMl, '1800');
   settings.updateField(control('lunchEnabled', false));
   settings.updateField(control('mobilePushEnabled', false));
+  settings.changePhoneMode({ detail: { value: 3 } });
   settings.data.activeDays.slice().forEach((active, index) => {
     if (active) settings.onDay({ currentTarget: { dataset: { index } } });
   });
@@ -222,13 +253,15 @@ test('settings read and write the server configuration without sending the token
   assert.deepEqual(Object.keys(put.data).sort(), [
     'activeDays', 'dailyGoalMl', 'homeCupMl', 'lunchEnabled', 'lunchEnd', 'lunchStart',
     'minReminderGapMinutes', 'mobilePushEnabled', 'noDrinkBeforeEndMinutes', 'pauseUntil',
-    'quietStart', 'remindersPaused', 'workCupMl', 'workEnd', 'workStart'
+    'phoneMode', 'preservePause', 'quietStart', 'remindersPaused', 'workCupMl', 'workEnd', 'workStart'
   ]);
   assert.equal(JSON.stringify(put.data).includes('desktop-api-token'), false);
   assert.equal(put.data.dailyGoalMl, 1800);
   assert.equal(put.data.workCupMl, 370);
   assert.equal(put.data.lunchEnabled, false);
   assert.equal(put.data.mobilePushEnabled, false);
+  assert.equal(put.data.phoneMode, 'Both');
+  assert.equal(put.data.preservePause, true);
   assert.equal(put.data.remindersPaused, true);
   assert.equal(put.data.pauseUntil, '2026-11-18T23:59:00');
   assert.deepEqual(put.data.activeDays, [false, false, false, false, false, false, true]);
@@ -259,4 +292,49 @@ test('a rejected server save keeps the draft and the previous server values', as
   assert.match(settings.data.error, /100–10000/);
   assert.equal(store.load().settings.dailyGoalMl, 2500);
   assert.equal(remote.dailyGoalMl, 2500);
+});
+
+test('discard confirmation shows the count and cannot clear another account', () => {
+  const api = require('../miniprogram/utils/server.js');
+  const connection = { serverUrl: 'https://cup.example', apiToken: 'first', memberId: 'one' };
+  api.saveConnection(connection);
+  store.addEvent(100, 'cup');
+  store.pauseToday(new Date());
+  store.syncFailure('冲突', true);
+  const page = mount(settingsPage);
+  page.dropPending();
+  assert.match(modal.content, /2 项/);
+  modal.success({ confirm: false });
+  assert.equal(store.syncInfo().pending, 2);
+  page.dropPending();
+  api.saveConnection({ ...connection, memberId: 'two', apiToken: 'second' });
+  store.addEvent(200, 'cup');
+  modal.success({ confirm: true });
+  assert.equal(store.syncInfo().pending, 1);
+  api.saveConnection(connection);
+  assert.equal(store.syncInfo().pending, 2);
+});
+
+test('a cup tap sends a ledger operation while the today page remains open', async () => {
+  const api = require('../miniprogram/utils/server.js');
+  api.saveConnection({ serverUrl: 'https://cup.example', apiToken: 'member', memberId: 'one' });
+  const today = mount(todayPage);
+  const status = { goalMl: 2000, remindersPaused: false };
+  global.getCurrentPages = () => [today];
+  const posts = [];
+  requestHandler = options => {
+    if (options.method === 'GET') return options.success({ statusCode: 200, data: { status, days: [] } });
+    const [op] = options.data.operations;
+    posts.push(op);
+    options.success({ statusCode: 200, data: { status, results: [{ id: op.id }],
+      days: [{ date: op.date, events: [{ id: op.id, at: op.at, amountMl: op.amountMl, source: op.source }] }] } });
+  };
+  today.reload();
+  today.drinkCup();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(posts.length, 1);
+  assert.equal(store.syncInfo().pending, 0);
+  assert.equal(today.data.recent.length, 1);
+  today.onHide();
+  delete global.getCurrentPages;
 });

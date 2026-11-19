@@ -11,10 +11,10 @@ function rangeDate(date) {
   return (date.getMonth() + 1) + '.' + String(date.getDate()).padStart(2, '0');
 }
 
-function goalOf(state, day) {
+function goalOf(state, day, today) {
   const record = store.recordOn(state, day);
   if (record.goalKnown === true) return { known: true, goal: Number(record.goalMl) || 0 };
-  if (calc.sameDay(day, new Date())) return { known: true, goal: state.settings.dailyGoalMl };
+  if (calc.sameDay(day, today)) return { known: true, goal: state.settings.dailyGoalMl };
   if ((record.events || []).length || record.goalKnown === false) return { known: false, goal: 0 };
   return { known: true, goal: state.settings.dailyGoalMl };
 }
@@ -22,7 +22,7 @@ function weekChart(state, today, selected, endOffset) {
   const bars = [];
   const oldest = journal.dayAtOffset(today, endOffset + 6);
   const newest = journal.dayAtOffset(today, endOffset);
-  const selectedGoal = goalOf(state, journal.dayAtOffset(today, selected));
+  const selectedGoal = goalOf(state, journal.dayAtOffset(today, selected), today);
   let ceiling = Math.max(1, selectedGoal.known ? selectedGoal.goal : 1);
   for (let offset = endOffset + 6; offset >= endOffset; offset--) {
     const day = journal.dayAtOffset(today, offset);
@@ -55,12 +55,15 @@ Page({
     if (this.data.amountOpen || this.data.editing) this.setData({ amountOpen: false, editing: false });
   },
   reload() {
-    const today = new Date();
+    const now = new Date();
+    const connected = !!store.accountKey();
+    const today = connected ? store.shanghaiClock(now) : now;
     const offset = this.data.offset;
     const date = journal.dayAtOffset(today, offset);
     this._selectedDate = date;
-    const snap = store.snapshot(today);
+    const snap = store.snapshot(now);
     const model = store.model(store.recordOn(snap.state, date));
+    if (connected) model.events.forEach(event => { event.at = store.shanghaiClock(event.at); });
     const events = journal.entries(model);
     const total = calc.consumedMl(model);
     const chartEnd = Math.max(0, offset - 6, Math.min(offset, this.data.chartEnd));
@@ -97,6 +100,7 @@ Page({
       return;
     }
     this.selectComponent('#amountSheet').dismiss();
+    if (result.pending) app.syncChanges();
     this.reload();
     wx.showToast({ title: result.unchanged ? '总量没有变化' : (result.pending ? '待同步' : '总量已更新'), icon: 'none' });
   },
@@ -110,6 +114,7 @@ Page({
       success: result => {
         if (!result.confirm) return;
         const removed = store.deleteEvent(date, id);
+        if (removed && removed.pending) app.syncChanges();
         if (removed && removed.ok === false) wx.showToast({ title: removed.error, icon: 'none' });
         this.reload();
       },
@@ -124,7 +129,9 @@ Page({
       confirmText: '清空', confirmColor: '#BC3848',
       success: result => {
         if (!result.confirm) return;
-        store.clearDay(date);
+        const cleared = store.clearDay(date);
+        if (cleared && !cleared.ok) return wx.showToast({ title: cleared.error, icon: 'none' });
+        if (cleared && cleared.pending) app.syncChanges();
         this.setData({ editing: false });
         this.reload();
       },

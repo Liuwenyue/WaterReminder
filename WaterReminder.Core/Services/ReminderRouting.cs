@@ -1,9 +1,6 @@
 namespace WaterReminder.Services;
 
-/// <summary>
-/// Phone delivery. WeChat replaces PushWard once the server has an app secret and template.
-/// Until then, an already configured PushWard token keeps working.
-/// </summary>
+[Flags]
 public enum PhoneChannel
 {
     None,
@@ -13,13 +10,20 @@ public enum PhoneChannel
 
 public static class ReminderRouting
 {
-    public static PhoneChannel Choose(bool mobileEnabled, bool pushWardConfigured, bool wechatConfigured)
+    public static PhoneChannel Choose(bool mobileEnabled, bool pushWardConfigured, bool wechatReady, PhoneDeliveryMode mode = PhoneDeliveryMode.Auto)
     {
         if (!mobileEnabled) return PhoneChannel.None;
-        if (wechatConfigured) return PhoneChannel.WeChat;
-        return pushWardConfigured ? PhoneChannel.PushWard : PhoneChannel.None;
+        var push = pushWardConfigured ? PhoneChannel.PushWard : PhoneChannel.None;
+        var wechat = wechatReady ? PhoneChannel.WeChat : PhoneChannel.None;
+        return mode switch
+        {
+            PhoneDeliveryMode.WeChat => wechat,
+            PhoneDeliveryMode.PushWard => push,
+            PhoneDeliveryMode.Both => wechat | push,
+            _ => wechatReady ? wechat : push,
+        };
     }
 
     public static bool ShouldPublishPushWard(UserSettings settings, bool pushWardConfigured)
-        => Choose(settings.MobilePushEnabled, pushWardConfigured, wechatConfigured: false) == PhoneChannel.PushWard;
+        => settings.MobilePushEnabled && pushWardConfigured && settings.PhoneMode != PhoneDeliveryMode.WeChat;
 }

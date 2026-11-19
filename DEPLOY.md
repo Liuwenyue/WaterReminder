@@ -2,7 +2,7 @@
 
 The scheduler runs on a Linux VM (Ubuntu, 1 OCPU / 1 GB RAM is enough). Reminder times are always **Asia/Shanghai**, even if the VM clock is UTC. The Windows tray client and the iPhone (PushWard) both take reminders from this process. Do not run the old WPF scheduler at the same time.
 
-PushWard is the only phone channel. Do not add ntfy or Pushover.
+Phone delivery supports WeChat subscription messages and PushWard. Each account stores its channel preference on the server.
 
 ## Secrets
 
@@ -16,7 +16,7 @@ Keep these only on the server, in the environment or in the data directory. Do n
 | WeChat template ID | `WATERREMINDER_WECHAT_TEMPLATE_ID` | `wechat.json` 的 `templateId` |
 
 
-微信服务通知配好 AppSecret 和模板 ID 后，会代替 PushWard 给已绑定的成员发提醒。`wechat.json` 还可以写 `miniprogramState`（开发阶段用 `developer`）和 `fields`。默认字段是 `thing1`、`time2`、`thing3`，分别放「该喝水了」、提醒时间和「建议喝{suggested}毫升」。字段名必须和公众平台模板一致。AppSecret 不要提交。
+微信服务通知需要 AppSecret、模板 ID、成员绑定和可用的订阅次数。提醒渠道按成员配置，自动模式在微信未就绪时使用已配置的 PushWard。`wechat.json` 可以设置 `miniprogramState`（开发阶段用 `developer`）和 `fields`。默认字段 `thing1`、`time2`、`thing3` 分别对应「该喝水了」、提醒时间和「建议喝{suggested}毫升」。字段名必须和公众平台模板一致。
 
 Environment wins over the file. A token found that way is not copied into `settings.json` when the service saves a pause. `settings.json` in the data directory may still contain `PushWardApiToken` for a hand-edited install; that file stays on the server and is gitignored.
 

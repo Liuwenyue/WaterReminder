@@ -2,14 +2,14 @@
 
 # Water Reminder
 
-Reminder rules run headless on Linux. The Windows client keeps the original floating widget, settings, and today's records, and shows desktop toasts during work hours. After work, reminders go to the phone through PushWard.
+Reminder rules run headless on Linux. The Windows client provides the floating widget, settings, and today's records, and shows desktop toasts during work hours. After work, the server uses the account's selected phone channels.
 
 - **WaterReminder.Core** — schedule, cup sizes, PushWard, and records.
 - **WaterReminder.Server** — small HTTP service on a VM, and the source of truth for settings and today's record. Default port **8787**. Times are always **Asia/Shanghai**.
 - **WaterReminder.Client** — Windows tray, plus the original floating widget, settings, and today's records. It stores the server URL, the API token, an optional SSH tunnel, and local prefs such as the floating window and launch-at-logon. The tray menu **设置** writes reminder settings back to the server; the tray can also pause or resume reminders. It toasts 「该喝水了」 during work hours and stays quiet after work ends. A second launch activates the existing instance.
 - **WaterReminder** — the original WPF app. It still runs on Windows by itself. Running it together with the server sends duplicate reminders.
 
-Phone reminders use **PushWard**. The server defaults to `127.0.0.1:8787`. The Windows client can open an SSH local forward from the optional `tunnel` block in `client.json` (placeholders only in the sample — do not commit a real host or key path).
+Phone reminders support WeChat subscription messages and PushWard. The server defaults to `127.0.0.1:8787`. The Windows client can open an SSH local forward from the optional `tunnel` block in `client.json`. The sample uses placeholder values.
 
 ## Reminder rules (all configurable)
 
@@ -23,7 +23,7 @@ Phone reminders use **PushWard**. The server defaults to `127.0.0.1:8787`. The W
 | Work cup / home cup | 370 ml / 800 ml |
 | Minimum gap | 20 minutes |
 
-During work hours the schedule covers only the part of the daily goal meant for the office, and leaves one home cup (800 ml by default) for the evening. With the default 3000 ml goal that is about six work-cup reminders, not the whole day packed into work hours. Nothing is sent during lunch or in the no-drink window before work ends. Through the rest of the workday the server sends PushWard and the Windows client shows a desktop toast. After work, if the goal is still short, reminders use the home cup on the phone and the desktop stays quiet. After quiet hours, nothing is sent.
+The schedule reserves one home cup (800 ml by default) for the evening. The default 3000 ml goal calls for about six work-cup reminders. Reminders pause during lunch and the configured window before work ends. During the rest of the workday, the Windows client shows desktop toasts and the server sends phone reminders according to the account settings. After work, phone reminders use the home cup until the goal is met or quiet hours begin.
 
 Copy stays short: title 「该喝水了」, body 「已喝 {已喝}/{目标} ml，建议 {建议} ml」, confirmation 「已记录 / 已记 {N} ml」. On the phone, one tap on the notification records the drink and does not open a browser.
 
@@ -57,7 +57,7 @@ dotnet publish .\WaterReminder\WaterReminder.csproj -c Release -r win-x64 --self
 
 `miniprogram/` is the same drinking plan on a phone: today's progress, one cup, a custom amount, the log, and settings stay in WeChat local storage. Import the `miniprogram` folder with WeChat DevTools. See [miniprogram/README.md](miniprogram/README.md).
 
-A mini program cannot replace the background reminder. The Windows popup and PushWard stay as they are. Opening the mini program shows "time to drink" when a reminder is already due.
+The server schedules phone reminders. Select Auto, WeChat, PushWard, or both in the shared settings. Auto uses WeChat when the member has a binding and subscription credits, and uses configured PushWard otherwise. Connect the mini program to the desktop account using its HTTPS server address and API token.
 
 ```bash
 node ./miniprogram-tests/calculator.test.js

@@ -23,14 +23,39 @@ beforeEach(() => {
 });
 
 test('subscribe stays quiet until a template is known, then one tap adds one credit report', async () => {
+  server.saveConnection({ serverUrl: 'https://cup.example.com', apiToken: 'test-token' });
   assert.equal((await wechat.capture()).status, 'skip');
   wechat.remember('template-id-0123456789');
   const result = await wechat.capture();
   assert.equal(result.status, 'accept');
   assert.deepEqual(calls, [['template-id-0123456789']]);
   assert.match(wechat.describe({ enabled: true, bound: true, credits: 0 }), /用完/);
-  assert.match(wechat.describe({ enabled: true, bound: false, credits: 0 }), /弹出授权/);
-  assert.match(wechat.describe({ enabled: false }), /原来的推送/);
+  assert.match(wechat.describe({ enabled: true, bound: false, credits: 0 }), /尚未绑定/);
+  assert.equal(wechat.describe({ enabled: true, bound: true, credits: 2 }), '微信提醒剩余 2 次');
+  assert.match(wechat.describe({ enabled: false }), /微信模板/);
+});
+
+test('queued authorizations drain in order and stay with the originating account', async () => {
+  server.saveConnection({ serverUrl: 'https://cup.example', apiToken: 'one', memberId: 'one' });
+  wechat.remember('template-one');
+  const first = await wechat.capture();
+  const second = await wechat.capture();
+  const calls = [];
+  wx.request = options => calls.push(options);
+  const inFlight = wechat.report(first);
+  const concurrent = wechat.report(second);
+  assert.equal(calls.length, 1);
+  server.saveConnection({ serverUrl: 'https://cup.example', apiToken: 'two', memberId: 'two' });
+  calls[0].success({ statusCode: 200, data: { credits: 1 } });
+  await Promise.all([inFlight, concurrent]);
+  assert.equal(calls.length, 1);
+  assert.equal((await wechat.capture()).status, 'skip');
+  server.saveConnection({ serverUrl: 'https://cup.example', apiToken: 'one', memberId: 'one' });
+  const retry = wechat.report(second);
+  assert.equal(calls[1].data.id, second.id);
+  calls[1].success({ statusCode: 200, data: { credits: 2 } });
+  await retry;
+  assert.equal(calls.length, 2);
 });
 
 test('an accepted tap reports once and a retry keeps the same id', async () => {
