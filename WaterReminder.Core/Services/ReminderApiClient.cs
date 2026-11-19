@@ -176,6 +176,9 @@ public sealed partial class ReminderApiClient : IDisposable
     public async Task<ApiResult<TodayRecordsResponse>> ClearTodayAsync(CancellationToken ct = default)
         => await SendRecordsAsync(HttpMethod.Delete, "api/records", ct).ConfigureAwait(false);
 
+    public Task<ApiResult<TodayRecordsResponse>> ClearTodayForDateAsync(string date, CancellationToken ct = default)
+        => SendRecordsAsync(HttpMethod.Delete, $"api/records/today?date={Uri.EscapeDataString(date)}", ct);
+
     private async Task<ApiResult<TodayRecordsResponse>> SendRecordsAsync(HttpMethod method, string path, CancellationToken ct)
     {
         try

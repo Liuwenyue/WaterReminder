@@ -55,9 +55,11 @@ dotnet publish .\WaterReminder\WaterReminder.csproj -c Release -r win-x64 --self
 
 ## 微信小程序
 
-`miniprogram/` 连接后，饮水记录、暂停和当日目标都写入服务器，和 Windows、PushWard 是同一本账。断网时手机会显示待同步，恢复后同一笔只补记一次。设置页也可以扫描电脑上的 15 分钟邀请码加入，确认姓名后才保存访问码。用微信开发者工具导入 `miniprogram` 目录即可预览，说明见 [miniprogram/README.md](miniprogram/README.md)。
+打开小程序就会自动建立一本个人账，不用注册。个人账尚未就绪时新记的饮水，会在账本建好后写入这本账；手机里更早的旧历史不会自动并入。要使用电脑上的成员，在小程序「设置 → 关联电脑账本」扫描邀请二维码或粘贴邀请码，并确认姓名。邀请 15 分钟内有效。确认后的凭据只留在这台手机，不绑定微信登录身份，也不是那本自动建立的个人账。同一台手机保留数据就可以继续；换手机或清除数据后，要从电脑再领一次邀请。切换账本不会合并历史。
 
-手机和桌面端均可在设置中选择提醒方式。默认「自动」优先使用已绑定且有订阅次数的微信，否则使用该成员已配置的 PushWard。也可以选「仅微信」「仅 PushWard」或「微信和 PushWard」。关闭手机推送总开关会停用这两种手机提醒。
+手机、Windows 和 PushWard 只有选中同一成员，并且连接同一服务端时，才同步这一本账。断网时手机会显示待同步，恢复后同一笔只补记一次。用微信开发者工具导入 `miniprogram` 目录即可预览，说明见 [miniprogram/README.md](miniprogram/README.md)。服务器安装和 Windows 的 `client.json` 见 [DEPLOY.md](DEPLOY.md)，那不是手机用户的注册步骤。
+
+手机和桌面端都在设置里选择提醒方式，并且只使用这本账实际可用的渠道。微信和 PushWard 都可用时，可选「自动」「仅微信」「仅 PushWard」或「微信和 PushWard」。默认「自动」优先使用已绑定且还有订阅次数的微信，否则使用已配置的 PushWard。微信订阅只能由使用者主动点「授权一次提醒」，保存设置不会代为授权。关闭手机推送总开关会停用这两种手机提醒。
 
 ```bash
 node ./miniprogram-tests/calculator.test.js

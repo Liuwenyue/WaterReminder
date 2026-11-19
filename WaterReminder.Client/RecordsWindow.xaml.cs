@@ -12,7 +12,7 @@ public partial class RecordsWindow : Window
 {
     private readonly ReminderApiClient _api;
     private readonly int _cupMl;
-    private readonly DateOnly _today;
+    private DateOnly _today;
     private readonly DateTime _serverNow;
     private DateOnly _selected;
     private TodayRecordsResponse? _records;
@@ -324,10 +324,33 @@ public partial class RecordsWindow : Window
 
     private async void Clear_Click(object sender, RoutedEventArgs e)
     {
-        if (_records is not { Editable: true } || _records.Events.Count == 0) return;
-        if (!ConfirmDialog.Ask(this, "清空今天的所有记录？", "今天的饮水进度将归零，此操作无法撤销。", "清空", danger: true)) return;
-        var saved = await _api.ClearTodayAsync();
-        if (!saved.Ok) { SummaryText.Text = saved.Error ?? "没能清空"; return; }
+        if (_member is not null || _records is not { Editable: true } records || records.Events.Count == 0) return;
+        if (!ConfirmDialog.Ask(this, "清空今天的所有记录？", $"{records.Date} 的饮水进度将归零，此操作无法撤销。", "清空", danger: true)) return;
+        ClearButton.IsEnabled = false;
+        var saved = await _api.ClearTodayForDateAsync(records.Date);
+        if (_closed || !ReferenceEquals(_records, records)) return;
+        if (saved.StatusCode == 409)
+        {
+            var current = await _api.GetRecordsAsync();
+            if (_closed || !ReferenceEquals(_records, records)) return;
+            if (current.Value is { } today &&
+                DateOnly.TryParseExact(today.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+            {
+                _selected = _today = date;
+                var refreshedVersion = _detailVersion + 1;
+                await Task.WhenAll(ReloadAsync(), LoadHistoryAsync());
+                if (_closed || refreshedVersion != _detailVersion) return;
+            }
+            else ClearButton.IsEnabled = true;
+            SummaryText.Text = saved.Error ?? "账本日期已变更，请查看今日记录后重新确认清空。";
+            return;
+        }
+        if (!saved.Ok)
+        {
+            ClearButton.IsEnabled = true;
+            SummaryText.Text = saved.Error ?? "没能清空";
+            return;
+        }
         await Task.WhenAll(ReloadAsync(), LoadHistoryAsync());
     }
 

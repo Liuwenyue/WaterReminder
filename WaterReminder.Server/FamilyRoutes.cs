@@ -2,7 +2,8 @@ using WaterReminder;
 namespace WaterReminder.Server;
 internal static class FamilyRoutes
 {
-    private sealed record LoginRequest(string? Code, string? ShareToken);
+    private sealed record LoginRequest(string? Code, string? ShareToken, Guid? ExpectedMemberId);
+    private sealed record DeviceLoginRequest(string? DeviceId, Guid? ExpectedMemberId);
 
     public static void MapFamilyRoutes(this WebApplication app, ServerOptions options)
     {
@@ -12,14 +13,20 @@ internal static class FamilyRoutes
             var code = request.Code?.Trim() ?? "";
             if (code.Length is < 8 or > 128 || code.Any(char.IsWhiteSpace) || code.Any(char.IsControl))
                 return Results.BadRequest(new { error = "微信登录信息无效，请重试。" });
-            if (!options.WeChat.IsConfigured)
+            if (!options.WeChat.CanIdentify)
                 return Results.StatusCode(503);
             string? openId;
             try { openId = await options.WeChat.ExchangeOpenIdAsync(code, context.RequestAborted); }
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException)
             { return Results.StatusCode(503); }
             if (string.IsNullOrEmpty(openId)) return Results.Unauthorized();
-            var result = accounts.LogInWeChat(openId, request.ShareToken, out var error);
+            var result = accounts.LogInWeChat(openId, request.ShareToken, request.ExpectedMemberId, out var error);
+            return result is null ? Results.BadRequest(new { error }) : Results.Ok(result);
+        });
+        app.MapPost("/api/device/login", (HttpContext context, FamilyAccounts accounts, DeviceLoginRequest request) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            var result = accounts.LogInDevice(request.DeviceId ?? "", request.ExpectedMemberId, out var error);
             return result is null ? Results.BadRequest(new { error }) : Results.Ok(result);
         });
         app.MapPost("/api/family/share", (HttpContext context, FamilyAccounts accounts) =>
@@ -58,7 +65,7 @@ internal static class FamilyRoutes
         app.MapPost("/api/family/{id:guid}/push-test", async (HttpContext context, FamilyAccounts accounts, Guid id) =>
         {
             if (accounts.Authenticate(context.Request) != Guid.Empty) return Results.StatusCode(403);
-            if (!accounts.OwnerCanAccess(id)) return Results.NotFound();
+            if (id != Guid.Empty && !accounts.OwnerCanAccess(id)) return Results.NotFound();
             if (accounts.Find(id) is not { } engine) return Results.NotFound();
             return Results.Ok(await engine.SendSafeTestPushAsync(context.RequestAborted));
         });

@@ -35,9 +35,10 @@ public sealed class ProgressTracker
     public ReminderPlan Plan() => WaterCalculator.CalculateDynamic(Settings, Today, Now, LastReminderAt);
 
     /// <summary>Reload from disk (another window may have saved). Raises Changed only when the total or events differ.</summary>
-    public void Reload()
+    public void Reload() => Reload(Now);
+
+    internal void Reload(DateTime now)
     {
-        var now = Now;
         var fresh = _load(DateOnly.FromDateTime(now));
         // A different day's record has no (or a stale) reminder time: clear it, same as before.
         var restoredLast = RestoreLastReminder(fresh, now);
@@ -123,6 +124,11 @@ public sealed class ProgressTracker
     public bool ClearToday()
     {
         Reload();
+        return ClearLoadedDay();
+    }
+
+    internal bool ClearLoadedDay()
+    {
         if (Today.Events.Count == 0) return false;
         Today.Events.Clear();
         Commit();

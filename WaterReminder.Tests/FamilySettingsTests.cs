@@ -16,6 +16,65 @@ public sealed class FamilySettingsTests
     private const string OwnerPush = "test-owner-phone-token";
 
     [Fact]
+    public async Task PushTest_AllowsOwnerAndSharedTargetsOnly()
+    {
+        using var files = new TestFiles();
+        new StorageService(files.Path).SaveSettings(new UserSettings { MobilePushEnabled = false });
+        await using var host = await Host.Start(files.Path);
+        var shared = await Invite(host.Owner, "共享成员", null);
+        using var member = host.Client(shared.AccessCode);
+        using var login = await host.Owner.PostAsJsonAsync("api/device/login", new { deviceId = new string('a', 64) });
+        login.EnsureSuccessStatusCode();
+        var privateAccount = await login.Content.ReadFromJsonAsync<JsonElement>();
+        var privateId = privateAccount.GetProperty("memberId").GetGuid();
+        Assert.False(privateAccount.GetProperty("sharedWithOwner").GetBoolean());
+
+        static string PushTest(Guid id) => $"api/family/{id}/push-test";
+        using var ownerTest = await host.Owner.PostAsync(PushTest(Guid.Empty), null);
+        Assert.Equal(HttpStatusCode.OK, ownerTest.StatusCode);
+        using var sharedTest = await host.Owner.PostAsync(PushTest(shared.Member.Id), null);
+        Assert.Equal(HttpStatusCode.OK, sharedTest.StatusCode);
+        using var privateTest = await host.Owner.PostAsync(PushTest(privateId), null);
+        Assert.Equal(HttpStatusCode.NotFound, privateTest.StatusCode);
+        using var memberToOwner = await member.PostAsync(PushTest(Guid.Empty), null);
+        Assert.Equal(HttpStatusCode.Forbidden, memberToOwner.StatusCode);
+        using var memberToSelf = await member.PostAsync(PushTest(shared.Member.Id), null);
+        Assert.Equal(HttpStatusCode.Forbidden, memberToSelf.StatusCode);
+    }
+
+    [Fact]
+    public async Task Settings_ReportsEffectivePushWardConfigurationWithoutAcceptingItInUpdates()
+    {
+        using var files = new TestFiles();
+        await using var host = await Host.Start(files.Path);
+        var invitation = await Invite(host.Owner, "尚未配置", null);
+        using var member = host.Client(invitation.AccessCode);
+        using var ownerJson = JsonDocument.Parse(await host.Owner.GetStringAsync("api/settings"));
+        Assert.True(ownerJson.RootElement.GetProperty("pushWardConfigured").GetBoolean());
+        AssertNoSecrets(ownerJson.RootElement.GetRawText(), OwnerPush, OwnerCode);
+
+        var before = (await member.GetFromJsonAsync<ClientSettingsResponse>("api/settings"))!;
+        Assert.False(before.PushWardConfigured);
+        Assert.False(string.IsNullOrEmpty(before.Revision));
+        var edit = SettingsEditor.FromResponse(before);
+        edit.ExpectedRevision = before.Revision;
+        edit.DailyGoalMl = before.DailyGoalMl + 100;
+        var body = JsonSerializer.SerializeToNode(edit, ReminderApiClient.Json)!.AsObject();
+        body["pushWardConfigured"] = true;
+        using var rejected = await member.PutAsJsonAsync("api/settings", body);
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        body.Remove("pushWardConfigured");
+        using var saved = await member.PutAsJsonAsync("api/settings", body);
+        saved.EnsureSuccessStatusCode();
+        var after = (await saved.Content.ReadFromJsonAsync<ClientSettingsResponse>())!;
+        Assert.False(after.PushWardConfigured);
+        Assert.Equal(edit.DailyGoalMl, after.DailyGoalMl);
+        Assert.NotEqual(before.Revision, after.Revision);
+        using var stale = await member.PutAsJsonAsync("api/settings", body);
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+    }
+
+    [Fact]
     public async Task OwnerEditsFullMemberSettingsAndPhoneToken_PersistsWithoutLeakingOrChangingOtherData()
     {
         using var files = new TestFiles();
@@ -55,8 +114,11 @@ public sealed class FamilySettingsTests
             AssertNoSecrets(body, "test-old-phone", "test-new-phone", OwnerPush, invitation.AccessCode, OwnerCode);
             var result = JsonSerializer.Deserialize<ClientSettingsResponse>(body, ReminderApiClient.Json)!;
             Assert.Equal(JsonSerializer.Serialize(changed), JsonSerializer.Serialize(SettingsEditor.FromResponse(result)));
-            var memberSettings = await member.GetFromJsonAsync<ClientSettingsResponse>("api/settings");
-            Assert.Equal(2400, memberSettings!.DailyGoalMl);
+            var memberBody = await member.GetStringAsync("api/settings");
+            AssertNoSecrets(memberBody, "test-new-phone", OwnerPush, invitation.AccessCode);
+            var memberSettings = JsonSerializer.Deserialize<ClientSettingsResponse>(memberBody, ReminderApiClient.Json)!;
+            Assert.Equal(2400, memberSettings.DailyGoalMl);
+            Assert.True(memberSettings.PushWardConfigured);
             var status = await member.GetFromJsonAsync<StatusResponse>("api/status");
             Assert.Equal(400, status!.WorkCupMl);
             Assert.Equal(700, status.HomeCupMl);

@@ -74,3 +74,76 @@ test('an accepted tap reports once and a retry keeps the same id', async () => {
   assert.match(subscription[0].data.id, /^wx/);
   assert.equal(JSON.stringify(subscription).includes('desktop-api-token'), false);
 });
+
+test('a failed WeChat query is unknown and a successful one stays available', async () => {
+  server.saveConnection({ serverUrl: 'https://cup.example.com', apiToken: 'test-token', memberId: 'member-1' });
+  wx.request = options => options.fail({ errMsg: 'request:fail' });
+  const failed = await wechat.availability();
+  assert.equal(failed.unknown, true);
+  assert.match(wechat.describe(failed), /未知/);
+  assert.equal((await wechat.prepare()).unknown, true);
+  wx.request = options => {
+    assert.equal(options.url, 'https://cup.example.com/api/wechat');
+    options.success({ statusCode: 200, data: { enabled: true, bound: true, credits: 2, templateId: 'template-id-0123456789' } });
+  };
+  const ready = await wechat.availability();
+  assert.equal(ready.unknown, false);
+  assert.equal(ready.enabled, true);
+  assert.equal(ready.bound, true);
+  assert.equal(wechat.describe(ready), '微信提醒剩余 2 次');
+  assert.match(wechat.describe({ enabled: false }), /暂不可用/);
+});
+
+test('an unrecognizable WeChat status stays unknown and keeps the saved template', async () => {
+  server.saveConnection({ serverUrl: 'https://cup.example.com', apiToken: 'test-token', memberId: 'member-1' });
+  wechat.remember('template-id-0123456789');
+  wx.requestSubscribeMessage = options => options.success({ [options.tmplIds[0]]: 'accept' });
+  for (const body of [{}, { enabled: 'false', bound: false, credits: 0, templateId: '' }, { enabled: false, bound: false, credits: '0', templateId: '' }]) {
+    wx.request = options => options.success({ statusCode: 200, data: body });
+    const status = await wechat.availability();
+    assert.equal(status.unknown, true);
+    assert.match(wechat.describe(status), /未知/);
+    assert.equal((await wechat.capture()).status, 'accept');
+  }
+  wx.request = options => options.success({ statusCode: 200, data: { enabled: false, bound: false, credits: 0, templateId: '' } });
+  const disabled = await wechat.availability();
+  assert.equal(disabled.unknown, false);
+  assert.equal(disabled.enabled, false);
+  assert.equal(disabled.templateId, '');
+  assert.equal((await wechat.capture()).status, 'skip');
+});
+
+test('recording a cup does not ask for a subscription and routine sync text stays hidden', () => {
+  const store = require('../miniprogram/utils/storage.js');
+  const subscriptions = [];
+  wx.requestSubscribeMessage = options => {
+    subscriptions.push(options.tmplIds);
+    options.success({ [options.tmplIds[0]]: 'accept' });
+  };
+  wx.showToast = () => {};
+  wx.vibrateShort = () => {};
+  global.getApp = () => ({ syncChanges() {} });
+  let definition;
+  global.Page = options => { definition = options; };
+  delete require.cache[require.resolve('../miniprogram/pages/today/today.js')];
+  require('../miniprogram/pages/today/today.js');
+  const today = Object.assign({}, definition, {
+    data: Object.assign({}, definition.data),
+    setData(patch) { Object.assign(this.data, patch); }
+  });
+  server.saveConnection({ serverUrl: 'https://cup.example.com', apiToken: 'test-token', memberId: 'member-1' });
+  store.saveSettings({ mobilePushEnabled: true, phoneMode: 'WeChat' });
+  wechat.remember('template-id-0123456789');
+  today.onShow();
+  assert.match(store.syncInfo().text, /等待首次同步|已与服务器同步/);
+  assert.equal(today.data.syncText, '');
+  today.drinkCup();
+  today.drinkCup();
+  assert.deepEqual(subscriptions, []);
+  assert.equal(today.data.recent.length, 1);
+  store.syncFailure('网络中断', false);
+  today.reload();
+  assert.match(today.data.syncText, /网络中断/);
+  today.onHide();
+  assert.equal(today.data.feedback, '');
+});

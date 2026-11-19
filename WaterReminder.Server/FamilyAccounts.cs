@@ -68,12 +68,25 @@ internal sealed class FamilyAccounts : IDisposable
             ? JsonSerializer.Deserialize<List<ShareInvite>>(File.ReadAllText(SharePath)) ?? []
             : [];
 
-    public WeChatLoginResult? LogInWeChat(string openId, string? shareToken, out string? error)
+    public WeChatLoginResult? LogInWeChat(string openId, string? shareToken, Guid? expectedMemberId, out string? error)
+        => LogInIdentity(openId, shareToken, true, expectedMemberId, out error);
+
+    public WeChatLoginResult? LogInDevice(string deviceId, Guid? expectedMemberId, out string? error)
+    {
+        var id = deviceId.Trim().ToLowerInvariant();
+        if (id.Length != 64 || id.Any(c => !Uri.IsHexDigit(c)))
+        { error = "设备标识无效。"; return null; }
+        return LogInIdentity("device:" + id, null, false, expectedMemberId, out error);
+    }
+
+    private WeChatLoginResult? LogInIdentity(string openId, string? shareToken, bool bindWeChat, Guid? expectedMemberId, out string? error)
     {
         var identity = Convert.ToHexString(Hash(openId));
         lock (_gate)
         {
             var entry = _entries.Find(item => item.WeChatIdentityHash == identity);
+            if (expectedMemberId is { } expected && entry?.Id != expected)
+            { error = "当前登录身份与原账号不匹配，请使用原登录身份重试。"; return null; }
             if (entry?.Archived == true) { error = "账号已停用。"; return null; }
             string? shareHash = null;
             if (!string.IsNullOrEmpty(shareToken))
@@ -104,7 +117,7 @@ internal sealed class FamilyAccounts : IDisposable
                 entry = entry with { WeChatSessionHashes = sessions, UsedShareHash = entry.UsedShareHash ?? shareHash };
                 Save(_entries.Select(item => item.Id == entry.Id ? entry : item).ToList());
             }
-            Engine(entry).BindVerifiedWeChat(openId);
+            if (bindWeChat) Engine(entry).BindVerifiedWeChat(openId);
             error = null;
             return new(session, entry.Id, entry.Name, entry.SharedWithOwner);
         }

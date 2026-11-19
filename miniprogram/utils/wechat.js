@@ -13,9 +13,35 @@ function remember(id) {
 }
 
 function describe(status) {
-  if (!status || !status.enabled) return '微信提醒暂不可用，请检查服务器连接和微信模板';
+  if (!status || status.unknown) return '微信提醒状态未知';
+  if (!status.enabled) return '微信提醒暂不可用，请检查服务器连接和微信模板';
   if (!status.bound) return '微信尚未绑定，请重新打开设置重试';
   return status.credits ? '微信提醒剩余 ' + status.credits + ' 次' : '微信提醒次数已用完';
+}
+
+function wechatStatus(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  if (typeof data.enabled !== 'boolean' || typeof data.bound !== 'boolean') return null;
+  if (!Number.isInteger(data.credits) || data.credits < 0 || typeof data.templateId !== 'string') return null;
+  return {
+    unknown: false,
+    enabled: data.enabled,
+    bound: data.bound,
+    credits: data.credits,
+    templateId: data.templateId
+  };
+}
+
+function availability() {
+  const account = store.accountKey();
+  if (!server.loadConnection().configured || !account) return Promise.resolve({ unknown: true });
+  return server.wechatStatus().then(function (result) {
+    if (store.accountKey() !== account) return { unknown: true };
+    const status = result.ok ? wechatStatus(result.data) : null;
+    if (!status) return { unknown: true };
+    remember(status.templateId);
+    return status;
+  }).catch(function () { return { unknown: true }; });
 }
 
 function capture() {
@@ -125,16 +151,8 @@ function prepare() {
     wx.removeStorageSync(PENDING_KEY);
     wx.removeStorageSync('water-reminder-wechat-bound');
   }
-  return server.wechatStatus().then(function (result) {
-    if (store.accountKey() !== account) return disabled;
-    const data = result.ok && result.data && typeof result.data === 'object' ? result.data : {};
-    if (result.ok) remember(typeof data.templateId === 'string' ? data.templateId : '');
-    const status = {
-      enabled: !!data.enabled,
-      templateId: data.templateId || '',
-      bound: !!data.bound,
-      credits: Number.isInteger(data.credits) ? data.credits : 0
-    };
+  return availability().then(function (status) {
+    if (store.accountKey() !== account || status.unknown) return status.unknown ? status : { unknown: true };
     const next = status.enabled && !status.bound ? bind() : Promise.resolve();
     return next.then(function (binding) {
       if (binding && binding.ok) status.bound = !!binding.data.bound;
@@ -152,5 +170,6 @@ module.exports = {
   capture: capture,
   report: report,
   prepare: prepare,
+  availability: availability,
   operationId: operationId
 };

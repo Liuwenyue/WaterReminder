@@ -18,8 +18,9 @@ public sealed class WeChatConfig
     public string Page { get; init; } = "pages/today/today";
     public IReadOnlyDictionary<string, string> Fields { get; init; } = DefaultFields;
 
-    public bool IsConfigured
-        => AppId.Length > 0 && AppSecret.Length > 0 && TemplateId.Length > 0;
+    public bool CanIdentify => AppId.Length > 0 && AppSecret.Length > 0;
+
+    public bool IsConfigured => CanIdentify && TemplateId.Length > 0;
 
     public static IReadOnlyDictionary<string, string> DefaultFields { get; } =
         new Dictionary<string, string>(StringComparer.Ordinal)
@@ -60,6 +61,7 @@ public sealed class WeChatClient : IDisposable
     }
 
     public bool IsConfigured => _config.IsConfigured;
+    public bool CanIdentify => _config.CanIdentify;
     public string TemplateId => _config.IsConfigured ? _config.TemplateId : "";
 
     public static WeChatClient FromDirectory(string dataDirectory)
@@ -115,7 +117,7 @@ public sealed class WeChatClient : IDisposable
 
     public async Task<string?> ExchangeOpenIdAsync(string code, CancellationToken cancellationToken)
     {
-        if (!IsConfigured || string.IsNullOrWhiteSpace(code)) return null;
+        if (!CanIdentify || string.IsNullOrWhiteSpace(code)) return null;
         var url = "https://api.weixin.qq.com/sns/jscode2session?appid="
             + Uri.EscapeDataString(_config.AppId)
             + "&secret=" + Uri.EscapeDataString(_config.AppSecret)

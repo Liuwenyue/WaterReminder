@@ -1,7 +1,9 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.WebUtilities;
 using WaterReminder.Server;
 using WaterReminder.Services;
 using Xunit;
@@ -11,6 +13,69 @@ namespace WaterReminder.Tests;
 public sealed class FamilySyncTests
 {
     private const string OwnerCode = "test-family-sync-owner";
+
+    [Theory]
+    [InlineData("device")]
+    [InlineData("wechat")]
+    public async Task LoginWithExpectedMember_RejectsUnknownAndOtherIdentitiesWithoutWritingOrDisclosingAccounts(string method)
+    {
+        using var files = new TestFiles();
+        using var handler = new LoginIdentityHandler();
+        using var weChat = new WeChatClient(new WeChatConfig { AppId = "test-app", AppSecret = "test-secret" }, handler);
+        await using var host = await Host.Start(files.Path, weChat);
+        var route = $"api/{method}/login";
+        var identityField = method == "wechat" ? "code" : "deviceId";
+        var original = new string('a', 64);
+        var other = new string('b', 64);
+        var unknown = new string('c', 64);
+        using var firstLogin = await host.Anonymous.PostAsJsonAsync(route, new Dictionary<string, string> { [identityField] = original });
+        firstLogin.EnsureSuccessStatusCode();
+        var memberId = (await firstLogin.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("memberId").GetGuid();
+        using var otherLogin = await host.Anonymous.PostAsJsonAsync(route, new Dictionary<string, string> { [identityField] = other });
+        otherLogin.EnsureSuccessStatusCode();
+        var otherId = (await otherLogin.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("memberId").GetGuid();
+        Assert.NotEqual(memberId, otherId);
+
+        var before = SnapshotFiles();
+        Assert.Equal(2, JsonDocument.Parse(File.ReadAllBytes(Path.Combine(files.Path, "family.json"))).RootElement.GetArrayLength());
+        var errorMessages = new List<string>();
+        foreach (var identity in new[] { unknown, other })
+        {
+            using var result = await host.Anonymous.PostAsJsonAsync(route, new Dictionary<string, object>
+            {
+                [identityField] = identity,
+                ["expectedMemberId"] = memberId,
+            });
+            Assert.Equal(HttpStatusCode.BadRequest, result.StatusCode);
+            var body = await result.Content.ReadFromJsonAsync<JsonElement>();
+            var error = Assert.Single(body.EnumerateObject());
+            Assert.Equal("error", error.Name);
+            var message = error.Value.GetString()!;
+            Assert.DoesNotContain(memberId.ToString(), message);
+            Assert.DoesNotContain(otherId.ToString(), message);
+            errorMessages.Add(message);
+            Assert.Equal(before, SnapshotFiles());
+        }
+        Assert.Equal(errorMessages[0], errorMessages[1]);
+
+        using var renewed = await host.Anonymous.PostAsJsonAsync(route, new Dictionary<string, object>
+        {
+            [identityField] = original,
+            ["expectedMemberId"] = memberId,
+        });
+        renewed.EnsureSuccessStatusCode();
+        var account = await renewed.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(memberId, account.GetProperty("memberId").GetGuid());
+        using var client = host.Client(account.GetProperty("accessCode").GetString());
+        using var status = await client.GetAsync("api/status");
+        Assert.Equal(HttpStatusCode.OK, status.StatusCode);
+
+        (string Path, string Contents, DateTime Modified)[] SnapshotFiles() =>
+            Directory.GetFiles(files.Path, "*", SearchOption.AllDirectories)
+                .OrderBy(path => path, StringComparer.Ordinal)
+                .Select(path => (path, Convert.ToBase64String(File.ReadAllBytes(path)), File.GetLastWriteTimeUtc(path)))
+                .ToArray();
+    }
 
     [Fact]
     public async Task SyncedDrinkIsShared_RetryIsIdempotent_AndMembersStaySeparate()
@@ -227,6 +292,18 @@ public sealed class FamilySyncTests
         public void Dispose() { if (Directory.Exists(Path)) Directory.Delete(Path, true); }
     }
 
+    private sealed class LoginIdentityHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var code = QueryHelpers.ParseQuery(request.RequestUri!.Query)["js_code"].ToString();
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new { openid = "test-openid-" + code[..8] }),
+            });
+        }
+    }
+
     private sealed class Host : IAsyncDisposable
     {
         private readonly WebApplication _app;
@@ -246,10 +323,12 @@ public sealed class FamilySyncTests
             if (token is not null) http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             return http;
         }
-        public static async Task<Host> Start(string directory)
+        public static async Task<Host> Start(string directory, WeChatClient? weChat = null)
         {
             var owner = new ReminderEngine(new ReminderEngineOptions { DataDirectory = directory, PollAnswers = false });
-            var app = ServerHost.Build(ServerOptions.Create(directory, OwnerCode, 0, "127.0.0.1", true, false), owner);
+            var options = ServerOptions.Create(directory, OwnerCode, 0, "127.0.0.1", true, false);
+            if (weChat is not null) options.WeChat = weChat;
+            var app = ServerHost.Build(options, owner);
             await app.StartAsync();
             return new(app, owner);
         }

@@ -40,8 +40,14 @@ public partial class FamilyInviteWindow : Window
         {
             AccessCode.Focus();
             AccessCode.SelectAll();
-            try { Clipboard.SetText(AccessCode.Text); Feedback.Text = "已复制。"; }
-            catch (System.Runtime.InteropServices.ExternalException) { Feedback.Text = "请按 Ctrl+C 复制已选中的访问码。"; }
+            try
+            {
+                Clipboard.SetText(AccessCode.Text);
+                Feedback.Text = string.IsNullOrWhiteSpace(ServerUrl.Text)
+                    ? "已复制。"
+                    : "已复制邀请码。请在微信小程序「设置 → 关联电脑账本」粘贴。";
+            }
+            catch (System.Runtime.InteropServices.ExternalException) { Feedback.Text = "请按 Ctrl+C 复制已选中的内容。"; }
             return;
         }
         if (_existing is null && string.IsNullOrWhiteSpace(MemberName.Text))
@@ -95,10 +101,10 @@ public partial class FamilyInviteWindow : Window
     private void ShowInvite(MemberInvite invite)
     {
         PushToken.Clear();
-        AccessCode.Text = invite.InviteToken;
+        var payload = "waterreminder|" + invite.ServerUrl + "|" + invite.InviteToken;
+        AccessCode.Text = payload;
         AccessCode.Visibility = Visibility.Visible;
         CreateButton.Content = "复制邀请码";
-        var payload = "waterreminder|" + invite.ServerUrl + "|" + invite.InviteToken;
         try
         {
             using var generator = new QRCodeGenerator();
@@ -118,6 +124,6 @@ public partial class FamilyInviteWindow : Window
         {
             InviteQr.Visibility = Visibility.Collapsed;
         }
-        Feedback.Text = "请让家人打开微信小程序「设置」，扫描二维码或粘贴邀请码，并确认姓名「" + invite.Member.Name + "」。邀请 15 分钟内有效。确认后旧访问码失效，历史保留。";
+        Feedback.Text = "请让家人在微信小程序打开「设置 → 关联电脑账本」，扫描二维码或粘贴邀请码，并确认姓名「" + invite.Member.Name + "」。邀请 15 分钟内有效。确认后旧访问码失效，历史保留。";
     }
 }

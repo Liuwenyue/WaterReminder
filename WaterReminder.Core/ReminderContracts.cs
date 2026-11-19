@@ -45,6 +45,7 @@ public sealed class DesktopAlertResponse
 public sealed class ClientSettingsResponse
 {
     public string? Revision { get; set; }
+    public bool PushWardConfigured { get; set; }
     public int DailyGoalMl { get; set; }
     public int WorkCupMl { get; set; }
     public int HomeCupMl { get; set; }

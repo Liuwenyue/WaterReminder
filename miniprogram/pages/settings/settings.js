@@ -4,9 +4,12 @@ const store = require('../../utils/storage.js');
 const calc = require('../../utils/calculator.js');
 const server = require('../../utils/server.js');
 const wechat = require('../../utils/wechat.js');
+const config = require('../../utils/config.js');
 
 const DAY_LABELS = ['一', '二', '三', '四', '五', '六', '日'];
 const PHONE_MODES = ['Auto', 'WeChat', 'PushWard', 'Both'];
+const FIELD_ORDER = ['dailyGoalMl', 'workCupCapacityMl', 'homeCupCapacityMl', 'workStart', 'workEnd',
+  'lunchStart', 'lunchEnd', 'quietStart', 'minReminderGapMinutes', 'noDrinkBeforeEndMinutes', 'activeDays'];
 
 function previewFor(data) {
   const days = Array.isArray(data.activeDays) ? data.activeDays : [];
@@ -30,8 +33,6 @@ function previewFor(data) {
 Page({
   data: {
     dayLabels: DAY_LABELS,
-    serverUrl: '',
-    apiToken: '',
     connected: false,
     loaded: false,
     loading: false,
@@ -64,74 +65,123 @@ Page({
     syncText: '',
     syncBlocked: false,
     legacyCount: 0,
-    wechatText: '保存提醒方式后即可授权',
+    wechatText: '微信提醒状态未知',
     wechatReady: false,
-    shareToken: '', showAdvanced: false
+    pushWardState: 'unknown',
+    wechatState: 'unknown',
+    signInFailed: false,
+    fieldErrors: {},
+    inviteOpen: false,
+    inviteBusy: false,
+    invitePreview: null,
+    inviteError: ''
   },
   onShow() {
-    const connection = server.loadConnection();
-    const patch = {
-      serverUrl: this.data.serverUrl || (connection.configured ? connection.serverUrl : ''),
-      isOwner: connection.configured && connection.memberId === '00000000-0000-0000-0000-000000000000',
-      connected: connection.configured
-    };
-    patch.memberName = connection.memberName || '';
-    patch.sharedWithOwner = connection.sharedWithOwner;
-    patch.syncText = connection.configured ? store.syncInfo().text : '';
-    patch.syncBlocked = connection.configured && store.syncInfo().blocked;
-    patch.legacyCount = connection.configured ? store.legacyCount() : 0;
-    if (!connection.configured) {
-      patch.connectionText = '填写桌面端使用的服务器地址和令牌，即可连接同一账本。';
-      patch.pendingShare = !!getApp().globalData.pendingShare;
-      patch.showAdvanced = true;
-      patch.loaded = false;
-      patch.loading = false;
-      this.setData(patch);
-      return Promise.resolve(false);
-    }
-    this.setData(patch);
-    if (this.data.dirty) {
-      this.setData({ connectionText: '已连接，未保存的修改还在' });
-      return Promise.resolve(true);
-    }
-    return this.loadFromServer(false);
+    this._hidden = false;
+    this.reload(false);
+    if (!this.data.connected) return this.retrySignIn();
+    if (this.data.dirty || this.data.saving || this.data.inviteBusy) return Promise.resolve(true);
+    return this.loadFromServer();
   },
-  prepareShare() {
+  onHide() {
+    this._hidden = true;
+    this._read = null;
+    this._wechatRequest = null;
+    this._confirm = null;
+    if (!this._invite || !this._invite.redeeming) this.cancelInvitation();
+    this.setData({ loading: false });
+  },
+  onUnload() { this.onHide(); },
+  reload(refresh = true) {
+    const connection = server.loadConnection();
     const account = store.accountKey();
-    if (!account || !this.data.isOwner) return;
-    server.createShare().then((result) => {
-      if (store.accountKey() !== account) return;
-      const token = result.ok && result.data && result.data.token;
-      this.setData({ shareToken: typeof token === 'string' ? token : '' });
-      if (!token) wx.showToast({ title: result.error || '生成邀请失败', icon: 'none' });
+    const changed = this._account !== undefined && this._account !== account;
+    this._account = account;
+    const sync = connection.configured ? store.syncInfo() : null;
+    this.setData({
+      connected: connection.configured, memberName: connection.memberName,
+      syncText: sync && (sync.pending || sync.error || sync.blocked) ? sync.text : '',
+      syncBlocked: !!(sync && sync.blocked),
+      legacyCount: sync ? store.legacyCount() : 0,
+      ...(changed ? { loaded: false, dirty: false, fieldErrors: {}, conflict: false,
+        wechatReady: false, wechatState: 'unknown', pushWardState: 'unknown' } : {})
+    });
+    if (changed) {
+      this.cancelInvitation();
+      if (refresh && connection.configured && !this.data.saving) return this.loadFromServer();
+    }
+  },
+  retrySignIn() {
+    if (this.data.loading || this.data.saving || this.data.inviteBusy || this.data.invitePreview) return Promise.resolve(false);
+    return this.loadFromServer({ signIn: true });
+  },
+  async loadFromServer({ signIn = false, discard = false } = {}) {
+    if (this.data.saving || this.data.inviteBusy) return false;
+    const read = {};
+    this._read = read;
+    const draft = this._draft;
+    this.setData({ loading: true, signInFailed: false, error: '',
+      connectionText: server.loadConnection().configured ? '正在读取服务器设置…' : '正在建立你的账本…' });
+    try {
+      let result = signIn ? await server.signIn({ force: true }) : await server.getSettings();
+      if (this._read !== read) return false;
+      if (!signIn && !result.stale && (result.status === 401 || result.status === 403)) {
+        result = await server.signIn({ force: true });
+      }
+      if (this._read !== read) return false;
+      if (result.ok && !result.settings) result = await server.getSettings();
+      if (this._read !== read || result.stale) return false;
+      this.reload(false);
+      if (!result.ok) {
+        this.setData({ signInFailed: true, connectionText: result.error });
+        return false;
+      }
+      store.saveSettings(server.toLocal(result.settings));
+      if (this.data.dirty && (!discard || draft !== this._draft)) {
+        this.setData({ connectionText: '已连接，未保存的修改还在' });
+        return true;
+      }
+      this.applyLoaded(result.settings);
+      this.refreshWeChat();
+      return true;
+    } catch (_) {
+      if (this._read === read) this.setData({ signInFailed: true, connectionText: '读取设置失败，请重试。' });
+      return false;
+    } finally {
+      if (this._read === read) {
+        this._read = null;
+        this.setData({ loading: false });
+      }
+    }
+  },
+  async refreshWeChat() {
+    const account = store.accountKey();
+    const request = {};
+    this._wechatRequest = request;
+    this.setData({ wechatReady: false, wechatState: 'unknown', wechatText: '正在查询微信提醒状态…' });
+    const prepare = !this.data.dirty && this.data.mobilePushEnabled && this.data.phoneMode !== 'PushWard';
+    const status = await Promise.resolve().then(() => prepare ? wechat.prepare() : wechat.availability())
+      .catch(() => ({ unknown: true }));
+    if (this._wechatRequest !== request || account !== store.accountKey()) return;
+    const unknown = !status || status.unknown === true;
+    const ready = !unknown && !!(status.enabled && status.bound && status.templateId);
+    this.setData({
+      wechatReady: ready,
+      wechatState: unknown ? 'unknown' : ready && status.credits > 0 ? 'ready' : 'unavailable',
+      wechatText: unknown ? '微信提醒状态暂不可查，请稍后重试。' :
+        ready && !status.credits ? '当前可发送 0 次，可授权增加次数。' : wechat.describe(status)
     });
   },
-  onShareAppMessage() {
-    const token = this.data.shareToken;
-    setTimeout(() => this.prepareShare(), 0);
-    return token
-      ? { title: '邀请你一起记录喝水，邀请人可查看和设置你的记录', path: '/pages/today/today?share=' + encodeURIComponent(token) }
-      : { title: '一起记录每天的喝水量', path: '/pages/today/today' };
-  },
-  toggleAdvanced() { this.setData({ showAdvanced: !this.data.showAdvanced }); },
-  reload() {
-    const connection = server.loadConnection();
-    if (!connection.configured) return;
-    const sync = store.syncInfo();
-    this.setData({ syncBlocked: sync.blocked, syncText: sync.text, legacyCount: store.legacyCount(), memberName: connection.memberName,
-      isOwner: connection.memberId === '00000000-0000-0000-0000-000000000000' });
-  },
-  refreshWeChat() {
-    if (!this.data.mobilePushEnabled || this.data.phoneMode === 'PushWard') {
-      this.setData({ wechatText: '保存提醒方式后即可授权', wechatReady: false });
-      return;
-    }
+  async enableWeChat() {
+    if (!this.data.wechatReady || this.data.dirty || this.data.saving || this.data.inviteBusy) return;
     const account = store.accountKey();
-    return wechat.prepare().then(status => {
-      if (account === store.accountKey()) this.setData({ wechatText: wechat.describe(status), wechatReady: !!(status.enabled && status.bound && status.templateId) });
-    });
+    const result = await wechat.capture();
+    if (result.status === 'accept') wx.showToast({ title: '已授权', icon: 'none' });
+    else if (result.status === 'reject' || result.status === 'ban') wx.showToast({ title: '没有允许，次数没增加', icon: 'none' });
+    if (result.status === 'accept') await wechat.report(result);
+    if (account === store.accountKey()) return this.refreshWeChat();
   },
-  applyLoaded(settings, extra) {
+  applyLoaded(settings, edits) {
     const data = {
       dailyGoalMl: String(settings.dailyGoalMl),
       settingsRevision: settings.revision,
@@ -143,199 +193,223 @@ Page({
       lunchEnabled: !!settings.lunchEnabled,
       lunchStart: settings.lunchStart,
       lunchEnd: settings.lunchEnd,
+      quietStart: settings.quietStart,
       noDrinkBeforeEndMinutes: String(settings.noDrinkBeforeEndMinutes),
       minReminderGapMinutes: String(settings.minReminderGapMinutes),
-      quietStart: settings.quietStart,
       activeDays: settings.activeDays.slice(),
-      dayCount: settings.activeDays.filter(Boolean).length,
       mobilePushEnabled: !!settings.mobilePushEnabled,
       phoneMode: settings.phoneMode,
       phoneModeIndex: PHONE_MODES.indexOf(settings.phoneMode),
       serverPaused: !!settings.remindersPaused,
       serverPauseUntil: settings.pauseUntil || null,
+      pushWardState: settings.pushWardConfigured === true ? 'ready' :
+        settings.pushWardConfigured === false ? 'unavailable' : 'unknown',
       loaded: true,
       connected: true,
-      loading: false,
       saving: false,
-      dirty: false,
+      signInFailed: false,
+      dirty: !!edits,
+      fieldErrors: {},
       error: '',
       connectionText: server.connectionLabel(server.loadConnection().serverUrl)
     };
+    Object.assign(data, edits);
+    data.dayCount = data.activeDays.filter(Boolean).length;
     data.preview = previewFor(data);
-    this.setData(Object.assign(data, extra || {}));
+    this.setData(data);
   },
-  loadFromServer(force) {
-    this.setData({ loading: true, error: '' });
-    return server.getSettings().then((result) => {
-      if (result.stale) {
-        this.setData({ loading: false });
+  updateInvite(event) {
+    if (this.data.inviteBusy) return;
+    this.cancelInvitation();
+    this.setData({ inviteToken: event.detail.value, inviteError: '' });
+  },
+  toggleInvitation() {
+    if (this._invite && this._invite.redeeming) return;
+    if (this.data.inviteOpen) this.cancelInvitation();
+    this.setData({ inviteOpen: !this.data.inviteOpen });
+  },
+  scanInvite() {
+    if (this.data.saving || this.data.inviteBusy) return;
+    if (typeof wx.scanCode !== 'function') {
+      this.setData({ inviteError: '请粘贴电脑上的邀请码或完整邀请文本。' });
+      return;
+    }
+    this.cancelInvitation();
+    const scan = {};
+    this._scan = scan;
+    wx.scanCode({
+      success: res => { if (this._scan === scan) return this.previewInvitation(res.result); }
+    });
+  },
+  cancelInvitation() {
+    const invite = this._invite;
+    if (invite && invite.redeeming) return;
+    this._invite = null;
+    this._scan = null;
+    if (invite) server.cancelInvite(invite.previewId);
+    this.setData({ inviteBusy: false, invitePreview: null, inviteError: '' });
+  },
+  inviteStillCurrent(invite) {
+    const connection = server.loadConnection();
+    return this._invite === invite && store.accountKey() === invite.account &&
+      connection.apiToken === invite.connection.apiToken && connection.serverUrl === invite.connection.serverUrl;
+  },
+  inviteKeepsQueue(invite) {
+    if (!invite.account || !store.load().queue.length) return true;
+    const current = invite.connection;
+    const serverUrl = invite.targetUrl;
+    const sameServer = serverUrl === current.serverUrl ||
+      (current.serverUrl === config.serverUrl && config.previousDefaultUrls.includes(serverUrl));
+    return sameServer && !!current.memberId && invite.memberId === current.memberId;
+  },
+  async previewInvitation(raw) {
+    if (this.data.saving || this.data.inviteBusy) return false;
+    this.cancelInvitation();
+    const parsed = server.parseInvite(typeof raw === 'string' ? raw : this.data.inviteToken);
+    if (!parsed) {
+      this.setData({ inviteError: '请粘贴电脑上的邀请，或扫描邀请二维码。' });
+      return false;
+    }
+    const connection = server.loadConnection();
+    const serverUrl = parsed.serverUrl || connection.serverUrl || config.serverUrl;
+    if (!serverUrl) {
+      this.setData({ inviteError: '请使用包含服务器地址的完整邀请或二维码。' });
+      return false;
+    }
+    const invite = { account: store.accountKey(), connection, serverUrl, token: parsed.inviteToken };
+    this._invite = invite;
+    // A pending settings response must not replace the invite view or draft.
+    this._read = null;
+    this.setData({ loading: false, inviteBusy: true, inviteError: '' });
+    try {
+      const result = await server.previewInvite(serverUrl, parsed.inviteToken);
+      invite.previewId = result.previewId;
+      if (!this.inviteStillCurrent(invite)) {
+        if (result.previewId !== undefined) server.cancelInvite(result.previewId);
+        if (this._invite === invite) this.setData({ inviteError: '当前账本已变化，请重新预览邀请。' });
         return false;
       }
       if (!result.ok) {
-        this.setData({
-          loading: false,
-          connected: server.loadConnection().configured,
-          connectionText: server.connectionLabel(server.loadConnection().serverUrl),
-          error: result.error
-        });
+        this.setData({ inviteError: result.error });
         return false;
       }
-      if (this.data.dirty && !force) {
-        this.setData({ loading: false, connected: true, connectionText: '已连接，未保存的修改还在' });
-        return true;
+      const member = result.data && result.data.member;
+      const target = server.validateConnection(result.data && result.data.serverUrl || serverUrl, 'invite');
+      if (!member || typeof member.name !== 'string' || !member.name || target.error) {
+        this.setData({ inviteError: '无法识别邀请里的账本，请联系邀请人。' });
+        return false;
       }
-      store.saveSettings(server.toLocal(result.settings));
-      this.applyLoaded(result.settings);
-      this.refreshWeChat();
+      invite.memberId = member.id;
+      invite.targetUrl = target.serverUrl;
+      invite.expiresAt = Date.parse(result.data.expiresAt);
+      if (!this.inviteKeepsQueue(invite)) {
+        this.setData({ inviteError: '当前账本还有待同步记录，请先完成同步再切换账本。' });
+        return false;
+      }
+      this.setData({ invitePreview: { memberName: member.name, serverUrl: target.serverUrl } });
       return true;
-    }).catch(() => {
-      this.setData({ loading: false, error: '读取设置失败' });
+    } catch (_) {
+      if (this._invite === invite) this.setData({ inviteError: '无法预览邀请，请稍后重试。' });
       return false;
-    });
-  },
-
-  enableWeChat() {
-    const subscription = wechat.capture();
-    return Promise.resolve(subscription).then((result) => {
-      if (result.status === 'skip') {
-        wx.showToast({ title: '服务器还没配好微信模板', icon: 'none' });
-        return null;
-      }
-      if (result.status === 'accept') wx.showToast({ title: '已授权', icon: 'none' });
-      else if (result.status === 'reject' || result.status === 'ban') wx.showToast({ title: '没有允许，次数没增加', icon: 'none' });
-      return wechat.report(result);
-    }).then(() => this.refreshWeChat());
-  },
-  updateServer(event) {
-    this.setData({ [event.currentTarget.dataset.key]: event.detail.value });
-  },
-  connect() {
-    if (this.data.loading || this.data.saving) return;
-    const existing = server.loadConnection();
-    const token = this.data.apiToken.trim();
-    const candidate = server.validateConnection(this.data.serverUrl, token || (existing.configured && existing.apiToken) || '');
-    if (!token && existing.configured && candidate.serverUrl !== existing.serverUrl) candidate.error = '连接新服务器时请重新填写 API 令牌';
-    if (candidate.error) {
-      this.setData({ error: candidate.error });
-      return Promise.resolve(false);
-    }
-    this.setData({ loading: true, error: '' });
-    return server.getSettings(candidate).then((result) => {
-      if (!result.ok || result.stale) {
-        this.setData({ loading: false, connectionText: result.error || '请重新连接' });
-        return false;
-      }
-      server.saveConnection(candidate);
-      getApp().globalData.pendingShare = '';
-      store.saveSettings(server.toLocal(result.settings));
-      this.applyLoaded(result.settings, { apiToken: '', serverUrl: candidate.serverUrl, shareToken: '', pendingShare: false });
-      return server.syncLedger().then(() => this.onShow());
-    });
-  },
-  joinSharedAccount() {
-    const share = getApp().globalData.pendingShare;
-    if (!share || this.data.loading || server.loadConnection().configured) return;
-    this.setData({ loading: true });
-    return server.loginWeChat(this.data.serverUrl, share).then((result) => {
-      this.setData({ loading: false, connectionText: result.error || '' });
-      if (!result.ok) return false;
-      getApp().globalData.pendingShare = '';
-      this.setData({ pendingShare: false });
-      return server.syncLedger().then(() => this.onShow());
-    });
-  },
-  updateInvite(event) { this.setData({ inviteToken: event.detail.value, error: '' }); },
-  scanInvite() {
-    if (typeof wx.scanCode !== 'function') {
-      this.setData({ error: '请粘贴电脑上的邀请码' });
-      return;
-    }
-    wx.scanCode({ success: (res) => this.redeem(res.result) });
-  },
-  redeem(raw) {
-    const parsed = server.parseInvite(typeof raw === 'string' ? raw : this.data.inviteToken);
-    if (!parsed) { this.setData({ error: '请粘贴邀请码，或扫描电脑上的邀请二维码' }); return; }
-    const serverUrl = parsed.serverUrl || this.data.serverUrl;
-    if (!serverUrl) { this.setData({ error: '这条邀请没有服务器地址，请先填写地址' }); return; }
-    this.setData({ loading: true, error: '' });
-    server.previewInvite(serverUrl, parsed.inviteToken).then((preview) => {
-      if (!preview.ok) { this.setData({ loading: false, error: preview.error }); return; }
-      const name = preview.data && preview.data.member && preview.data.member.name;
-      wx.showModal({
-        title: '加入 ' + name + ' 的饮水账本？',
-        content: '这台手机将给「' + name + '」记账。邀请人可以查看记录和修改设置。',
-        success: (answer) => {
-          if (!answer.confirm) { this.setData({ loading: false }); return; }
-          server.redeemInvite(serverUrl, parsed.inviteToken).then((result) => {
-            if (!result.ok) { this.setData({ loading: false, error: result.error }); return; }
-            const connection = server.loadConnection();
-            this.setData({ serverUrl: connection.serverUrl, apiToken: '', connected: true, dirty: false, shareToken: '', inviteToken: '', memberName: connection.memberName });
-            server.syncLedger().then(() => this.onShow());
-          });
+    } finally {
+      if (this._invite === invite) {
+        this.setData({ inviteBusy: false });
+        if (!this.data.invitePreview) {
+          const error = this.data.inviteError;
+          this.cancelInvitation();
+          this.setData({ inviteError: error });
         }
-      });
-    });
+      }
+    }
   },
-  importOld() {
+  async confirmInvitation() {
+    const invite = this._invite;
+    if (!invite || !this.data.invitePreview || this.data.saving || this.data.inviteBusy) return false;
+    if (invite.expiresAt <= Date.now()) {
+      this.cancelInvitation();
+      this.setData({ inviteError: '这条邀请已过期，请联系邀请人重新生成。' });
+      return false;
+    }
+    if (!this.inviteStillCurrent(invite) || !this.inviteKeepsQueue(invite)) {
+      const changed = !this.inviteStillCurrent(invite);
+      this.cancelInvitation();
+      this.setData({ inviteError: changed ? '当前账本已变化，请重新预览邀请。' :
+        '当前账本还有待同步记录，请先完成同步再切换账本。' });
+      return false;
+    }
+    invite.redeeming = true;
+    this.setData({ inviteBusy: true });
+    let result;
+    try {
+      result = await server.redeemInvite(invite.serverUrl, invite.token, invite.previewId);
+    } catch (_) {
+      result = { ok: false, error: '无法兑换邀请，请稍后重试。' };
+    }
+    if (this._invite !== invite) return false;
+    this._invite = null;
+    this.cancelInvitation();
+    if (!result.ok) {
+      this.setData({ inviteError: result.error });
+      return false;
+    }
+    this.setData({ inviteOpen: false, inviteToken: '' });
+    this.reload(false);
+    await server.syncLedger();
+    return this._hidden ? true : this.onShow();
+  },
+  async importOld() {
+    if (this.data.inviteBusy || this.data.invitePreview || this.data.saving) return false;
     const result = store.importLegacy();
-    if (!result.ok) { this.setData({ error: result.error }); return; }
-    server.syncLedger().then(() => this.onShow());
+    if (!result.ok) { this.setData({ error: result.error }); return false; }
+    await server.syncLedger();
+    return this._hidden ? true : this.onShow();
   },
   reloadConflict() {
+    const account = store.accountKey();
+    const draft = this._draft;
+    const confirmation = {};
+    this._confirm = confirmation;
     wx.showModal({
       title: '重新读取设置？', content: '这会替换本页未保存的修改。', confirmText: '重新读取',
-      success: answer => { if (answer.confirm) this.loadFromServer(true); }
+      success: answer => {
+        if (answer.confirm && this._confirm === confirmation && account === store.accountKey() && draft === this._draft)
+          return this.loadFromServer({ discard: true });
+      }
     });
   },
   dropPending() {
+    if (this.data.inviteBusy || this.data.invitePreview || this.data.saving) return;
     const account = store.accountKey();
     const ids = store.load().queue.map(op => op.id);
     if (!ids.length) return;
+    const confirmation = {};
+    this._confirm = confirmation;
     wx.showModal({
       title: '丢弃未同步更改？',
       content: '将移除本机待同步的 ' + ids.length + ' 项更改，服务器账本会保留现有记录。',
       confirmText: '丢弃', confirmColor: '#BC3848',
       success: answer => {
-        if (!answer.confirm || account !== store.accountKey()) return;
+        if (!answer.confirm || this._confirm !== confirmation || account !== store.accountKey() ||
+            this.data.inviteBusy || this.data.invitePreview || this.data.saving) return;
         if (store.dropQueue(ids)) getApp().syncChanges();
         this.reload();
       }
     });
   },
-  disconnect() {
-    server.clearConnection();
-    this.setData({
-      connected: false,
-      shareToken: '',
-      isOwner: false,
-      memberName: '',
-      syncText: '',
-      legacyCount: 0,
-      syncBlocked: false,
-      showAdvanced: true,
-      loaded: false,
-      apiToken: '',
-      dirty: false,
-      loading: false,
-      saving: false,
-      serverPaused: false,
-      serverPauseUntil: null,
-      connectionText: '未连接服务器',
-      error: ''
-    });
-  },
   edit(patch) {
     const draft = Object.assign({}, this.data, patch);
+    this._draft = {};
+    if (this._save) Object.assign(this._save.edits, patch);
     this.setData(Object.assign({}, patch, {
       dirty: true,
       error: '',
+      fieldErrors: Object.keys(this.data.fieldErrors).length ? server.validateSettings(draft).fieldErrors : {},
       preview: previewFor(draft),
-      dayCount: (draft.activeDays || []).filter(Boolean).length
+      dayCount: draft.activeDays.filter(Boolean).length
     }));
+    if ('mobilePushEnabled' in patch || 'phoneMode' in patch) this.refreshWeChat();
   },
-  updateField(event) {
-    this.edit({ [event.currentTarget.dataset.key]: event.detail.value });
-  },
+  updateField(event) { this.edit({ [event.currentTarget.dataset.key]: event.detail.value }); },
   changePhoneMode(event) {
     const index = Number(event.detail.value);
     this.edit({ phoneModeIndex: index, phoneMode: PHONE_MODES[index] });
@@ -346,32 +420,46 @@ Page({
     days[index] = !days[index];
     this.edit({ activeDays: days });
   },
-  save() {
-    if (this.data.saving) return Promise.resolve(false);
-    if (!this.data.loaded) {
-      this.setData({ error: '请先连接服务器' });
-      return Promise.resolve(false);
-    }
+  async save() {
+    if (this.data.saving || this.data.loading || this.data.inviteBusy || this.data.invitePreview ||
+        !this.data.loaded || !this.data.dirty) return false;
     const checked = server.validateSettings(this.data);
     if (checked.error) {
-      this.setData({ error: checked.error });
-      wx.showToast({ title: '设置有误', icon: 'none' });
-      return Promise.resolve(false);
+      const first = FIELD_ORDER.find(field => checked.fieldErrors[field]);
+      this.setData({ fieldErrors: checked.fieldErrors, error: '' }, () => {
+        if (first && typeof wx.pageScrollTo === 'function') wx.pageScrollTo({ selector: '#field-' + first, duration: 200 });
+      });
+      return false;
     }
-    this.setData({ saving: true, error: '' });
-    return server.saveSettings(checked.update).then((result) => {
+    const save = { edits: {} };
+    this._save = save;
+    const account = store.accountKey();
+    this.setData({ saving: true, fieldErrors: {}, error: '' });
+    try {
+      const result = await server.saveSettings(checked.update);
+      if (account !== store.accountKey()) return false;
       if (!result.ok) {
-        this.setData({ saving: false, dirty: true, error: result.error, conflict: result.status === 409 });
-        wx.showToast({ title: '保存失败', icon: 'none' });
+        let error = result.error;
+        if (result.status === 401 || result.status === 403) {
+          const renewed = await server.signIn({ force: true });
+          if (account !== store.accountKey()) return false;
+          error = renewed.ok ? '连接已恢复，请再次保存。' : renewed.error;
+        }
+        this.setData({ dirty: true, error, conflict: result.status === 409 });
         return false;
       }
-      this.applyLoaded(result.settings);
+      const edits = Object.keys(save.edits).length ? save.edits : null;
+      this.applyLoaded(result.settings, edits);
       this.refreshWeChat();
-      wx.showToast({ title: '已保存', icon: 'success' });
+      wx.showToast({ title: edits ? '已保存，仍有新修改' : '已保存', icon: 'success' });
       return true;
-    }).catch(() => {
-      this.setData({ saving: false, dirty: true, error: '保存失败' });
+    } catch (_) {
+      if (account === store.accountKey()) this.setData({ error: '保存失败，请重试。' });
       return false;
-    });
+    } finally {
+      this._save = null;
+      this.setData({ saving: false });
+      if (account !== store.accountKey() && !this._hidden) this.onShow();
+    }
   }
 });

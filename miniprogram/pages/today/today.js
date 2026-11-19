@@ -4,7 +4,11 @@ const store = require('../../utils/storage.js');
 const calc = require('../../utils/calculator.js');
 const journal = require('../../utils/journal.js');
 const serverApi = require('../../utils/server.js');
-const wechat = require('../../utils/wechat.js');
+
+function notableSync(info) {
+  if (!info || !(info.blocked || info.error || info.pending)) return '';
+  return info.text || '';
+}
 
 function planHint(settings, model, plan, now) {
   const remaining = Math.max(0, settings.dailyGoalMl - calc.consumedMl(model));
@@ -23,9 +27,18 @@ Page({
     done: false, cupAmount: 0, cupLabel: '', paused: false, nextText: '', hasNext: false,
     planHint: '', recent: [], feedback: '', sipPulse: [], amountOpen: false, presets: [150, 250, 500]
   },
-  onShow() { this.reload(); wechat.prepare(); },
-  onHide() { this.resetTransient(); },
-  onUnload() { clearTimeout(this._feedbackTimer); },
+  onShow() {
+    this._alive = true;
+    this.reload();
+  },
+  onHide() {
+    this._alive = false;
+    this.resetTransient();
+  },
+  onUnload() {
+    this._alive = false;
+    clearTimeout(this._feedbackTimer);
+  },
   resetTransient() {
     clearTimeout(this._feedbackTimer);
     if (this.data.amountOpen || this.data.feedback) this.setData({ amountOpen: false, feedback: '', sipPulse: [] });
@@ -33,6 +46,13 @@ Page({
   reload() {
     const instant = new Date();
     const connection = serverApi.loadConnection();
+    if (!connection.configured && !this._signingIn) {
+      this._signingIn = true;
+      serverApi.signIn().then((result) => {
+        this._signingIn = false;
+        if (this._alive && result.ok) this.reload();
+      });
+    }
     const now = connection.configured ? store.shanghaiClock(instant) : instant;
     const snap = store.snapshot(instant);
     const settings = snap.state.settings;
@@ -63,7 +83,7 @@ Page({
       paused, hasNext, nextText, planHint: planHint(settings, snap.model, plan, now),
       recent: journal.entries(snap.model).slice(0, 2),
       identity: connection.memberName,
-      syncText: connection.configured ? store.syncInfo().text : '',
+      syncText: connection.configured ? notableSync(store.syncInfo()) : '',
       needsConnection: !connection.configured
     });
   },
@@ -83,11 +103,9 @@ Page({
   drinkCup() {
     const now = Date.now();
     if (!this.data.cupAmount || now - (this._lastCupAt || 0) < 350) return;
-    const subscription = wechat.capture();
     this._lastCupAt = now;
     const result = this.recordAmount(this.data.cupAmount, 'cup');
     if (!result.ok) wx.showToast({ title: result.error, icon: 'none' });
-    subscription.then(wechat.report);
   },
   customAmount() { this.setData({ amountOpen: true }); },
   addCustom(event) {

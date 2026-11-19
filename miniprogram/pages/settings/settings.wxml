@@ -1,13 +1,14 @@
 <template name="time-row">
-  <picker mode="time" value="{{value}}" data-key="{{field}}" bindchange="updateField" aria-label="{{label}}，{{value}}">
+  <picker id="field-{{field}}" mode="time" value="{{value}}" data-key="{{field}}" bindchange="updateField" aria-label="{{label}}，{{value}}">
     <view class="form-row {{last ? 'last' : ''}} {{inset ? 'nested' : ''}}">
       <text class="row-name">{{label}}</text>
       <view class="time-value numerals">{{value}}<view class="chevron"></view></view>
     </view>
   </picker>
+  <text wx:if="{{error}}" class="field-error">{{error}}</text>
 </template>
 <template name="minute-row">
-  <view class="form-row {{last ? 'last' : ''}}">
+  <view id="field-{{field}}" class="form-row {{last ? 'last' : ''}}">
     <text class="row-name">{{label}}</text>
     <view class="minute-control">
       <input type="number" maxlength="4" class="minute-input numerals" value="{{value}}" data-key="{{field}}"
@@ -15,6 +16,7 @@
       <text>分钟</text>
     </view>
   </view>
+  <text wx:if="{{error}}" class="field-error">{{error}}</text>
 </template>
 
 <view class="page">
@@ -23,53 +25,41 @@
       <text wx:if="{{loaded}}" class="eyebrow">每周 {{dayCount}} 天提醒</text>
       <text class="page-title">设置</text>
     </view>
-    <button wx:if="{{loaded && dirty}}" class="button link top-save" hover-class="press" disabled="{{saving}}" bindtap="save">保存</button>
   </view>
 
-  <view wx:if="{{isOwner}}" class="connection-actions">
-    <button wx:if="{{!shareToken}}" class="button link" bindtap="prepareShare">准备邀请</button>
-    <button wx:else class="button primary connect" open-type="share">邀请家人</button>
-  </view>
-  <text wx:if="{{shareToken}}" class="device-note">每份邀请仅供一人使用；受邀人的饮水记录可由你查看和设置。</text>
   <text wx:if="{{connected && memberName}}" class="device-note">当前账本 · {{memberName}}</text>
-  <text wx:if="{{connected && sharedWithOwner}}" class="device-note">邀请人可以查看你的记录和修改设置。</text>
-  <button wx:if="{{connected}}" class="button link" bindtap="toggleAdvanced">{{showAdvanced ? '收起连接设置' : '更换账本'}}</button>
-  <block wx:if="{{showAdvanced}}">
-  <view class="section-head"><text class="section-title">服务器</text></view>
-  <view class="surface form-group">
-    <view class="form-row stack">
-      <text class="row-name">地址</text>
-      <input class="server-input" value="{{serverUrl}}" data-key="serverUrl" bindinput="updateServer"
-        placeholder="https://你的域名" maxlength="300" aria-label="服务器地址" />
+  <text wx:if="{{!loaded || loading || signInFailed}}" class="device-note" aria-live="polite">{{connectionText}}</text>
+  <view wx:if="{{signInFailed}}" class="connection-actions">
+    <button class="button link" hover-class="press" disabled="{{loading || saving || inviteBusy || invitePreview}}" bindtap="retrySignIn">重试连接</button>
+  </view>
+
+  <view class="ledger-link">
+    <button class="button link ledger-toggle" bindtap="toggleInvitation"
+      disabled="{{inviteBusy && invitePreview}}" aria-expanded="{{inviteOpen}}">
+      <text>关联电脑账本</text><view class="chevron {{inviteOpen ? 'expanded' : ''}}"></view>
+    </button>
+  </view>
+  <view wx:if="{{inviteOpen}}" class="surface invite-card">
+    <input class="invite-input" value="{{inviteToken}}" placeholder="粘贴电脑上的邀请" maxlength="512"
+      disabled="{{inviteBusy}}" bindinput="updateInvite" aria-label="电脑邀请码或完整邀请文本" />
+    <view class="connection-actions">
+      <button class="button link" disabled="{{inviteBusy || saving}}" bindtap="previewInvitation">预览邀请</button>
+      <button class="button link" disabled="{{inviteBusy || saving}}" bindtap="scanInvite">扫码</button>
     </view>
-    <view class="form-row stack last">
-      <text class="row-name">API 令牌</text>
-      <input class="server-input" password value="{{apiToken}}" data-key="apiToken" bindinput="updateServer"
-        placeholder="{{connected ? '已保存在本机，留空则不修改' : '与桌面端 client.json 里的 apiToken 相同'}}" maxlength="2000" aria-label="API 令牌" />
+    <view wx:if="{{invitePreview}}" class="invite-preview">
+      <text class="row-name">{{invitePreview.memberName}}的饮水账本</text>
+      <text class="invite-detail">{{invitePreview.serverUrl}}</text>
+      <text class="invite-detail">邀请人可以查看饮水记录和修改提醒设置。</text>
+      <text wx:if="{{dirty}}" class="invite-detail">切换账本后，当前未保存的设置会丢弃。</text>
+      <view class="connection-actions">
+        <button class="button link" disabled="{{inviteBusy}}" bindtap="cancelInvitation">取消</button>
+        <button class="button primary" disabled="{{inviteBusy || saving}}" bindtap="confirmInvitation">确认加入</button>
+      </view>
     </view>
+    <text wx:if="{{inviteBusy}}" class="invite-detail" aria-live="polite">{{invitePreview ? '正在兑换邀请…' : '正在预览邀请…'}}</text>
+    <text wx:if="{{inviteError}}" class="field-error" aria-live="polite">{{inviteError}}</text>
   </view>
-  <view class="connection-actions">
-    <button class="button primary connect" hover-class="press" disabled="{{loading || saving}}" bindtap="connect">{{connected ? '重新读取' : '连接服务器'}}</button>
-    <button wx:if="{{connected}}" disabled="{{loading || saving}}" class="button link disconnect" hover-class="press" bindtap="disconnect">断开</button>
-  </view>
-  <text class="device-note">{{connectionText}}</text>
-  <view wx:if="{{pendingShare && !connected}}" class="device-note">
-    <text>收到家人邀请。请向邀请人确认上方的 HTTPS 地址，加入后对方可以查看记录和修改设置。</text>
-    <button class="button link" disabled="{{loading}}" bindtap="joinSharedAccount">微信登录并接受邀请</button>
-  </view>
-  <view class="section-head"><text class="section-title">加入家庭</text></view>
-  <view class="surface form-group">
-    <view class="form-row stack last">
-      <text class="row-name">邀请码</text>
-      <input class="server-input" value="{{inviteToken}}" bindinput="updateInvite" maxlength="300" placeholder="粘贴邀请码，或扫描电脑上的二维码" aria-label="邀请码" />
-    </view>
-  </view>
-  <view class="connection-actions">
-    <button class="button primary connect" hover-class="press" disabled="{{loading || saving}}" bindtap="redeem">加入家庭账本</button>
-    <button class="button link" hover-class="press" bindtap="scanInvite">扫码</button>
-  </view>
-  </block>
-  <text wx:if="{{connected && syncText && (showAdvanced || syncBlocked)}}" class="device-note">{{syncText}}</text>
+  <text wx:if="{{connected && syncText}}" class="device-note">{{syncText}}</text>
   <view wx:if="{{legacyCount || syncBlocked}}" class="connection-actions">
     <button wx:if="{{legacyCount}}" class="button link" hover-class="press" bindtap="importOld">手动导入本机旧记录（{{legacyCount}} 笔）</button>
     <button wx:if="{{syncBlocked}}" class="button link" hover-class="press" bindtap="dropPending">丢弃未同步更改</button>
@@ -82,58 +72,62 @@
         <text>每日饮水目标</text>
         <text class="edit-hint">轻点数值修改</text>
       </view>
-      <view class="goal-control">
+      <view id="field-dailyGoalMl" class="goal-control">
         <input class="goal-input numerals" type="number" maxlength="5" value="{{dailyGoalMl}}" data-key="dailyGoalMl"
           style="width: {{(dailyGoalMl.length || 1) + 0.25}}ch;" placeholder="0" bindinput="updateField" aria-label="每日饮水目标，单位毫升" />
         <text class="goal-unit">mL</text>
       </view>
+      <text wx:if="{{fieldErrors.dailyGoalMl}}" class="field-error">{{fieldErrors.dailyGoalMl}}</text>
       <view class="cups">
-        <view class="cup-field">
+        <view id="field-workCupCapacityMl" class="cup-field">
           <text class="cup-label">工作杯</text>
           <view class="cup-control">
             <input type="number" maxlength="4" value="{{workCupCapacityMl}}" data-key="workCupCapacityMl" bindinput="updateField" aria-label="工作杯容量，单位毫升" />
             <text>mL</text>
           </view>
+          <text wx:if="{{fieldErrors.workCupCapacityMl}}" class="field-error">{{fieldErrors.workCupCapacityMl}}</text>
         </view>
-        <view class="cup-field">
+        <view id="field-homeCupCapacityMl" class="cup-field">
           <text class="cup-label">家庭杯</text>
           <view class="cup-control">
             <input type="number" maxlength="4" value="{{homeCupCapacityMl}}" data-key="homeCupCapacityMl" bindinput="updateField" aria-label="家庭杯容量，单位毫升" />
             <text>mL</text>
           </view>
+          <text wx:if="{{fieldErrors.homeCupCapacityMl}}" class="field-error">{{fieldErrors.homeCupCapacityMl}}</text>
         </view>
       </view>
     </view>
 
     <view class="section-head"><text class="section-title">提醒时间</text></view>
     <view class="surface form-group">
-      <template is="time-row" data="{{field: 'workStart', label: '上班时间', value: workStart}}" />
-      <template is="time-row" data="{{field: 'workEnd', label: '下班时间', value: workEnd}}" />
+      <template is="time-row" data="{{field: 'workStart', label: '上班时间', value: workStart, error: fieldErrors.workStart}}" />
+      <template is="time-row" data="{{field: 'workEnd', label: '下班时间', value: workEnd, error: fieldErrors.workEnd}}" />
       <view class="form-row">
         <text class="row-name">午休免打扰</text>
         <switch checked="{{lunchEnabled}}" color="#3875DC" data-key="lunchEnabled" bindchange="updateField" aria-label="午休免打扰" />
       </view>
-      <view wx:if="{{lunchEnabled}}" class="arrive">
-        <template is="time-row" data="{{field: 'lunchStart', label: '午休开始', value: lunchStart, inset: true}}" />
-        <template is="time-row" data="{{field: 'lunchEnd', label: '午休结束', value: lunchEnd, inset: true}}" />
+      <view wx:if="{{lunchEnabled || fieldErrors.lunchStart || fieldErrors.lunchEnd}}" class="arrive">
+        <template is="time-row" data="{{field: 'lunchStart', label: '午休开始', value: lunchStart, inset: true, error: fieldErrors.lunchStart}}" />
+        <template is="time-row" data="{{field: 'lunchEnd', label: '午休结束', value: lunchEnd, inset: true, error: fieldErrors.lunchEnd}}" />
       </view>
-      <template is="time-row" data="{{field: 'quietStart', label: '晚间免打扰开始', value: quietStart, last: true}}" />
+      <template is="time-row" data="{{field: 'quietStart', label: '晚间免打扰开始', value: quietStart, last: true, error: fieldErrors.quietStart}}" />
     </view>
 
     <view class="section-head"><text class="section-title">提醒间隔</text></view>
     <view class="surface form-group">
-      <template is="minute-row" data="{{field: 'minReminderGapMinutes', label: '两次提醒至少相隔', value: minReminderGapMinutes}}" />
-      <template is="minute-row" data="{{field: 'noDrinkBeforeEndMinutes', label: '下班前停止提醒', value: noDrinkBeforeEndMinutes, last: true}}" />
+      <template is="minute-row" data="{{field: 'minReminderGapMinutes', label: '两次提醒至少相隔', value: minReminderGapMinutes, error: fieldErrors.minReminderGapMinutes}}" />
+      <template is="minute-row" data="{{field: 'noDrinkBeforeEndMinutes', label: '下班前停止提醒', value: noDrinkBeforeEndMinutes, last: true, error: fieldErrors.noDrinkBeforeEndMinutes}}" />
     </view>
 
     <view class="section-head"><text class="section-title">提醒日</text></view>
-    <view class="surface days-group">
+    <view id="field-activeDays" class="surface days-group">
       <view class="weekdays">
         <button wx:for="{{dayLabels}}" wx:key="*this" class="button weekday {{activeDays[index] ? 'on' : ''}}" hover-class="press"
           data-index="{{index}}" bindtap="onDay" aria-role="checkbox" aria-checked="{{activeDays[index]}}" aria-label="星期{{item}}">
           <text>{{item}}</text>
         </button>
       </view>
+      <text wx:if="{{fieldErrors.activeDays}}" class="field-error">{{fieldErrors.activeDays}}</text>
       <text wx:if="{{preview}}" class="schedule-preview">{{preview}}</text>
     </view>
 
@@ -146,14 +140,23 @@
       <picker wx:if="{{mobilePushEnabled}}" range="{{phoneModeLabels}}" value="{{phoneModeIndex}}" bindchange="changePhoneMode">
         <view class="form-row"><text class="row-name">提醒方式</text><text class="time-value">{{phoneModeLabels[phoneModeIndex]}}</text></view>
       </picker>
-      <view wx:if="{{mobilePushEnabled && phoneMode !== 'PushWard'}}" class="form-row last stack">
-        <text class="row-name">{{wechatText}}</text>
-        <button class="button link" hover-class="press" disabled="{{!wechatReady || dirty}}" bindtap="enableWeChat">授权一次提醒</button>
+      <view class="form-row stack">
+        <text class="row-name">微信提醒</text>
+        <text class="channel-note">{{wechatText}}</text>
+        <button wx:if="{{mobilePushEnabled && phoneMode !== 'PushWard' && wechatReady}}"
+          class="button link" hover-class="press" disabled="{{dirty || saving || inviteBusy}}" bindtap="enableWeChat">授权一次提醒</button>
+      </view>
+      <view class="form-row last stack">
+        <text class="row-name">PushWard</text>
+        <text class="channel-note">{{pushWardState === 'ready' ? '已配置' : pushWardState === 'unavailable' ? '当前账本未配置 PushWard。' : '配置状态未知。'}}</text>
       </view>
     </view>
     <text wx:if="{{mobilePushEnabled && phoneMode === 'Auto'}}" class="device-note">微信未绑定或订阅次数用完时，服务器使用本账本已配置的 PushWard。</text>
 
-    <button class="button primary save" hover-class="press" disabled="{{saving}}" bindtap="save">保存设置</button>
+    <text wx:if="{{mobilePushEnabled && phoneMode === 'PushWard' && pushWardState === 'unavailable'}}" class="field-error save-note"
+      aria-live="polite">当前设置收不到手机提醒。可选择其他提醒方式。</text>
+    <button class="button primary save" hover-class="press"
+      disabled="{{!dirty || loading || saving || inviteBusy || invitePreview}}" bindtap="save">{{saving ? '正在保存…' : '保存设置'}}</button>
   </block>
   <text wx:if="{{error}}" class="validation" aria-live="polite">{{error}}</text>
   <button wx:if="{{loaded && conflict}}" class="button link" disabled="{{loading || saving}}" bindtap="reloadConflict">重新读取服务器设置</button>

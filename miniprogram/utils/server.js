@@ -2,10 +2,16 @@
 
 const calc = require('./calculator.js');
 const store = require('./storage.js');
+const config = require('./config.js');
 
 const CONNECTION_KEY = 'water-reminder-server';
 const UNREADABLE = '设置内容无法识别。';
 let revision = 0;
+let connectionRevision = 0;
+let invitationRevision = 0;
+let previewedInvite = null;
+let joining = false;
+const switched = () => ({ ok: false, stale: true, error: '账本连接已变更，请重试' });
 
 function loadConnection() {
   let raw = {};
@@ -20,6 +26,8 @@ function loadConnection() {
   const memberId = typeof raw.memberId === 'string' ? raw.memberId : '';
   const needsConfirmation = store.needsConnectionConfirmation(raw);
   return { serverUrl, apiToken, memberName, memberId, sharedWithOwner: raw.sharedWithOwner === true,
+    ledgerUrl: raw.ledgerUrl || serverUrl, loginMethod: raw.loginMethod || (raw.sharedWithOwner === true ? 'invite' : ''),
+    bootstrapId: raw.bootstrapId || '', needsConfirmation,
     configured: !!(serverUrl && apiToken && !needsConfirmation) };
 }
 
@@ -49,21 +57,35 @@ function saveConnection(connection) {
   const checked = validateConnection(connection && connection.serverUrl, connection && connection.apiToken);
   if (checked.error) return checked;
   const current = loadConnection();
-  if (current.serverUrl !== checked.serverUrl || current.apiToken !== checked.apiToken) revision++;
+  const sameCredentials = current.serverUrl === checked.serverUrl && current.apiToken === checked.apiToken;
+  const sameLedger = sameCredentials && (!connection.memberId || !current.memberId || connection.memberId === current.memberId);
+  if (!sameLedger || !current.configured) {
+    if (current.configured) store.finishBootstrap(current);
+    revision++;
+    connectionRevision++;
+    if (previewedInvite) store.pauseBootstrap(false);
+  }
   wx.setStorageSync(CONNECTION_KEY, {
     confirmed: true,
     serverUrl: checked.serverUrl,
     apiToken: checked.apiToken,
-    memberId: connection.memberId || (current.serverUrl === checked.serverUrl && current.apiToken === checked.apiToken ? current.memberId : ''),
-    memberName: connection.memberName || (current.serverUrl === checked.serverUrl && current.apiToken === checked.apiToken ? current.memberName : ''),
+    ledgerUrl: connection.ledgerUrl || (sameLedger ? current.ledgerUrl : checked.serverUrl),
+    loginMethod: connection.loginMethod || (sameLedger ? current.loginMethod : ''),
+    bootstrapId: connection.bootstrapId || (sameLedger ? current.bootstrapId : ''),
+    memberId: connection.memberId || (sameLedger ? current.memberId : ''),
+    memberName: connection.memberName || (sameLedger ? current.memberName : ''),
     sharedWithOwner: typeof connection.sharedWithOwner === 'boolean' ? connection.sharedWithOwner :
-      (current.serverUrl === checked.serverUrl && current.apiToken === checked.apiToken && current.sharedWithOwner)
+      (sameLedger && current.sharedWithOwner)
   });
+  if (!connection.bootstrapId && !sameLedger) store.endBootstrap();
   return { error: '', serverUrl: checked.serverUrl };
 }
 
 function clearConnection() {
+  store.finishBootstrap(loadConnection());
   revision++;
+  connectionRevision++;
+  store.endBootstrap();
   try {
     if (typeof wx.removeStorageSync === 'function') wx.removeStorageSync(CONNECTION_KEY);
     else wx.setStorageSync(CONNECTION_KEY, {});
@@ -138,6 +160,7 @@ function fromResponse(data) {
     quietStart: clocks[4],
     minReminderGapMinutes: minReminderGapMinutes,
     mobilePushEnabled: !!data.mobilePushEnabled,
+    pushWardConfigured: typeof data.pushWardConfigured === 'boolean' ? data.pushWardConfigured : undefined,
     phoneMode: data.phoneMode || 'Auto',
     activeDays: data.activeDays.map(Boolean),
     remindersPaused: !!data.remindersPaused,
@@ -235,8 +258,20 @@ function validateSettings(data) {
   }
 
   const error = goalError || timeError || lunchError || noDrinkError || quietError || gapError || daysError || '';
+  const fieldErrors = {};
+  if (goal == null || goal < 100 || goal > 10000) fieldErrors.dailyGoalMl = '每日目标需为 100–10000 ml 的整数。';
+  if (workCup == null || workCup < 50 || workCup > 3000) fieldErrors.workCupCapacityMl = '工作杯容量需为 50–3000 ml 的整数。';
+  if (homeCup == null || homeCup < 50 || homeCup > 3000) fieldErrors.homeCupCapacityMl = '家庭杯容量需为 50–3000 ml 的整数。';
+  if (workStart == null) fieldErrors.workStart = timeError;
+  if (workEnd == null || (workStart != null && timeError)) fieldErrors.workEnd = timeError;
+  if (lunchStart == null || (lunchError && lunchStart < workStart)) fieldErrors.lunchStart = lunchError;
+  if (lunchEnd == null || (lunchStart != null && lunchError && (lunchEnd <= lunchStart || lunchEnd > workEnd))) fieldErrors.lunchEnd = lunchError;
+  if (noDrinkError) fieldErrors.noDrinkBeforeEndMinutes = noDrinkError;
+  if (quietError) fieldErrors.quietStart = quietError;
+  if (gapError) fieldErrors.minReminderGapMinutes = gapError;
+  if (daysError) fieldErrors.activeDays = daysError;
   if (data.settingsRevision) update.expectedRevision = data.settingsRevision;
-  return error ? { error: error } : { error: '', update: update };
+  return error ? { error, fieldErrors } : { error: '', update, fieldErrors };
 }
 
 function httpError(status, data) {
@@ -284,7 +319,7 @@ function interpret(result) {
 function getSettings(candidate) {
   const seen = revision;
   return request('GET', '/api/settings', undefined, candidate).then(interpret).then(function (result) {
-    if (result.ok) result.stale = seen !== revision;
+    result.stale = seen !== revision;
     return result;
   });
 }
@@ -326,30 +361,83 @@ function invitationRequest(serverUrl, path, inviteToken) {
   });
 }
 function previewInvite(serverUrl, inviteToken) {
-  return invitationRequest(serverUrl, '/api/invitations/preview', inviteToken);
+  const attempt = ++invitationRevision;
+  const seen = connectionRevision;
+  const preview = { serverUrl, inviteToken, seen };
+  previewedInvite = preview;
+  store.pauseBootstrap(true);
+  return invitationRequest(serverUrl, '/api/invitations/preview', inviteToken).then(result => {
+    if (attempt !== invitationRevision) return switched();
+    if (!result.ok || seen !== connectionRevision) cancelInvite();
+    else result.previewId = attempt;
+    return seen === connectionRevision ? result : switched();
+  });
 }
-function redeemInvite(serverUrl, inviteToken) {
+function cancelInvite(previewId) {
+  if (previewId !== undefined && previewId !== invitationRevision) return;
+  invitationRevision++;
+  previewedInvite = null;
+  store.pauseBootstrap(joining);
+}
+function redeemInvite(serverUrl, inviteToken, previewId) {
+  if (joining) return Promise.resolve(switched());
+  const preview = previewedInvite;
+  if (previewId !== undefined && (!preview || previewId !== invitationRevision)) return Promise.resolve(switched());
+  if (preview && (preview.seen !== connectionRevision || preview.serverUrl !== serverUrl ||
+      preview.inviteToken !== inviteToken)) return Promise.resolve(switched());
+  const attempt = ++invitationRevision;
+  const seen = connectionRevision;
+  joining = true;
+  store.pauseBootstrap(true);
   return invitationRequest(serverUrl, '/api/invitations/redeem', inviteToken).then(function (result) {
+    if (attempt !== invitationRevision || seen !== connectionRevision) return switched();
     if (!result.ok) return result;
     const data = result.data || {};
+    const member = data.member || {};
+    if (typeof member.id !== 'string' || !member.id || typeof member.name !== 'string')
+      return { ok: false, error: '邀请结果无法识别' };
+    const checked = validateConnection(data.serverUrl || serverUrl, data.accessCode);
+    if (checked.error) return { ok: false, error: checked.error };
+    const current = loadConnection();
+    const nextUrl = upgradedUrl(checked.serverUrl);
+    const sameMember = current.configured && current.memberId === member.id &&
+      upgradedUrl(current.serverUrl) === nextUrl;
+    if (sameMember) store.preserveSubscription(current);
     const saved = saveConnection({
-      serverUrl: data.serverUrl || serverUrl,
-      apiToken: data.accessCode,
-      memberId: data.member && data.member.id,
-      memberName: data.member && data.member.name
+      serverUrl: nextUrl,
+      apiToken: checked.apiToken,
+      memberId: member.id,
+      memberName: member.name,
+      ledgerUrl: sameMember ? current.ledgerUrl : nextUrl,
+      loginMethod: 'invite',
+      sharedWithOwner: true
     });
     return saved.error ? { ok: false, error: saved.error } : { ok: true, memberName: data.member && data.member.name };
+  }).finally(() => {
+    joining = false;
+    if (attempt === invitationRevision) cancelInvite();
+    else if (!previewedInvite) store.pauseBootstrap(false);
   });
 }
 let syncing = null;
-function syncLedger() {
+function syncLedger(options) {
   const connection = loadConnection();
   if (!connection.configured) return Promise.resolve({ ok: false, skipped: true });
-  if (syncing && syncing.apiToken === connection.apiToken && syncing.serverUrl === connection.serverUrl) return syncing.task;
-  const session = { apiToken: connection.apiToken, serverUrl: connection.serverUrl };
+  store.finishBootstrap(connection);
+  const full = !(options && options.operationsOnly) || !store.load().syncedAt;
+  const seen = connectionRevision;
+  if (syncing && syncing.seen === seen) {
+    if (full && !syncing.full) {
+      if (!syncing.refresh) syncing.refresh = syncing.task.then(() => active() ? syncLedger() : switched());
+      return syncing.refresh;
+    }
+    return syncing.task;
+  }
+  const session = { full, seen };
   function active() {
     const current = loadConnection();
-    return current.configured && current.serverUrl === connection.serverUrl && current.apiToken === connection.apiToken;
+    return seen === connectionRevision && current.configured &&
+      current.serverUrl === connection.serverUrl && current.apiToken === connection.apiToken;
   }
   syncing = session;
   session.task = runSession();
@@ -364,14 +452,43 @@ function syncLedger() {
   }
 
   async function sync() {
-    const result = await request('GET', '/api/sync/snapshot?days=31');
+    if (full) {
+      const result = await refreshSnapshot();
+      if (!result.ok) return result;
+    }
+    while (active()) {
+      const batch = store.load().queue.slice(0, 100);
+      if (!batch.length) return { ok: true };
+      const sent = await request('POST', '/api/sync/operations', { operations: batch }, connection);
+      if (!active()) return switched();
+      if (!sent.ok) {
+        store.syncFailure(sent.error, sent.status === 400 || sent.status === 409);
+        return sent;
+      }
+      const receipt = sent.data || {};
+      const ids = Array.isArray(receipt.results) ? receipt.results.map(item => item && item.id) : [];
+      if (ids.length !== batch.length || !batch.every(op => ids.includes(op.id)) || !Array.isArray(receipt.days) ||
+          !batch.every(op => receipt.days.some(day => day && day.date === op.date)) ||
+          !receipt.status || !Number.isInteger(receipt.status.goalMl)) {
+        const error = '同步回执不完整，请重试';
+        store.syncFailure(error, false);
+        return { ok: false, error };
+      }
+      store.applyRemote(receipt, ids);
+    }
+    return switched();
+  }
+
+  async function refreshSnapshot() {
+    const result = await request('GET', '/api/sync/snapshot?days=31', undefined, connection);
     if (!active()) return { ok: false, skipped: true };
     if (!result.ok) {
       store.syncFailure(result.error, store.load().blocked);
       return result;
     }
     const data = result.data || {};
-    if (!Array.isArray(data.days) || !data.status || !Number.isInteger(data.status.goalMl)) {
+    if (!Array.isArray(data.days) || !data.status || !Number.isInteger(data.status.goalMl) ||
+        (connection.memberId && data.memberId && connection.memberId !== data.memberId)) {
       const error = '无法读取账本快照';
       store.syncFailure(error, store.load().blocked);
       return { ok: false, error };
@@ -381,28 +498,7 @@ function syncLedger() {
       saveConnection({ serverUrl: current.serverUrl, apiToken: current.apiToken, memberId: data.memberId, memberName: data.memberName });
     }
     store.applyRemote({ days: data.days || [], status: data.status }, []);
-    while (active()) {
-      const batch = store.load().queue.slice(0, 100);
-      if (!batch.length) {
-        if (syncing === session) syncing = null;
-        return { ok: true };
-      }
-      const sent = await request('POST', '/api/sync/operations', { operations: batch });
-      if (!active()) return { ok: false, skipped: true };
-      if (!sent.ok) {
-        store.syncFailure(sent.error, sent.status === 400 || sent.status === 409);
-        return sent;
-      }
-      const ids = ((sent.data && sent.data.results) || []).map(function (item) { return item.id; });
-      if (ids.length !== batch.length || !batch.every(op => ids.includes(op.id)) || !Array.isArray(sent.data.days) ||
-          !batch.every(op => sent.data.days.some(day => day.date === op.date))) {
-        const error = '同步回执不完整，请重试';
-        store.syncFailure(error, false);
-        return { ok: false, error };
-      }
-      store.applyRemote(sent.data || {}, ids);
-    }
-    return { ok: false, skipped: true };
+    return { ok: true };
   }
 }
 function wechatStatus() {
@@ -414,32 +510,28 @@ function bindWeChat(code) {
 function reportSubscription(body) {
   return request('POST', '/api/wechat/subscription', body);
 }
-function createShare() {
-  return request('POST', '/api/family/share', {});
-}
-function loginWeChat(serverUrl, shareToken) {
+function requestWeChatLogin(serverUrl, active, expectedMemberId) {
   const checked = validateConnection(serverUrl, 'login');
   if (checked.error || !/^https:\/\//.test(checked.serverUrl || ''))
     return Promise.resolve({ ok: false, error: '暂时无法连接，请稍后重试。' });
-  if (typeof wx.login !== 'function') return Promise.resolve({ ok: false, error: '无法使用微信登录。' });
+  if (typeof wx.login !== 'function') return Promise.resolve({ ok: false, status: 503, error: '无法使用微信登录。' });
   return new Promise(function (resolve) {
     wx.login({
       success: function (login) {
+        if (!active()) return resolve(switched());
         if (!login || !login.code) return resolve({ ok: false, error: '微信登录失败，请重试。' });
         wx.request({
           url: checked.serverUrl + '/api/wechat/login', method: 'POST',
           header: { 'content-type': 'application/json' }, timeout: 15000,
-          data: { code: login.code, shareToken: shareToken || null },
+          data: { code: login.code, shareToken: null, ...(expectedMemberId ? { expectedMemberId } : {}) },
           success: function (res) {
             const data = res.data || {};
             if (res.statusCode < 200 || res.statusCode >= 300)
-              return resolve({ ok: false, error: httpError(res.statusCode, data) });
+              return resolve({ ok: false, status: res.statusCode, error: httpError(res.statusCode, data) });
             if (typeof data.accessCode !== 'string' || !/^wr_[0-9a-f]{64}$/.test(data.accessCode) ||
-                typeof data.memberId !== 'string' || typeof data.memberName !== 'string')
+                typeof data.memberId !== 'string' || !data.memberId || typeof data.memberName !== 'string')
               return resolve({ ok: false, error: '登录结果无法识别。' });
-            const saved = saveConnection({ serverUrl: checked.serverUrl, apiToken: data.accessCode,
-              memberId: data.memberId, memberName: data.memberName, sharedWithOwner: data.sharedWithOwner === true });
-            resolve(saved.error ? { ok: false, error: saved.error } : { ok: true });
+            resolve(loginResult(checked.serverUrl, data, 'wechat'));
           },
           fail: function () { resolve({ ok: false, error: '暂时无法连接，请稍后重试。' }); }
         });
@@ -447,6 +539,144 @@ function loginWeChat(serverUrl, shareToken) {
       fail: function () { resolve({ ok: false, error: '微信登录失败，请重试。' }); }
     });
   });
+}
+function loginResult(serverUrl, data, loginMethod) {
+  return { ok: true, connection: { serverUrl, apiToken: data.accessCode, loginMethod,
+    memberId: data.memberId, memberName: data.memberName, sharedWithOwner: data.sharedWithOwner === true } };
+}
+
+function commitLogin(result, extra) {
+  const saved = saveConnection(Object.assign({}, result.connection, extra));
+  if (saved.error) return { ok: false, error: saved.error };
+  store.finishBootstrap(loadConnection());
+  return { ok: true };
+}
+
+let signingIn = null;
+function deviceId() {
+  const key = 'water-device-id';
+  let id = '';
+  try { id = wx.getStorageSync(key) || ''; } catch (error) { id = ''; }
+  if (typeof id === 'string' && /^[0-9a-f]{64}$/.test(id)) return id;
+  const bytes = new Uint8Array(32);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) crypto.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  id = Array.from(bytes, function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+  wx.setStorageSync(key, id);
+  return id;
+}
+function loginDevice(serverUrl, expectedMemberId) {
+  const checked = validateConnection(serverUrl, 'login');
+  if (checked.error || !/^https:\/\//.test(checked.serverUrl || ''))
+    return Promise.resolve({ ok: false, error: '暂时无法连接，请稍后重试。' });
+  return new Promise(function (resolve) {
+    wx.request({
+      url: checked.serverUrl + '/api/device/login', method: 'POST',
+      header: { 'content-type': 'application/json' }, timeout: 15000,
+      data: { deviceId: deviceId(), ...(expectedMemberId ? { expectedMemberId } : {}) },
+      success: function (res) {
+        const data = res.data || {};
+        if (res.statusCode < 200 || res.statusCode >= 300)
+          return resolve({ ok: false, status: res.statusCode, error: httpError(res.statusCode, data) });
+        if (typeof data.accessCode !== 'string' || !/^wr_[0-9a-f]{64}$/.test(data.accessCode) ||
+            typeof data.memberId !== 'string' || !data.memberId || typeof data.memberName !== 'string')
+          return resolve({ ok: false, error: '登录结果无法识别。' });
+        resolve(loginResult(checked.serverUrl, data, 'device'));
+      },
+      fail: function () { resolve({ ok: false, error: '暂时无法连接，请稍后重试。' }); }
+    });
+  });
+}
+let checkedRevision = -1;
+function authFailure(status) {
+  return status === 401 || status === 403;
+}
+
+function upgradedUrl(serverUrl) {
+  const next = validateConnection(config.serverUrl, 'upgrade');
+  return /^https:\/\//.test(next.serverUrl || '') && next.serverUrl !== serverUrl &&
+    config.previousDefaultUrls.includes(serverUrl) ? next.serverUrl : serverUrl;
+}
+
+async function createAccount(active) {
+  const existing = store.bootstrap();
+  const current = validateConnection(config.serverUrl, 'login').serverUrl;
+  const base = existing ? upgradedUrl(existing.serverUrl) : current;
+  if (!current || !/^https:\/\//.test(current) || base !== current) {
+    store.pauseBootstrap(true);
+    return { ok: false, error: '暂时无法继续创建账本，待归账饮水已保留，请确认默认服务器地址后重试。' };
+  }
+  const method = existing ? existing.method : 'wechat';
+  const attempt = store.beginBootstrap(base, method);
+  let result = method === 'device' ? await loginDevice(base) : await requestWeChatLogin(base, active);
+  if (!active()) return switched();
+  if (method === 'wechat' && (authFailure(result.status) || result.status === 404 || result.status === 503)) {
+    store.beginBootstrap(base, 'device');
+    result = await loginDevice(base);
+  }
+  if (!active()) return switched();
+  if (!result.ok) return result;
+  if (result.connection.sharedWithOwner)
+    return commitLogin(result, { loginMethod: 'invite' });
+  return commitLogin(result, { bootstrapId: attempt.id });
+}
+
+async function checkConnection(existing, active) {
+  const checked = await getSettings(existing);
+  if (!active()) return switched();
+  if (checked.ok) return { ok: true };
+  if (!authFailure(checked.status)) return checked;
+  if (existing.loginMethod === 'invite')
+    return Object.assign({}, checked, { error: '邀请连接已失效，请联系家人重新领取邀请' });
+  if (!existing.memberId) return checked;
+  const trustedDefault = existing.serverUrl === config.serverUrl || config.previousDefaultUrls.includes(existing.serverUrl);
+  const legacy = !existing.loginMethod && trustedDefault && /^wr_[0-9a-f]{64}$/.test(existing.apiToken);
+  if (!legacy && existing.loginMethod !== 'device' && existing.loginMethod !== 'wechat')
+    return Object.assign({}, checked, { error: '连接凭据已失效，请重新连接；如通过邀请加入，请重新领取邀请' });
+  const hasDeviceId = /^[0-9a-f]{64}$/.test(wx.getStorageSync('water-device-id') || '');
+  if (existing.loginMethod === 'device' && !hasDeviceId) return checked;
+  const expectedMemberId = existing.memberId;
+  let result = existing.loginMethod === 'device'
+    ? await loginDevice(existing.serverUrl, expectedMemberId)
+    : await requestWeChatLogin(existing.serverUrl, active, expectedMemberId);
+  if (!active()) return switched();
+  if (legacy && hasDeviceId && (!result.ok || result.connection.memberId !== expectedMemberId))
+    result = await loginDevice(existing.serverUrl, expectedMemberId);
+  if (!active()) return switched();
+  if (!result.ok || result.connection.memberId !== expectedMemberId) return checked;
+  store.preserveSubscription(existing);
+  return commitLogin(result, { ledgerUrl: existing.ledgerUrl, bootstrapId: existing.bootstrapId });
+}
+
+function signIn(options) {
+  if (signingIn) return signingIn;
+  let existing = loadConnection();
+  const previewing = previewedInvite && previewedInvite.seen === connectionRevision;
+  store.pauseBootstrap(joining || !!previewing);
+  if (joining || (!existing.configured && previewing))
+    return Promise.resolve(switched());
+  if (!existing.configured && (existing.serverUrl || existing.apiToken)) {
+    return Promise.resolve({ ok: false, error: '请确认服务器连接或使用邀请加入账本' });
+  }
+  if (existing.configured) {
+    const next = upgradedUrl(existing.serverUrl);
+    if (next !== existing.serverUrl) {
+      store.preserveSubscription(existing);
+      saveConnection(Object.assign({}, existing, { serverUrl: next }));
+      existing = loadConnection();
+    }
+    store.finishBootstrap(existing);
+    if (checkedRevision === connectionRevision && !(options && options.force)) return Promise.resolve({ ok: true });
+  }
+  const seen = connectionRevision;
+  const intent = invitationRevision;
+  const active = () => seen === connectionRevision && intent === invitationRevision && !joining;
+  const task = (existing.configured ? checkConnection(existing, active) : createAccount(active)).then(result => {
+    if (result.ok) checkedRevision = connectionRevision;
+    return result;
+  });
+  signingIn = task.finally(function () { signingIn = null; });
+  return signingIn;
 }
 function refreshCachedSettings() {
   if (!loadConnection().configured) return Promise.resolve(false);
@@ -464,17 +694,18 @@ module.exports = {
   clearConnection: clearConnection,
   connectionLabel: connectionLabel,
   validateSettings: validateSettings,
+  fromResponse: fromResponse,
   toLocal: toLocal,
   getSettings: getSettings,
   saveSettings: saveSettings,
   refreshCachedSettings: refreshCachedSettings,
   parseInvite: parseInvite,
   previewInvite: previewInvite,
+  cancelInvite: cancelInvite,
   redeemInvite: redeemInvite,
   syncLedger: syncLedger,
   wechatStatus: wechatStatus,
   bindWeChat: bindWeChat,
   reportSubscription: reportSubscription,
-  createShare: createShare,
-  loginWeChat: loginWeChat
+  signIn: signIn
 };

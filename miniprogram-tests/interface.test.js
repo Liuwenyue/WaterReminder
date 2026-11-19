@@ -56,6 +56,9 @@ beforeEach(() => {
   app.globalData.openTodayRecords = false;
   tabVisible = true;
   modal = null;
+  delete wx.login;
+  delete wx.scanCode;
+  delete wx.pageScrollTo;
 });
 
 test('one tap updates the amount, progress and recent entry; a rapid second tap is ignored', () => {
@@ -75,34 +78,44 @@ test('one tap updates the amount, progress and recent entry; a rapid second tap 
   assert.equal(today.data.feedback, '');
 });
 
-test('opening the app or a family share never silently creates a separate account', () => {
-  wx.login = () => assert.fail('unexpected WeChat login');
-  requestHandler = () => assert.fail('unexpected server request');
-  app.onShow({});
+test('opening the app creates a personal ledger without asking for a server or token', async () => {
+  wx.login = options => options.success({ code: 'login-code-ok' });
+  requestHandler = options => {
+    if (String(options.url).endsWith('/api/wechat/login')) {
+      assert.equal(options.data.shareToken, null);
+      options.success({ statusCode: 200, data: {
+        accessCode: 'wr_' + 'ab'.repeat(32),
+        memberId: '11111111-1111-1111-1111-111111111111',
+        memberName: '成员abc123',
+        sharedWithOwner: false
+      }});
+      return;
+    }
+    options.success({ statusCode: 200, data: {} });
+  };
+  await app.onShow({});
+  const api = require('../miniprogram/utils/server.js');
+  assert.equal(api.loadConnection().configured, true);
+  assert.equal(api.loadConnection().memberName, '成员abc123');
+  assert.equal(api.loadConnection().serverUrl, 'https://wednesday-holly-warcraft-beef.trycloudflare.com');
   const settings = mount(settingsPage);
-  settings.onShow();
-  assert.equal(settings.data.showAdvanced, true);
-  app.onShow({ query: { share: 'test-share' } });
-  settings.onShow();
-  assert.equal(settings.data.pendingShare, true);
-  assert.equal(settings.data.connected, false);
-  app.globalData.pendingShare = '';
+  assert.equal(settings.data.apiToken, undefined);
   delete wx.login;
 });
 
-test('changing server requires a fresh token and a successful settings read', async () => {
-  const api = require('../miniprogram/utils/server.js');
-  api.saveConnection({ serverUrl: 'https://first.example.com', apiToken: 'first-token' });
-  const page = mount(settingsPage, { serverUrl: 'https://second.example.com' });
-  requestHandler = () => assert.fail('old credential sent to new server');
-  assert.equal(await page.connect(), false);
-  page.data.apiToken = 'second-token';
-  requestHandler = options => {
-    assert.equal(options.header.Authorization, 'Bearer second-token');
-    options.success({ statusCode: 401 });
-  };
-  assert.equal(await page.connect(), false);
-  assert.equal(api.loadConnection().serverUrl, 'https://first.example.com');
+
+test('settings template has one save action and only desktop invitation controls', () => {
+  const template = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '../miniprogram/pages/settings/settings.wxml'), 'utf8');
+  assert.equal([...template.matchAll(/bindtap="save"/g)].length, 1);
+  assert.match(template, /bindtap="scanInvite"/);
+  assert.match(template, /bindtap="confirmInvitation"/);
+  assert.match(template, /关联电脑账本/);
+  assert.match(template, /wx:if="{{inviteOpen}}" class="surface invite-card"/);
+  assert.match(template, /disabled="{{inviteBusy}}" bindtap="cancelInvitation"/);
+  assert.match(template, /当前设置收不到手机提醒/);
+  assert.equal(mount(settingsPage).data.inviteOpen, false);
+  assert.doesNotMatch(template, /apiToken|open-type="share"|bindtap="connect"/);
 });
 
 test('custom entry validates, persists once and releases the reminder and tab bar on dismissal', () => {
@@ -198,6 +211,7 @@ test('settings read and write the server configuration without sending the token
   const requests = [];
   let remote = serverSettings();
   requestHandler = options => {
+    if (options.url.endsWith('/api/wechat')) return options.fail();
     requests.push({
       url: options.url,
       method: options.method || 'GET',
@@ -223,8 +237,11 @@ test('settings read and write the server configuration without sending the token
   assert.equal(store.load().settings.remindersPaused, true);
 
   settings.updateField(control('dailyGoalMl', '0'));
+  const scrolls = [];
+  wx.pageScrollTo = options => scrolls.push(options.selector);
   assert.equal(await settings.save(), false);
-  assert.match(settings.data.error, /100–10000/);
+  assert.match(settings.data.fieldErrors.dailyGoalMl, /100–10000/);
+  assert.deepEqual(scrolls, ['#field-dailyGoalMl']);
   assert.equal(requests.filter(item => item.method === 'PUT').length, 0);
   assert.equal(remote.dailyGoalMl, 2500);
 
@@ -240,13 +257,13 @@ test('settings read and write the server configuration without sending the token
   assert.equal(settings.data.dayCount, 0);
   assert.match(settings.data.preview, /未选择提醒日/);
   assert.equal(await settings.save(), false);
-  assert.match(settings.data.error, /至少选择一天/);
+  assert.match(settings.data.fieldErrors.activeDays, /至少选择一天/);
   settings.onDay({ currentTarget: { dataset: { index: 6 } } });
   assert.equal(settings.data.dayCount, 1);
   assert.match(settings.data.preview, /首次约在/);
   assert.equal(await settings.save(), true);
   assert.equal(settings.data.dirty, false);
-  assert.equal(settings.data.apiToken, '');
+  assert.equal(settings.data.apiToken, undefined);
   const put = requests.at(-1);
   assert.equal(put.method, 'PUT');
   assert.equal(put.authorization, 'Bearer desktop-api-token');
@@ -270,9 +287,7 @@ test('settings read and write the server configuration without sending the token
   assert.equal(JSON.stringify(wx.getStorageSync('water-reminder-v1') || {}).includes('desktop-api-token'), false);
   assert.equal(JSON.stringify(store.load()).includes('desktop-api-token'), false);
 
-  settings.disconnect();
-  assert.equal(serverApi.loadConnection().configured, false);
-  assert.equal(settings.data.loaded, false);
+  assert.equal(serverApi.loadConnection().configured, true);
 });
 
 test('a rejected server save keeps the draft and the previous server values', async () => {
@@ -292,6 +307,156 @@ test('a rejected server save keeps the draft and the previous server values', as
   assert.match(settings.data.error, /100–10000/);
   assert.equal(store.load().settings.dailyGoalMl, 2500);
   assert.equal(remote.dailyGoalMl, 2500);
+});
+
+test('an in-flight PUT keeps new edits and advances the draft revision', async () => {
+  const api = require('../miniprogram/utils/server.js');
+  api.saveConnection({ serverUrl: 'https://cup.example', apiToken: 'one', memberId: 'member' });
+  const page = mount(settingsPage);
+  const writes = [];
+  requestHandler = options => {
+    if (options.url.endsWith('/api/wechat')) return options.fail();
+    if (options.method === 'PUT') { writes.push(options); return; }
+    options.success({ statusCode: 200, data: serverSettings({ revision: 'r1' }) });
+  };
+  await page.onShow();
+  page.updateField(control('dailyGoalMl', '1800'));
+  const first = page.save();
+  page.updateField(control('dailyGoalMl', '1900'));
+  assert.equal(await page.save(), false);
+  assert.equal(writes.length, 1);
+  writes[0].success({ statusCode: 200, data: serverSettings({ dailyGoalMl: 1800, workCupMl: 400, revision: 'r2' }) });
+  assert.equal(await first, true);
+  assert.equal(page.data.dailyGoalMl, '1900');
+  assert.equal(page.data.workCupCapacityMl, '400');
+  assert.equal(page.data.dirty, true);
+  const second = page.save();
+  assert.equal(writes[1].data.expectedRevision, 'r2');
+  assert.equal(writes[1].data.dailyGoalMl, 1900);
+  writes[1].success({ statusCode: 200, data: serverSettings({ dailyGoalMl: 1900, revision: 'r3' }) });
+  assert.equal(await second, true);
+  assert.equal(page.data.dirty, false);
+});
+
+test('settings 401 uses force renewal and keeps an expired invite ledger and queue', async () => {
+  const api = require('../miniprogram/utils/server.js');
+  api.saveConnection({ serverUrl: 'https://cup.example', apiToken: 'one', memberId: 'member', loginMethod: 'invite' });
+  store.applyRemote({ status: { goalMl: 2000 } }, []);
+  const page = mount(settingsPage);
+  let denied = false;
+  let requests = 0;
+  requestHandler = options => {
+    if (options.url.endsWith('/api/wechat')) return options.fail();
+    assert.ok(options.url.endsWith('/api/settings'));
+    requests++;
+    options.success({ statusCode: denied ? 401 : 200, data: serverSettings() });
+  };
+  assert.equal(await page.onShow(), true);
+  assert.equal(page.data.syncText, '');
+  assert.equal((await api.signIn()).ok, true);
+  denied = true;
+  store.addEvent(100, 'cup');
+  const original = store.load().queue;
+  const before = requests;
+  assert.equal(await page.onShow(), false);
+  assert.equal(requests - before, 2);
+  assert.match(page.data.connectionText, /重新领取邀请/);
+  assert.match(page.data.syncText, /待同步/);
+  assert.equal(api.loadConnection().memberId, 'member');
+  assert.deepEqual(store.load().queue, original);
+});
+
+test('desktop invite scans and pastes through preview, and only confirms the current queue-safe target', async () => {
+  const api = require('../miniprogram/utils/server.js');
+  const url = 'https://cup.example';
+  api.saveConnection({ serverUrl: url, apiToken: 'original', memberId: 'old' });
+  const page = mount(settingsPage);
+  const pasted = 'wi_' + 'a'.repeat(64);
+  let member = 'new';
+  let expiresAt;
+  let redeem;
+  requestHandler = options => {
+    if (options.url.endsWith('/preview')) {
+      return options.success({ statusCode: 200, data: { member: { id: member, name: '成员 ' + member }, serverUrl: url, expiresAt } });
+    }
+    if (options.url.endsWith('/redeem')) { redeem = options; return; }
+    options.fail();
+  };
+  page.toggleInvitation();
+  assert.equal(page.data.inviteOpen, true);
+  page.updateInvite(control('', pasted));
+  expiresAt = '2000-01-01T00:00:00Z';
+  assert.equal(await page.previewInvitation(), true);
+  assert.equal(await page.confirmInvitation(), false);
+  assert.match(page.data.inviteError, /过期/);
+  assert.equal(redeem, undefined);
+
+  expiresAt = undefined;
+  assert.equal(await page.previewInvitation(), true);
+  store.addEvent(200, 'cup');
+  assert.equal(await page.confirmInvitation(), false);
+  assert.match(page.data.inviteError, /待同步/);
+  assert.equal(redeem, undefined);
+  const queue = store.load().queue;
+  member = 'old';
+  wx.scanCode = options => options.success({ result: 'waterreminder|' + url + '|' + pasted });
+  page.scanInvite();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.data.invitePreview.memberName, '成员 old');
+  page.toggleInvitation();
+  assert.equal(page.data.invitePreview, null);
+  assert.equal(await page.confirmInvitation(), false);
+  page.toggleInvitation();
+  assert.equal(await page.previewInvitation(), true);
+  const redeemed = page.confirmInvitation();
+  page.cancelInvitation();
+  page.toggleInvitation();
+  assert.equal(page.data.inviteBusy, true);
+  page.onHide();
+  redeem.success({ statusCode: 200, data: { member: { id: 'old', name: '成员 old' }, accessCode: 'renewed' } });
+  assert.equal(await redeemed, true);
+  assert.equal(page.data.inviteOpen, false);
+  assert.equal(api.loadConnection().apiToken, 'renewed');
+  assert.deepEqual(store.load().queue, queue);
+});
+
+test('reminder capabilities distinguish unknown, unconfigured, zero credits and permission to send', async () => {
+  const api = require('../miniprogram/utils/server.js');
+  api.saveConnection({ serverUrl: 'https://cup.example', apiToken: 'one', memberId: 'member' });
+  const page = mount(settingsPage);
+  let failStatus = true;
+  let credits = 0;
+  let remote = serverSettings({ mobilePushEnabled: false });
+  requestHandler = options => {
+    if (options.url.endsWith('/api/wechat')) {
+      if (failStatus) return options.fail();
+      return options.success({ statusCode: 200, data: { enabled: true, bound: true, templateId: 'template', credits } });
+    }
+    if (options.method === 'PUT') remote = { ...remote, ...options.data };
+    options.success({ statusCode: 200, data: remote });
+  };
+  await page.onShow();
+  await page.refreshWeChat();
+  assert.equal(page.data.pushWardState, 'unknown');
+  assert.equal(page.data.wechatState, 'unknown');
+  failStatus = false;
+  page.updateField(control('mobilePushEnabled', true));
+  page.changePhoneMode({ detail: { value: 2 } });
+  await page.refreshWeChat();
+  assert.equal(page.data.wechatReady, true);
+  assert.equal(page.data.wechatState, 'unavailable');
+  assert.match(page.data.wechatText, /0 次，可授权/);
+  remote.pushWardConfigured = false;
+  assert.equal(await page.save(), true);
+  assert.equal(page.data.pushWardState, 'unavailable');
+  page.changePhoneMode({ detail: { value: 1 } });
+  assert.equal(await page.save(), true);
+  credits = 2;
+  remote.pushWardConfigured = true;
+  await page.onShow();
+  await page.refreshWeChat();
+  assert.equal(page.data.wechatState, 'ready');
+  assert.equal(page.data.pushWardState, 'ready');
 });
 
 test('discard confirmation shows the count and cannot clear another account', () => {

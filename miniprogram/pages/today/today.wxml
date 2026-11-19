@@ -9,10 +9,7 @@
   </view>
 
   <text wx:if="{{identity || syncText}}" class="sync-note">{{identity}}{{identity && syncText ? ' · ' : ''}}{{syncText}}</text>
-  <view wx:if="{{needsConnection}}" class="sync-note">
-    <text>当前记录仅保存在本机</text>
-    <button class="button link" bindtap="openSettings">连接账本</button>
-  </view>
+  <text wx:if="{{needsConnection}}" class="sync-note">正在建立你的账本，记下的水会在登录后同步。</text>
   <view class="tide arrive">
     <image class="tide-art" src="/assets/tide.jpg" mode="aspectFill" aria-hidden="true" />
     <view class="tide-shade"></view>

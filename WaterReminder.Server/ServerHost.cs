@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -46,7 +47,7 @@ public static class ServerHost
         {
             if (context.Request.Path.StartsWithSegments("/health") ||
                 context.Request.Path == "/api/invitations/preview" || context.Request.Path == "/api/invitations/redeem" ||
-                context.Request.Path == "/api/wechat/login")
+                context.Request.Path == "/api/wechat/login" || context.Request.Path == "/api/device/login")
             {
                 await next();
                 return;
@@ -242,6 +243,17 @@ public static class ServerHost
             var e = CurrentEngine(context);
             e.TryClearToday();
             return Results.Ok(e.TodayRecords());
+        });
+
+        app.MapDelete("/api/records/today", (HttpContext context) =>
+        {
+            if (!DateOnly.TryParseExact(context.Request.Query["date"].ToString(), "yyyy-MM-dd",
+                    CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+                return Results.BadRequest(new { error = "请提供有效的账本日期。" });
+            var cleared = CurrentEngine(context).ClearToday(date);
+            return cleared is null
+                ? Results.Conflict(new { error = "账本日期已变更，请查看今日记录后重新确认清空。" })
+                : Results.Ok(cleared);
         });
 
 

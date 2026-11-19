@@ -169,6 +169,7 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
             QuietStart = Clock(_settings.QuietStart),
             MinReminderGapMinutes = _settings.MinReminderGapMinutes,
             MobilePushEnabled = _settings.MobilePushEnabled,
+            PushWardConfigured = _push.IsConfigured,
             PhoneMode = _settings.PhoneMode,
             ActiveDays = (bool[])_settings.ActiveDays.Clone(),
         };
@@ -315,6 +316,18 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
             EnsureActiveLocked();
             RefreshLocked();
             return _progress.ClearToday();
+        }
+    }
+
+    public TodayRecordsResponse? ClearToday(DateOnly expectedDate)
+    {
+        lock (_gate)
+        {
+            EnsureActiveLocked();
+            var now = RefreshLocked();
+            if (DateOnly.FromDateTime(now) != expectedDate) return null;
+            _progress.ClearLoadedDay();
+            return MapRecords(_progress.Today, editable: true);
         }
     }
 
@@ -674,7 +687,7 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
         ReloadSettingsLocked();
         var now = _clock();
         if (!_retired) ExpirePauseLocked(now);
-        _progress.Reload();
+        _progress.Reload(now);
         if (!_retired) _progress.SaveGoalSnapshot(_settings.DailyGoalMl);
         if (_progress.Today.RemindersPausedOverride is { } paused)
         {

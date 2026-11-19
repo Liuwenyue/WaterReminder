@@ -67,13 +67,14 @@ public sealed class RecordAdjustTests
     public async Task RecordsApi_EditsDeletesAndClears_WithoutLeakingSecrets()
     {
         var dir = TempDir();
+        var now = Tuesday;
         WebApplication? app = null;
         try
         {
             var engine = new ReminderEngine(new ReminderEngineOptions
             {
                 DataDirectory = dir,
-                Clock = () => Tuesday,
+                Clock = () => now,
                 PushWardToken = () => "hlk_file_token",
                 PollAnswers = false,
             });
@@ -127,6 +128,22 @@ public sealed class RecordAdjustTests
             Assert.Equal(0, deleted.Value!.ConsumedMl);
             Assert.Equal(-200, Assert.Single(deleted.Value.Events).AmountMl);
 
+            now = now.AddDays(1);
+            Assert.True((await client.LogAmountAsync(400)).Ok);
+
+            var stale = await client.ClearTodayForDateAsync(records.Value.Date);
+            Assert.Equal(409, stale.StatusCode);
+            Assert.Equal(400, (await client.GetRecordsAsync()).Value!.ConsumedMl);
+            Assert.Equal(-200, Assert.Single((await client.GetRecordsAsync(records.Value.Date)).Value!.Events).AmountMl);
+
+            var today = (await client.GetRecordsAsync()).Value!;
+            Assert.Equal(400, (await client.ClearTodayForDateAsync("invalid")).StatusCode);
+            var confirmed = await client.ClearTodayForDateAsync(today.Date);
+            Assert.True(confirmed.Ok);
+            Assert.Equal(today.Date, confirmed.Value!.Date);
+            Assert.Empty(confirmed.Value.Events);
+
+            Assert.True((await client.LogAmountAsync(200)).Ok);
             var cleared = await client.ClearTodayAsync();
             Assert.True(cleared.Ok);
             Assert.Empty(cleared.Value!.Events);
