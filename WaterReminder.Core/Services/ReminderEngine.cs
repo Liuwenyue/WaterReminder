@@ -20,7 +20,7 @@ public sealed class ReminderEngineOptions
 /// Headless reminder loop: Shanghai schedule, PushWard in every reminder window,
 /// desktop alerts for the Windows client, and one-tap phone recording.
 /// </summary>
-public sealed class ReminderEngine : IDisposable, IPushWardReplies
+public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
 {
     public static readonly TimeSpan DesktopAlertLifetime = TimeSpan.FromMinutes(15);
 
@@ -218,10 +218,12 @@ public sealed class ReminderEngine : IDisposable, IPushWardReplies
                     {
                         Date = r.Date,
                         ConsumedMl = consumed,
-                        GoalMl = _settings.DailyGoalMl,
+                        GoalMl = (r.Date == _progress.Today.Date ? _progress.Today : r).GoalSnapshotMl ?? 0,
+                        GoalKnown = (r.Date == _progress.Today.Date ? _progress.Today : r).GoalSnapshotMl.HasValue,
                         EventCount = events.Count,
                     };
                 })
+                .Where(x => x.EventCount > 0)
                 .OrderByDescending(x => x.Date)
                 .ToList();
             return new HistoryResponse { Days = daysList };
@@ -298,7 +300,9 @@ public sealed class ReminderEngine : IDisposable, IPushWardReplies
         {
             Date = record.Date,
             ConsumedMl = record.ConsumedMl,
-            GoalMl = _settings.DailyGoalMl,
+            GoalMl = record.GoalSnapshotMl ?? 0,
+            GoalKnown = record.GoalSnapshotMl.HasValue,
+            RemindersPaused = editable && _settings.RemindersPaused,
             Editable = editable,
             Events = record.Events
                 .OrderBy(x => x.At)
@@ -392,7 +396,7 @@ public sealed class ReminderEngine : IDisposable, IPushWardReplies
                     _ = _push.PublishAsync(confirmation with { Payload = confirmation.Payload with
                     {
                         Body = message,
-                        Title = answer.ActionId.StartsWith("drink", StringComparison.Ordinal) ? "喝水记录" : "饮水总量"
+                        Title = answer.ActionId.StartsWith("test-ack-", StringComparison.Ordinal) ? "连接测试" : answer.ActionId.StartsWith("drink", StringComparison.Ordinal) ? "喝水记录" : "饮水总量"
                     } }, _retirement.Token);
                 }
             }
@@ -403,6 +407,8 @@ public sealed class ReminderEngine : IDisposable, IPushWardReplies
 
     private string? ApplyPhoneReplyLocked(DateTime now, DateOnly day, string tokenHash, PushWardAnswerItem answer, string? expectedAction)
     {
+        if (answer.ActionId.StartsWith("test-ack-", StringComparison.Ordinal))
+            return ApplySafeTestReply(now, answer, expectedAction);
         var exact = expectedAction is not null && expectedAction.StartsWith("drink-", StringComparison.Ordinal)
             && string.Equals(answer.ActionId, expectedAction, StringComparison.Ordinal);
         var drink = exact || (expectedAction is null or PushWardMessageBuilder.DrinkActionId
@@ -449,6 +455,7 @@ public sealed class ReminderEngine : IDisposable, IPushWardReplies
         lock (_gate)
         {
             EnsureActiveLocked();
+            RefreshLocked();
             var fresh = _storage.LoadSettings();
             var fileToken = string.IsNullOrWhiteSpace(pushWardToken) ? fresh.PushWardApiToken : pushWardToken.Trim();
             if (!SettingsEditor.TryApply(fresh, update, out error)) return false;
@@ -457,6 +464,12 @@ public sealed class ReminderEngine : IDisposable, IPushWardReplies
             ApplyOverlay(fresh);
             var tokenChanged = fresh.PushWardApiToken != _settings.PushWardApiToken;
             Copy(fresh, _settings);
+            if (_progress.Today.RemindersPausedOverride.HasValue)
+            {
+                _progress.Today.RemindersPausedOverride = null;
+                _storage.SaveDailyRecord(_progress.Today);
+            }
+            _progress.SaveGoalSnapshot(_settings.DailyGoalMl);
             _progress.SettingsChanged();
             if (tokenChanged) _push.Stop();
             EnsureAnswerLoopLocked();
@@ -537,6 +550,12 @@ public sealed class ReminderEngine : IDisposable, IPushWardReplies
         var now = _clock();
         if (!_retired) ExpirePauseLocked(now);
         _progress.Reload();
+        if (!_retired) _progress.SaveGoalSnapshot(_settings.DailyGoalMl);
+        if (_progress.Today.RemindersPausedOverride is { } paused)
+        {
+            _settings.RemindersPaused = paused;
+            _settings.PauseUntil = paused ? now.Date.AddDays(1) : null;
+        }
         EnsureAnswerLoopLocked();
         var show = WaterCalculator.ShouldShowDesktop(_settings, now);
         if (!show || (_pendingDesktop is { } alert && now - alert.At > DesktopAlertLifetime))

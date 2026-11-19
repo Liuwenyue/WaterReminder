@@ -78,9 +78,10 @@ public partial class RecordsWindow : Window
             : result.Value.Date;
         DateLabel.Text = dateLabel;
         TitleText.Text = editable ? "今日记录" : "历史记录";
+        var goal = result.Value.GoalKnown ? $"{result.Value.GoalMl:N0} ml" : "目标未记录";
         SummaryText.Text = count == 0
             ? (editable ? dateLabel : $"{dateLabel} · 只读")
-            : $"共 {count} 条 · 合计 {result.Value.ConsumedMl:N0} / {result.Value.GoalMl:N0} ml" + (editable ? "" : " · 只读");
+            : $"共 {count} 条 · 合计 {result.Value.ConsumedMl:N0} / {goal}" + (editable ? "" : " · 只读");
         EmptyState.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
         RecordsList.Visibility = count == 0 ? Visibility.Collapsed : Visibility.Visible;
         EmptyTitle.Text = editable ? "今天还没有喝水记录" : "这一天没有记录";
@@ -102,6 +103,7 @@ public partial class RecordsWindow : Window
         FamilyPanel.Visibility = Visibility.Visible;
         _updatingPickers = false;
         UpdateMemberActions();
+        await LoadProgressAsync();
     }
 
     private async Task LoadHistoryAsync()
@@ -116,8 +118,12 @@ public partial class RecordsWindow : Window
         if (response.Ok && response.Value is { } history)
         {
             foreach (var day in history.Days)
-                if (DateOnly.TryParseExact(day.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
-                    options.Add(new(date, $"{date:MM月dd日}   {day.ConsumedMl:N0} ml   ·   {day.EventCount} 条"));
+            {
+                if (!DateOnly.TryParseExact(day.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+                    continue;
+                var goal = day.GoalKnown ? $"{day.ConsumedMl:N0} / {day.GoalMl:N0} ml" : $"{day.ConsumedMl:N0} ml · 目标未记录";
+                options.Add(new(date, $"{date:MM月dd日}   {goal}   ·   {day.EventCount} 条"));
+            }
         }
         if (options.All(option => option.Date != _today)) options.Insert(0, new(_today, "今日 · 无记录"));
         HistoryPicker.ItemsSource = options;
@@ -134,7 +140,7 @@ public partial class RecordsWindow : Window
         _selected = _today;
         UpdateMemberActions();
         HistoryPicker.Visibility = Visibility.Collapsed;
-        await Task.WhenAll(ReloadAsync(), LoadHistoryAsync());
+        await Task.WhenAll(ReloadAsync(), LoadHistoryAsync(), LoadProgressAsync());
     }
 
     private async void History_Changed(object sender, SelectionChangedEventArgs e)
@@ -151,11 +157,49 @@ public partial class RecordsWindow : Window
         await LoadFamilyAsync();
     }
 
+    private async void InviteAgain_Click(object sender, RoutedEventArgs e)
+    {
+        if (MemberPicker.SelectedItem is not MemberOption option) return;
+        var dialog = new FamilyInviteWindow(_api, option.Member) { Owner = this };
+        dialog.ShowDialog();
+        await LoadProgressAsync();
+    }
+
+    private async void PushTest_Click(object sender, RoutedEventArgs e)
+    {
+        var id = MemberPicker.SelectedItem is MemberOption option ? option.Member.Id : Guid.Empty;
+        PushTestButton.IsEnabled = false;
+        FamilyProgressText.Text = "正在发送连接测试…";
+        var result = await _api.SendPushTestAsync(id);
+        PushTestButton.IsEnabled = true;
+        FamilyProgressText.Text = result.Ok ? result.Value?.Message ?? "已发送" : result.Error ?? "测试失败，请检查服务端连接。";
+        await LoadProgressAsync();
+    }
+
+    private async Task LoadProgressAsync()
+    {
+        var response = await _api.GetFamilyProgressAsync();
+        if (!response.Ok || response.Value is null)
+        {
+            if (FamilyPanel.Visibility == Visibility.Visible && string.IsNullOrWhiteSpace(FamilyProgressText.Text))
+                FamilyProgressText.Text = response.Error ?? "";
+            return;
+        }
+        var id = _member ?? Guid.Empty;
+        var row = response.Value.Members.FirstOrDefault(item => item.Member.Id == id);
+        if (row is null) return;
+        var amount = row.GoalMl > 0 ? $"{row.ConsumedMl:N0} / {row.GoalMl:N0} ml" : $"{row.ConsumedMl:N0} ml";
+        var last = DateTime.TryParse(row.LastRecordAt, out var at) ? at.ToString("M月d日 HH:mm") : "还没有记录";
+        FamilyProgressText.Text = $"今日 {amount} · 本周有记录 {row.WeekRecordedDays} 天，达标 {row.WeekAchievedDays} 天 · 最近 {last} · {row.Push.Message}";
+    }
+
     private void UpdateMemberActions()
     {
         var active = MemberPicker.SelectedItem is MemberOption { Member: { Archived: false } } option
             && option.Member.Id != Guid.Empty;
         ArchiveMemberButton.IsEnabled = active;
+        InviteAgainButton.IsEnabled = active;
+        PushTestButton.IsEnabled = MemberPicker.SelectedItem is MemberOption { Member.Archived: false };
         MemberSettingsButton.IsEnabled = active && _memberSettingsRequest is null;
         MemberSettingsButton.Content = _memberSettingsRequest is null ? "成员设置" : "读取中…";
     }

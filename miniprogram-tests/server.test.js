@@ -108,8 +108,9 @@ test('refresh caches server settings and ignores a stale response after a save',
   assert.equal(await refreshing, false);
   assert.equal(store.load().settings.dailyGoalMl, 1800);
   assert.equal(store.load().settings.lunchEnabled, false);
-  assert.equal(store.load().settings.remindersPaused, false);
-  assert.equal(JSON.stringify(wx.getStorageSync('water-reminder-v1')).includes('desktop-api-token'), false);
+  assert.equal(store.load().settings.remindersPaused, true);
+  assert.equal(JSON.stringify(wx.getStorageSync('water-reminder-v1') || {}).includes('desktop-api-token'), false);
+  assert.equal(JSON.stringify(store.load()).includes('desktop-api-token'), false);
 });
 
 test('network and auth failures stay on the form and do not invent settings', async () => {

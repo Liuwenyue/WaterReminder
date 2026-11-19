@@ -15,7 +15,7 @@ public readonly record struct ApiResult<T>(bool Ok, int StatusCode, T? Value)
 /// HTTP client for the headless server. The only credential it holds is the
 /// client-server API token, which the operator configures locally.
 /// </summary>
-public sealed class ReminderApiClient : IDisposable
+public sealed partial class ReminderApiClient : IDisposable
 {
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 

@@ -28,7 +28,8 @@ public static class ServerHost
 
         app.Use(async (context, next) =>
         {
-            if (context.Request.Path.StartsWithSegments("/health"))
+            if (context.Request.Path.StartsWithSegments("/health") ||
+                context.Request.Path == "/api/invitations/preview" || context.Request.Path == "/api/invitations/redeem")
             {
                 await next();
                 return;
@@ -75,6 +76,31 @@ public static class ServerHost
             if (!e.TryUpdateSettings(update, out error))
                 return Results.BadRequest(new { error });
             return Results.Ok(e.ClientSettings());
+        });
+
+        app.MapPost("/api/sync/operations", async (HttpRequest request) =>
+        {
+            SyncOperationsRequest? body;
+            try { body = await request.ReadFromJsonAsync<SyncOperationsRequest>(); }
+            catch (Exception error) when (error is JsonException or InvalidOperationException or BadHttpRequestException)
+            { return Results.BadRequest(new { error = "同步内容无法识别。" }); }
+            var e = CurrentEngine(request.HttpContext);
+            if (e.TrySyncOperations(body, out var result, out var errorText, out var conflict))
+                return Results.Ok(result);
+            return Results.Json(new { error = errorText }, statusCode: conflict ? 409 : 400);
+        });
+
+        app.MapGet("/api/sync/snapshot", (HttpContext context, FamilyAccounts accounts, int? days) =>
+        {
+            var engine = CurrentEngine(context);
+            var caller = Caller(context);
+            var name = caller == Guid.Empty ? "我" : accounts.Overview(caller).Members[0].Name;
+            var history = engine.History(days ?? 30);
+            var dates = history.Days.Select(day => day.Date).ToHashSet(StringComparer.Ordinal);
+            var status = engine.Status();
+            dates.Add(status.Date);
+            var records = dates.OrderByDescending(date => date).Select(date => engine.RecordsFor(date)!).ToList();
+            return Results.Ok(new SyncSnapshotResponse { Status = status, MemberId = caller, MemberName = name, Days = records });
         });
 
         app.MapPost("/api/drinks", async (HttpRequest request) =>
@@ -202,6 +228,7 @@ public static class ServerHost
             return Results.Ok(e.TodayRecords());
         });
 
+        app.MapFamilyRoutes(options);
         return app;
     }
 

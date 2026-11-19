@@ -1,13 +1,14 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using WaterReminder;
 using WaterReminder.Services;
 
 namespace WaterReminder.Server;
 
 internal sealed class FamilyAccounts : IDisposable
 {
-    private sealed record Entry(Guid Id, string Name, string CodeHash, bool Archived = false)
+    private sealed record Entry(Guid Id, string Name, string CodeHash, bool Archived = false, string? InviteHash = null, DateTimeOffset? InviteExpiresAt = null, string? InviteServerUrl = null)
     {
         public FamilyMember View => new(Id, Name, Archived);
     }
@@ -24,9 +25,7 @@ internal sealed class FamilyAccounts : IDisposable
         _options = options;
         Owner = owner;
         _path = Path.Combine(options.DataDirectory, "family.json");
-        _entries = File.Exists(_path)
-            ? JsonSerializer.Deserialize<List<Entry>>(File.ReadAllText(_path)) ?? throw new InvalidDataException("Invalid family registry")
-            : [];
+        _entries = File.Exists(_path) ? ReadEntries(File.ReadAllText(_path)) : [];
     }
 
     public FamilyOverview Overview(Guid caller)
@@ -112,6 +111,111 @@ internal sealed class FamilyAccounts : IDisposable
         }
     }
 
+    public MemberInvite? CreateInvitation(CreateMemberInvite request, out string? error)
+    {
+        var serverUrl = request.ServerUrl?.Trim();
+        if (string.IsNullOrWhiteSpace(serverUrl)) serverUrl = Environment.GetEnvironmentVariable("WATERREMINDER_PUBLIC_URL")?.Trim();
+        if (!Uri.TryCreate(serverUrl, UriKind.Absolute, out var uri) || uri.Scheme != "https" ||
+            uri.IsLoopback || uri.UserInfo.Length > 0 || uri.Query.Length > 0 || uri.Fragment.Length > 0)
+        {
+            error = "请输入手机可访问的 HTTPS 服务地址，不能使用 localhost 或桌面 SSH 地址。";
+            return null;
+        }
+        var path = uri.AbsolutePath.TrimEnd('/');
+        if (path.Contains("/api", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "请填写服务根地址，不要包含 /api。";
+            return null;
+        }
+        lock (_gate)
+        {
+            Entry? entry;
+            if (request.MemberId is { } id)
+            {
+                entry = _entries.Find(item => item.Id == id && !item.Archived);
+                if (entry is null) { error = "成员不存在或已停用。"; return null; }
+            }
+            else
+            {
+                var created = Add(new(request.Name ?? "", request.PushWardToken), out error);
+                if (created is null) return null;
+                entry = _entries.Single(item => item.Id == created.Member.Id);
+            }
+            var token = "wi_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+            var expires = DateTimeOffset.UtcNow.AddMinutes(15);
+            var publicUrl = uri.GetLeftPart(UriPartial.Authority) + path;
+            Save(_entries.Select(item => item.Id == entry.Id ? item with
+            {
+                InviteHash = Convert.ToHexString(Hash(token)), InviteExpiresAt = expires, InviteServerUrl = publicUrl
+            } : item).ToList());
+            error = null;
+            return new(entry.View, token, publicUrl, expires);
+        }
+    }
+
+    private Entry? Invited(string? token)
+    {
+        if (token is null || token.Length != 67 || !token.StartsWith("wi_", StringComparison.Ordinal)) return null;
+        var hash = Hash(token);
+        return _entries.Find(entry => !entry.Archived && entry.InviteExpiresAt > DateTimeOffset.UtcNow &&
+            entry.InviteHash is not null && CryptographicOperations.FixedTimeEquals(hash, Convert.FromHexString(entry.InviteHash)));
+    }
+
+    public InvitationPreview? PreviewInvitation(string? token)
+    {
+        lock (_gate)
+        {
+            var entry = Invited(token);
+            return entry is null ? null : new(entry.View, entry.InviteExpiresAt!.Value, entry.InviteServerUrl!);
+        }
+    }
+
+    public RedeemedInvitation? RedeemInvitation(string? token)
+    {
+        lock (_gate)
+        {
+            var entry = Invited(token);
+            if (entry is null) return null;
+            var code = "wr_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+            Save(_entries.Select(item => item.Id == entry.Id ? item with
+            {
+                CodeHash = Convert.ToHexString(Hash(code)), InviteHash = null, InviteExpiresAt = null, InviteServerUrl = null
+            } : item).ToList());
+            return new(entry.View, code, entry.InviteServerUrl!);
+        }
+    }
+
+    public bool RevokeInvitation(Guid id)
+    {
+        lock (_gate)
+        {
+            if (!_entries.Any(entry => entry.Id == id)) return false;
+            Save(_entries.Select(item => item.Id == id ? item with
+            { InviteHash = null, InviteExpiresAt = null, InviteServerUrl = null } : item).ToList());
+            return true;
+        }
+    }
+
+    public FamilyProgressOverview Progress()
+    {
+        lock (_gate)
+        {
+            var today = DateOnly.ParseExact(Owner.Status().Date, "yyyy-MM-dd");
+            var monday = today.AddDays(-(((int)today.DayOfWeek + 6) % 7));
+            var members = Overview(Guid.Empty).Members.Where(member => !member.Archived).Select(member =>
+            {
+                var engine = Find(member.Id)!;
+                var status = engine.Status();
+                var days = engine.History(7).Days.Where(day => string.CompareOrdinal(day.Date, monday.ToString("yyyy-MM-dd")) >= 0).ToList();
+                var last = engine.History(365).Days.Where(day => day.EventCount > 0).OrderByDescending(day => day.Date).FirstOrDefault();
+                var lastAt = last is null ? null : engine.RecordsFor(last.Date)?.Events.OrderByDescending(item => item.At).FirstOrDefault()?.At;
+                return new FamilyProgress(member, status.ConsumedMl, status.GoalMl, lastAt,
+                    days.Count(day => day.GoalMl > 0 && day.ConsumedMl >= day.GoalMl), days.Count(day => day.EventCount > 0), engine.SafePushFeedback());
+            }).ToList();
+            return new(monday.ToString("yyyy-MM-dd"), members);
+        }
+    }
+
     public ClientSettingsResponse? MemberSettings(Guid id)
     {
         lock (_gate)
@@ -189,6 +293,22 @@ internal sealed class FamilyAccounts : IDisposable
         File.Move(temp, _path, overwrite: true);
         _entries = entries;
     }
+
+    private sealed class EntryDto
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; } = "";
+        public string CodeHash { get; set; } = "";
+        public bool Archived { get; set; }
+        public string? InviteHash { get; set; }
+        public DateTimeOffset? InviteExpiresAt { get; set; }
+        public string? InviteServerUrl { get; set; }
+    }
+
+    private static List<Entry> ReadEntries(string json)
+        => JsonSerializer.Deserialize<List<EntryDto>>(json)?.Select(item => new Entry(
+            item.Id, item.Name, item.CodeHash, item.Archived, item.InviteHash, item.InviteExpiresAt, item.InviteServerUrl)).ToList()
+            ?? throw new InvalidDataException("Invalid family registry");
 
     private static byte[] Hash(string value) => SHA256.HashData(Encoding.UTF8.GetBytes(value));
 

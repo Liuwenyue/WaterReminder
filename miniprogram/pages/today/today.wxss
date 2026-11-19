@@ -97,3 +97,5 @@
 .all-link { gap: 10rpx; }
 .recent-empty { min-height: 111rpx; color: var(--muted); font-size: 26rpx; }
 .recent-empty .glyph-tile { width: 64rpx; height: 64rpx; }
+
+.sync-note { display: block; margin: 0 0 18rpx; color: var(--muted); font-size: 24rpx; }

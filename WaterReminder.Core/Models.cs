@@ -56,6 +56,11 @@ public sealed class DailyRecord
     public DateTime? LastReminderAt { get; set; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public HashSet<string>? PhoneReceipts { get; set; }
+    /// <summary>Goal on this day; null for older records whose goal is unknown.</summary>
+    public int? GoalSnapshotMl { get; set; }
+    /// <summary>Phone pause/resume for this calendar day only.</summary>
+    public bool? RemindersPausedOverride { get; set; }
+    public Dictionary<Guid, SyncOperationReceipt>? SyncReceipts { get; set; }
     public int ConsumedMl => Math.Max(0, Events.Sum(x => x.AmountMl));
 }
 
@@ -68,3 +73,5 @@ public sealed class WaterEvent
 }
 
 public sealed record ReminderPlan(int TotalReminders, TimeSpan Interval, DateTime? NextReminder, int DueMl, int SuggestedMl);
+
+public sealed record SyncOperationReceipt(string Fingerprint, bool Changed);

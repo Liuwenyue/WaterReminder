@@ -16,10 +16,10 @@
     <text class="caption reading-label">{{relativeLabel}}饮水</text>
     <view class="spread reading-row">
       <view class="quantity numerals"><text class="reading">{{totalText}}</text><text class="reading-unit">mL</text></view>
-      <view class="legend"><view class="legend-line"></view><text>目标 {{goalText}} mL</text></view>
+      <view class="legend"><view class="legend-line"></view><text>目标 {{goalKnown ? goalText + ' mL' : '未记录'}}</text></view>
     </view>
     <view class="chart">
-      <view class="guides" aria-hidden="true"><view class="target-guide" style="top: {{goalTop}}%;"></view></view>
+      <view class="guides" aria-hidden="true"><view wx:if="{{goalKnown}}" class="target-guide" style="top: {{goalTop}}%;"></view></view>
       <view class="columns">
         <button wx:for="{{bars}}" wx:key="key" class="button column {{item.selected ? 'selected' : ''}}" hover-class="press"
           data-offset="{{item.offset}}" bindtap="pickDay" aria-label="{{item.ariaLabel}}">

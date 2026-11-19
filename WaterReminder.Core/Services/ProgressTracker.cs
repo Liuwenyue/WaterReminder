@@ -140,6 +140,13 @@ public sealed class ProgressTracker
         Changed?.Invoke();
     }
 
+    public void SaveGoalSnapshot(int goalMl)
+    {
+        if (Today.GoalSnapshotMl == goalMl) return;
+        Today.GoalSnapshotMl = goalMl;
+        _save(Today);
+    }
+
     private void Commit()
     {
         _save(Today);

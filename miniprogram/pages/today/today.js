@@ -3,6 +3,7 @@
 const store = require('../../utils/storage.js');
 const calc = require('../../utils/calculator.js');
 const journal = require('../../utils/journal.js');
+const serverApi = require('../../utils/server.js');
 
 function planHint(settings, model, plan, now) {
   const remaining = Math.max(0, settings.dailyGoalMl - calc.consumedMl(model));
@@ -51,7 +52,9 @@ Page({
       fraction, percent: done ? 100 : Math.min(99, Math.round(fraction * 100)), done,
       cupAmount: calc.currentCupMl(settings, now), cupLabel: workCup ? '工作杯' : '家庭杯',
       paused, hasNext, nextText, planHint: planHint(settings, snap.model, plan, now),
-      recent: journal.entries(snap.model).slice(0, 2), showTip: !store.tipDismissed()
+      recent: journal.entries(snap.model).slice(0, 2), showTip: !store.tipDismissed(),
+      identity: serverApi.loadConnection().memberName ? ('正在为 ' + serverApi.loadConnection().memberName + ' 记录') : '',
+      syncText: serverApi.loadConnection().configured ? store.syncInfo().text : ''
     });
   },
   recordAmount(amount, source) {

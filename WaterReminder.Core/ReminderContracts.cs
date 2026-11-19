@@ -82,6 +82,8 @@ public sealed class TodayRecordsResponse
     public string Date { get; set; } = "";
     public int ConsumedMl { get; set; }
     public int GoalMl { get; set; }
+    public bool GoalKnown { get; set; } = true;
+    public bool RemindersPaused { get; set; }
     public List<RecordEventResponse> Events { get; set; } = [];
     /// <summary>False for past days: the client shows them read-only.</summary>
     public bool Editable { get; set; } = true;
@@ -92,6 +94,7 @@ public sealed class HistoryDayResponse
     public string Date { get; set; } = "";
     public int ConsumedMl { get; set; }
     public int GoalMl { get; set; }
+    public bool GoalKnown { get; set; } = true;
     public int EventCount { get; set; }
 }
 
@@ -151,4 +154,37 @@ public sealed class SettingsUpdate
     public bool[] ActiveDays { get; set; } = [];
     public bool RemindersPaused { get; set; }
     public string? PauseUntil { get; set; }
+}
+
+/// <summary>Ordered, independently durable operations. Retry unchanged IDs after an interrupted batch.</summary>
+public sealed class SyncOperationsRequest
+{
+    public List<SyncOperation> Operations { get; set; } = [];
+}
+public sealed class SyncOperation
+{
+    public Guid Id { get; set; }
+    public string Date { get; set; } = "";
+    public string Kind { get; set; } = "";
+    public int? AmountMl { get; set; }
+    public int? TotalMl { get; set; }
+    public Guid? EventId { get; set; }
+    public string? At { get; set; }
+    public int? GoalMl { get; set; }
+    public string? Source { get; set; }
+}
+public sealed record SyncOperationResult(Guid Id, string Date, bool Duplicate, bool Changed);
+public sealed class SyncOperationsResponse
+{
+    public List<SyncOperationResult> Results { get; set; } = [];
+    public List<TodayRecordsResponse> Days { get; set; } = [];
+    public StatusResponse Status { get; set; } = new();
+}
+
+public sealed class SyncSnapshotResponse
+{
+    public StatusResponse Status { get; set; } = new();
+    public Guid MemberId { get; set; }
+    public string MemberName { get; set; } = "";
+    public List<TodayRecordsResponse> Days { get; set; } = [];
 }

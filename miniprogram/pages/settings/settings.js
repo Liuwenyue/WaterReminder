@@ -53,7 +53,12 @@ Page({
     serverPauseUntil: null,
     dirty: false,
     preview: '',
-    error: ''
+    error: '',
+    inviteToken: '',
+    memberName: '',
+    syncText: '',
+    syncBlocked: false,
+    legacyCount: 0
   },
   onShow() {
     const connection = server.loadConnection();
@@ -61,6 +66,10 @@ Page({
       serverUrl: this.data.serverUrl || connection.serverUrl,
       connected: connection.configured
     };
+    patch.memberName = connection.memberName || '';
+    patch.syncText = connection.configured ? store.syncInfo().text : '';
+    patch.syncBlocked = connection.configured && store.syncInfo().blocked;
+    patch.legacyCount = connection.configured ? store.legacyCount() : 0;
     if (!connection.configured) {
       patch.connectionText = '未连接服务器';
       patch.loading = false;
@@ -144,6 +153,47 @@ Page({
     }
     this.setData({ serverUrl: saved.serverUrl, apiToken: '', connected: true });
     return this.loadFromServer(true);
+  },
+  updateInvite(event) { this.setData({ inviteToken: event.detail.value, error: '' }); },
+  scanInvite() {
+    if (typeof wx.scanCode !== 'function') {
+      this.setData({ error: '请粘贴电脑上的邀请码' });
+      return;
+    }
+    wx.scanCode({ success: (res) => this.redeem(res.result) });
+  },
+  redeem(raw) {
+    const parsed = server.parseInvite(raw || this.data.inviteToken);
+    if (!parsed) { this.setData({ error: '请粘贴邀请码，或扫描电脑上的邀请二维码' }); return; }
+    const serverUrl = parsed.serverUrl || this.data.serverUrl;
+    if (!serverUrl) { this.setData({ error: '这条邀请没有服务器地址，请先填写地址' }); return; }
+    this.setData({ loading: true, error: '' });
+    server.previewInvite(serverUrl, parsed.inviteToken).then((preview) => {
+      if (!preview.ok) { this.setData({ loading: false, error: preview.error }); return; }
+      const name = preview.data && preview.data.member && preview.data.member.name;
+      wx.showModal({
+        title: '加入 ' + name + ' 的饮水账本？',
+        content: '确认后，这台手机只给「' + name + '」记账。',
+        success: (answer) => {
+          if (!answer.confirm) { this.setData({ loading: false }); return; }
+          server.redeemInvite(serverUrl, parsed.inviteToken).then((result) => {
+            if (!result.ok) { this.setData({ loading: false, error: result.error }); return; }
+            const connection = server.loadConnection();
+            this.setData({ serverUrl: connection.serverUrl, apiToken: '', connected: true, inviteToken: '', memberName: connection.memberName });
+            server.syncLedger().then(() => this.loadFromServer(true));
+          });
+        }
+      });
+    });
+  },
+  importOld() {
+    const result = store.importLegacy();
+    if (!result.ok) { this.setData({ error: result.error }); return; }
+    server.syncLedger().then(() => this.onShow());
+  },
+  dropPending() {
+    store.dropQueue();
+    this.setData({ syncBlocked: false, syncText: store.syncInfo().text, error: '' });
   },
   disconnect() {
     server.clearConnection();

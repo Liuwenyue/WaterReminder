@@ -16,7 +16,9 @@ function loadConnection() {
   }
   const serverUrl = typeof raw.serverUrl === 'string' ? raw.serverUrl : '';
   const apiToken = typeof raw.apiToken === 'string' ? raw.apiToken : '';
-  return { serverUrl: serverUrl, apiToken: apiToken, configured: !!(serverUrl && apiToken) };
+  const memberName = typeof raw.memberName === 'string' ? raw.memberName : '';
+  const memberId = typeof raw.memberId === 'string' ? raw.memberId : '';
+  return { serverUrl: serverUrl, apiToken: apiToken, memberName: memberName, memberId: memberId, configured: !!(serverUrl && apiToken) };
 }
 
 function validateConnection(serverUrl, apiToken) {
@@ -44,7 +46,13 @@ function validateConnection(serverUrl, apiToken) {
 function saveConnection(connection) {
   const checked = validateConnection(connection && connection.serverUrl, connection && connection.apiToken);
   if (checked.error) return checked;
-  wx.setStorageSync(CONNECTION_KEY, { serverUrl: checked.serverUrl, apiToken: checked.apiToken });
+  const current = loadConnection();
+  wx.setStorageSync(CONNECTION_KEY, {
+    serverUrl: checked.serverUrl,
+    apiToken: checked.apiToken,
+    memberId: connection.memberId || (current.serverUrl === checked.serverUrl && current.apiToken === checked.apiToken ? current.memberId : ''),
+    memberName: connection.memberName || (current.serverUrl === checked.serverUrl && current.apiToken === checked.apiToken ? current.memberName : '')
+  });
   return { error: '', serverUrl: checked.serverUrl };
 }
 
@@ -148,8 +156,8 @@ function toLocal(settings) {
     minReminderGapMinutes: settings.minReminderGapMinutes,
     quietStart: settings.quietStart,
     activeDays: (settings.activeDays || []).slice(),
-    remindersPaused: false,
-    pauseUntil: null
+    remindersPaused: !!settings.remindersPaused,
+    pauseUntil: settings.pauseUntil || null
   };
 }
 
@@ -280,6 +288,78 @@ function saveSettings(update) {
   });
 }
 
+function parseInvite(text) {
+  const raw = String(text || '').trim();
+  if (raw.startsWith('wi_') && raw.length === 67) return { inviteToken: raw, serverUrl: '' };
+  const parts = raw.split('|');
+  if (parts.length === 3 && parts[0] === 'waterreminder' && parts[2].startsWith('wi_')) {
+    return { serverUrl: parts[1], inviteToken: parts[2] };
+  }
+  return null;
+}
+function invitationRequest(serverUrl, path, inviteToken) {
+  const checked = validateConnection(serverUrl, 'invite');
+  if (checked.error) return Promise.resolve({ ok: false, error: checked.error });
+  return new Promise(function (resolve) {
+    wx.request({
+      url: checked.serverUrl + path,
+      method: 'POST',
+      data: { inviteToken: inviteToken },
+      header: { 'content-type': 'application/json' },
+      timeout: 15000,
+      success: function (res) {
+        if (res.statusCode >= 200 && res.statusCode < 300) resolve({ ok: true, data: res.data });
+        else resolve({ ok: false, error: httpError(res.statusCode, res.data) });
+      },
+      fail: function () { resolve({ ok: false, error: '连不上邀请里的服务器' }); }
+    });
+  });
+}
+function previewInvite(serverUrl, inviteToken) {
+  return invitationRequest(serverUrl, '/api/invitations/preview', inviteToken);
+}
+function redeemInvite(serverUrl, inviteToken) {
+  return invitationRequest(serverUrl, '/api/invitations/redeem', inviteToken).then(function (result) {
+    if (!result.ok) return result;
+    const data = result.data || {};
+    const saved = saveConnection({
+      serverUrl: data.serverUrl || serverUrl,
+      apiToken: data.accessCode,
+      memberId: data.member && data.member.id,
+      memberName: data.member && data.member.name
+    });
+    return saved.error ? { ok: false, error: saved.error } : { ok: true, memberName: data.member && data.member.name };
+  });
+}
+let syncing = null;
+function syncLedger() {
+  if (!loadConnection().configured) return Promise.resolve({ ok: false, skipped: true });
+  if (syncing) return syncing;
+  syncing = request('GET', '/api/sync/snapshot?days=30').then(function (result) {
+    if (!result.ok) {
+      store.syncFailure(result.error, result.error.indexOf('409') >= 0 || result.error.indexOf('已改变') >= 0);
+      return result;
+    }
+    const data = result.data || {};
+    if (data.memberName) {
+      const current = loadConnection();
+      saveConnection({ serverUrl: current.serverUrl, apiToken: current.apiToken, memberId: data.memberId, memberName: data.memberName });
+    }
+    store.applyRemote({ days: data.days || [], status: data.status }, []);
+    const pending = store.load().queue;
+    if (!pending.length) return { ok: true };
+    return request('POST', '/api/sync/operations', { operations: pending.slice(0, 100) }).then(function (sent) {
+      if (!sent.ok) {
+        store.syncFailure(sent.error, sent.error.indexOf('已改变') >= 0 || sent.error.indexOf('不一致') >= 0);
+        return sent;
+      }
+      const ids = ((sent.data && sent.data.results) || []).map(function (item) { return item.id; });
+      store.applyRemote(sent.data || {}, ids);
+      return { ok: true };
+    });
+  }).finally(function () { syncing = null; });
+  return syncing;
+}
 function refreshCachedSettings() {
   if (!loadConnection().configured) return Promise.resolve(false);
   return getSettings().then(function (result) {
@@ -299,5 +379,9 @@ module.exports = {
   toLocal: toLocal,
   getSettings: getSettings,
   saveSettings: saveSettings,
-  refreshCachedSettings: refreshCachedSettings
+  refreshCachedSettings: refreshCachedSettings,
+  parseInvite: parseInvite,
+  previewInvite: previewInvite,
+  redeemInvite: redeemInvite,
+  syncLedger: syncLedger
 };

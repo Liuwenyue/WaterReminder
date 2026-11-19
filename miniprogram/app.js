@@ -10,8 +10,8 @@ App({
     this.startWatch();
     const ticket = (this._settingsSync || 0) + 1;
     this._settingsSync = ticket;
-    server.refreshCachedSettings().then((changed) => {
-      if (changed && ticket === this._settingsSync) this.refreshPages();
+    server.syncLedger().catch(() => false).then(() => server.refreshCachedSettings()).then(() => {
+      if (ticket === this._settingsSync) this.refreshPages();
     }).catch(() => {});
   },
   onHide() {

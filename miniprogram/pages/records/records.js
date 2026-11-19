@@ -11,12 +11,19 @@ function rangeDate(date) {
   return (date.getMonth() + 1) + '.' + String(date.getDate()).padStart(2, '0');
 }
 
+function goalOf(state, day) {
+  const record = store.recordOn(state, day);
+  if (record.goalKnown === true) return { known: true, goal: Number(record.goalMl) || 0 };
+  if (calc.sameDay(day, new Date())) return { known: true, goal: state.settings.dailyGoalMl };
+  if ((record.events || []).length || record.goalKnown === false) return { known: false, goal: 0 };
+  return { known: true, goal: state.settings.dailyGoalMl };
+}
 function weekChart(state, today, selected, endOffset) {
   const bars = [];
   const oldest = journal.dayAtOffset(today, endOffset + 6);
   const newest = journal.dayAtOffset(today, endOffset);
-  const goal = state.settings.dailyGoalMl;
-  let ceiling = Math.max(1, goal);
+  const selectedGoal = goalOf(state, journal.dayAtOffset(today, selected));
+  let ceiling = Math.max(1, selectedGoal.known ? selectedGoal.goal : 1);
   for (let offset = endOffset + 6; offset >= endOffset; offset--) {
     const day = journal.dayAtOffset(today, offset);
     const total = calc.consumedMl(store.model(store.recordOn(state, day)));
@@ -28,7 +35,7 @@ function weekChart(state, today, selected, endOffset) {
     });
   }
   bars.forEach(bar => { bar.fraction = bar.total / ceiling; });
-  return { bars, goalTop: (1 - goal / ceiling) * 100, rangeLabel: rangeDate(oldest) + ' – ' + rangeDate(newest) };
+  return { bars, goalKnown: selectedGoal.known, goalText: selectedGoal.known ? store.formatNumber(selectedGoal.goal) : '未记录', goalTop: selectedGoal.known ? (1 - selectedGoal.goal / ceiling) * 100 : 0, rangeLabel: rangeDate(oldest) + ' – ' + rangeDate(newest) };
 }
 
 Page({
@@ -62,7 +69,7 @@ Page({
       monthLabel: date.getFullYear() + '年' + (date.getMonth() + 1) + '月',
       dateLabel: journal.dateLabel(date),
       relativeLabel: offset === 0 ? '今天' : (offset === 1 ? '昨天' : journal.monthDay(date)),
-      total, totalText: store.formatNumber(total), goalText: store.formatNumber(snap.state.settings.dailyGoalMl),
+      total, totalText: store.formatNumber(total),
       events, empty: events.length === 0
     }));
   },
@@ -85,9 +92,13 @@ Page({
   },
   saveTotal(event) {
     const result = store.setTotal(this._editDate, event.detail.amount);
+    if (!result.ok) {
+      this.selectComponent('#amountSheet').showError(result.error);
+      return;
+    }
     this.selectComponent('#amountSheet').dismiss();
     this.reload();
-    wx.showToast({ title: result.unchanged ? '总量没有变化' : '总量已更新', icon: 'none' });
+    wx.showToast({ title: result.unchanged ? '总量没有变化' : (result.pending ? '待同步' : '总量已更新'), icon: 'none' });
   },
   closeAmount() { this.setData({ amountOpen: false }); },
   remove(event) {
@@ -98,7 +109,8 @@ Page({
       title: '删除这笔饮水？', confirmText: '删除', confirmColor: '#BC3848',
       success: result => {
         if (!result.confirm) return;
-        store.deleteEvent(date, id);
+        const removed = store.deleteEvent(date, id);
+        if (removed && removed.ok === false) wx.showToast({ title: removed.error, icon: 'none' });
         this.reload();
       },
       complete: () => { app.globalData.prompting = false; }

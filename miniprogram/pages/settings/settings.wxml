@@ -44,6 +44,23 @@
     <button wx:if="{{connected}}" class="button link disconnect" hover-class="press" bindtap="disconnect">断开</button>
   </view>
   <text class="device-note">{{connectionText}}</text>
+  <text wx:if="{{memberName}}" class="device-note">正在为 {{memberName}} 记录</text>
+  <text wx:if="{{syncText}}" class="device-note">{{syncText}}</text>
+  <view class="section-head"><text class="section-title">加入家庭</text></view>
+  <view class="surface form-group">
+    <view class="form-row stack last">
+      <text class="row-name">邀请码</text>
+      <input class="server-input" value="{{inviteToken}}" bindinput="updateInvite" maxlength="300" placeholder="粘贴邀请码，或扫描电脑上的二维码" aria-label="邀请码" />
+    </view>
+  </view>
+  <view class="connection-actions">
+    <button class="button primary connect" hover-class="press" disabled="{{loading || saving}}" bindtap="redeem">加入家庭账本</button>
+    <button class="button link" hover-class="press" bindtap="scanInvite">扫码</button>
+  </view>
+  <view wx:if="{{legacyCount || syncBlocked}}" class="connection-actions">
+    <button wx:if="{{legacyCount}}" class="button link" hover-class="press" bindtap="importOld">导入手机上的旧记录（{{legacyCount}} 笔）</button>
+    <button wx:if="{{syncBlocked}}" class="button link" hover-class="press" bindtap="dropPending">放弃待同步</button>
+  </view>
 
   <block wx:if="{{loaded}}">
     <view class="surface goal-card arrive">

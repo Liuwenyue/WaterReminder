@@ -55,7 +55,7 @@ dotnet publish .\WaterReminder\WaterReminder.csproj -c Release -r win-x64 --self
 
 ## 微信小程序
 
-`miniprogram/` 的今日进度和饮水记录在微信本地。设置页填写与桌面端相同的服务器地址和 API 令牌后，用 `GET/PUT /api/settings` 修改服务器上的同一份配置。令牌只留在手机里。用微信开发者工具导入 `miniprogram` 目录即可预览，说明见 [miniprogram/README.md](miniprogram/README.md)。
+`miniprogram/` 连接后，饮水记录、暂停和当日目标都写入服务器，和 Windows、PushWard 是同一本账。断网时手机会显示待同步，恢复后同一笔只补记一次。设置页也可以扫描电脑上的 15 分钟邀请码加入，确认姓名后才保存访问码。用微信开发者工具导入 `miniprogram` 目录即可预览，说明见 [miniprogram/README.md](miniprogram/README.md)。
 
 小程序不能代替原来的后台提醒。Windows 悬浮窗和 PushWard 照旧；打开小程序时，如果已经到点，会弹出「该喝水了」。
 

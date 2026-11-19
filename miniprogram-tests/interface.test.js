@@ -190,7 +190,7 @@ test('settings read and write the server configuration without sending the token
   assert.equal(requests[0].url, 'https://cup.example.com/api/settings');
   assert.equal(requests[0].authorization, 'Bearer desktop-api-token');
   assert.equal(store.load().settings.dailyGoalMl, 2500);
-  assert.equal(store.load().settings.remindersPaused, false);
+  assert.equal(store.load().settings.remindersPaused, true);
 
   settings.updateField(control('dailyGoalMl', '0'));
   assert.equal(await settings.save(), false);
@@ -233,8 +233,9 @@ test('settings read and write the server configuration without sending the token
   assert.equal(put.data.pauseUntil, '2026-11-18T23:59:00');
   assert.deepEqual(put.data.activeDays, [false, false, false, false, false, false, true]);
   assert.equal(store.load().settings.dailyGoalMl, 1800);
-  assert.equal(store.load().settings.remindersPaused, false);
-  assert.equal(JSON.stringify(wx.getStorageSync('water-reminder-v1')).includes('desktop-api-token'), false);
+  assert.equal(store.load().settings.remindersPaused, true);
+  assert.equal(JSON.stringify(wx.getStorageSync('water-reminder-v1') || {}).includes('desktop-api-token'), false);
+  assert.equal(JSON.stringify(store.load()).includes('desktop-api-token'), false);
 
   settings.disconnect();
   assert.equal(serverApi.loadConnection().configured, false);

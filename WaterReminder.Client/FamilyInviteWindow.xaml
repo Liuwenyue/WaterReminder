@@ -19,7 +19,9 @@
             <StackPanel>
               <TextBlock Text="成员名称" FontSize="13" Margin="0,0,0,8"/>
               <TextBox x:Name="MemberName" Style="{StaticResource FluentTextBox}" MaxLength="32" AutomationProperties.Name="成员名称"/>
-              <TextBlock Text="成员自己的 PushWard 密钥（可选）" FontSize="13" Margin="0,16,0,8" TextWrapping="Wrap"/>
+              <TextBlock x:Name="ServerUrlLabel" Text="手机可访问的 HTTPS 地址（生成微信邀请时填写）" FontSize="13" Margin="0,16,0,8" TextWrapping="Wrap"/>
+              <TextBox x:Name="ServerUrl" Style="{StaticResource FluentTextBox}" MaxLength="300" AutomationProperties.Name="手机可访问的 HTTPS 地址" ToolTip="例如 https://cup.example。留空则只生成 Windows 访问码。"/>
+              <TextBlock x:Name="PushLabel" Text="成员自己的 PushWard 密钥（可选）" FontSize="13" Margin="0,16,0,8" TextWrapping="Wrap"/>
               <PasswordBox x:Name="PushToken" Style="{StaticResource FluentPasswordBox}" MaxLength="512" AutomationProperties.Name="成员自己的 PushWard 密钥"/>
             </StackPanel>
           </Border>
@@ -32,6 +34,7 @@
           </TextBlock>
           <TextBlock Text="家庭成员访问码" Style="{StaticResource SectionHeader}" Margin="0,16,0,8" Visibility="{Binding Visibility, ElementName=AccessCode}"/>
           <TextBox x:Name="AccessCode" Style="{StaticResource FluentTextBox}" IsReadOnly="True" Visibility="Collapsed" AutomationProperties.Name="家庭成员访问码"/>
+          <Image x:Name="InviteQr" Width="180" Height="180" Margin="0,16,0,0" HorizontalAlignment="Left" Visibility="Collapsed" RenderOptions.BitmapScalingMode="NearestNeighbor"/>
         </StackPanel>
       </ScrollViewer>
       <Border Grid.Row="2" Background="{DynamicResource SurfaceAlt}" CornerRadius="0,0,12,12" Padding="24,12" BorderBrush="{DynamicResource Stroke}" BorderThickness="0,1,0,0">

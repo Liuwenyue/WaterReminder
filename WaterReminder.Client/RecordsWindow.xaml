@@ -28,11 +28,14 @@
             <TextBlock Text="家庭成员" Style="{StaticResource SectionHeader}" Margin="0,0,0,8"/>
             <ComboBox x:Name="MemberPicker" Style="{StaticResource FluentComboBox}" ItemTemplate="{StaticResource PickerLabel}"
                       TextSearch.TextPath="Label" AutomationProperties.Name="家庭成员" SelectionChanged="Member_Changed"/>
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <WrapPanel HorizontalAlignment="Right" Margin="0,12,0,0">
               <Button x:Name="ArchiveMemberButton" Style="{StaticResource DangerGhostButton}" Content="停用" Click="ArchiveMember_Click" Margin="0,0,8,0"/>
               <Button x:Name="MemberSettingsButton" Style="{StaticResource SecondaryButton}" Content="成员设置" IsEnabled="False" Click="MemberSettings_Click" Margin="0,0,8,0"/>
+              <Button x:Name="InviteAgainButton" Style="{StaticResource SecondaryButton}" Content="微信邀请" IsEnabled="False" Click="InviteAgain_Click" Margin="0,0,8,0"/>
+              <Button x:Name="PushTestButton" Style="{StaticResource SecondaryButton}" Content="测试提醒" Click="PushTest_Click" Margin="0,0,8,0"/>
               <Button x:Name="AddMemberButton" Style="{StaticResource SecondaryButton}" Content="添加成员" Click="AddMember_Click"/>
-            </StackPanel>
+            </WrapPanel>
+            <TextBlock x:Name="FamilyProgressText" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,12,0,0"/>
           </StackPanel>
         </Border>
         <Border Style="{StaticResource SectionCard}" Padding="16" Margin="0,0,0,12">
