@@ -1,11 +1,12 @@
 'use strict';
 
 const calc = require('../../utils/calculator.js');
-const wechat = require('../../utils/wechat.js');
 
 Component({
   properties: {
     heading: String,
+    context: String,
+    actionId: Number,
     confirmText: { type: String, value: '记下' },
     initialValue: { type: String, value: '' },
     minimum: { type: Number, value: 1 },
@@ -38,9 +39,7 @@ Component({
         this.showError('请输入 ' + this.data.minimum + ' 到 ' + this.data.maximum + ' 之间的整数毫升数。');
         return;
       }
-      const subscription = wechat.capture();
-      this.triggerEvent('confirm', { amount: parsed.total });
-      subscription.then(wechat.report);
+      this.triggerEvent('confirm', { actionId: this.data.actionId, amount: parsed.total });
     },
     startDrag(event) {
       this._startY = event.touches[0].clientY;
@@ -60,7 +59,7 @@ Component({
     dismiss() {
       if (this.data.closing) return;
       this.setData({ closing: true, dragging: false });
-      this._closeTimer = setTimeout(() => this.triggerEvent('close'), 150);
+      this._closeTimer = setTimeout(() => this.triggerEvent('close', { actionId: this.data.actionId }), 150);
     }
   }
 });

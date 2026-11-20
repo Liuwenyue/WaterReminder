@@ -47,7 +47,8 @@ public static class ServerHost
         {
             if (context.Request.Path.StartsWithSegments("/health") ||
                 context.Request.Path == "/api/invitations/preview" || context.Request.Path == "/api/invitations/redeem" ||
-                context.Request.Path == "/api/wechat/login" || context.Request.Path == "/api/device/login")
+                context.Request.Path == "/api/wechat/login" || context.Request.Path == "/api/device/login" ||
+                context.Request.Path == "/api/wechat/owner-pair")
             {
                 await next();
                 return;
@@ -206,8 +207,21 @@ public static class ServerHost
             if (accounts.Find(id, includeArchived: true) is not { } member) return Results.NotFound();
             var records = member.RecordsFor(date);
             if (records is null) return Results.BadRequest(new { error = "日期格式应为 yyyy-MM-dd。" });
-            records.Editable = false;
+            records.Editable = accounts.Find(id) is not null &&
+                DateOnly.ParseExact(records.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture) <=
+                DateOnly.ParseExact(member.Status().Date, "yyyy-MM-dd", CultureInfo.InvariantCulture);
             return Results.Ok(records);
+        });
+        app.MapPost("/api/family/{id:guid}/records/operations",
+            (HttpContext context, FamilyAccounts accounts, Guid id, SyncOperationsRequest body) =>
+        {
+            if (Caller(context) != Guid.Empty) return Results.StatusCode(403);
+            if (!accounts.OwnerCanAccess(id) || accounts.Find(id) is not { } member) return Results.NotFound();
+            if (body.Operations is not [{ Kind: "edit" or "delete" }])
+                return Results.BadRequest(new { error = "请选择要修改或删除的记录。" });
+            if (member.TrySyncOperations(body, out var result, out var error, out var conflict))
+                return Results.Ok(result);
+            return Results.Json(new { error }, statusCode: conflict ? 409 : 400);
         });
         app.MapPut("/api/records/total", async (HttpRequest request) =>
         {

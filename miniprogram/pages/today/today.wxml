@@ -2,14 +2,27 @@
 <view class="page" aria-hidden="{{amountOpen}}">
   <view class="page-head">
     <view>
-      <text class="eyebrow">{{dateLabel}}</text>
-      <text class="page-title">今日</text>
+      <text wx:if="{{!needsConnection}}" class="eyebrow">{{dateLabel}}</text>
+      <text class="page-title">{{needsConnection && registrationRequired ? '创建饮水账本' : '今日'}}</text>
     </view>
-    <view class="phase"><view class="phase-dot"></view>{{phaseLabel}}</view>
+    <view wx:if="{{!needsConnection}}" class="phase"><view class="phase-dot"></view>{{phaseLabel}}</view>
   </view>
 
   <text wx:if="{{identity || syncText}}" class="sync-note">{{identity}}{{identity && syncText ? ' · ' : ''}}{{syncText}}</text>
-  <text wx:if="{{needsConnection}}" class="sync-note">正在建立你的账本，记下的水会在登录后同步。</text>
+  <view wx:if="{{needsConnection && registrationRequired}}" class="surface registration-card">
+    <text class="registration-label">名字</text>
+    <input class="registration-name" value="{{registrationName}}" maxlength="32" placeholder="输入你想使用的名字"
+      disabled="{{registering}}" bindinput="updateName" aria-label="名字" confirm-type="done" bindconfirm="register" />
+    <text class="registration-note">你和管理员都可以查看和修改你的饮水记录。</text>
+    <text wx:if="{{loginError}}" class="registration-error" aria-live="polite">{{loginError}}</text>
+    <button class="button primary" disabled="{{registering}}" bindtap="register">{{registering ? '正在创建…' : '开始记录'}}</button>
+    <button class="button link" disabled="{{registering}}" bindtap="openOwnerPairSettings">关联我的电脑账本</button>
+  </view>
+  <view wx:elif="{{needsConnection}}">
+    <text class="sync-note">{{loginError || '正在连接微信账本…'}}</text>
+    <button wx:if="{{loginError}}" class="button link" bindtap="retryConnection">重试</button>
+  </view>
+  <block wx:if="{{!needsConnection}}">
   <view class="tide arrive">
     <image class="tide-art" src="/assets/tide.jpg" mode="aspectFill" aria-hidden="true" />
     <view class="tide-shade"></view>
@@ -72,5 +85,7 @@
       <text>记下第一杯，这里就会出现记录。</text>
     </view>
   </view>
+</block>
 </view>
-<amount-sheet wx:if="{{amountOpen}}" id="amountSheet" heading="自定义水量" presets="{{presets}}" bind:confirm="addCustom" bind:close="closeAmount" />
+<amount-sheet wx:if="{{amountOpen}}" id="amountSheet" heading="自定义水量" action-id="{{actionId}}" context="{{editContext}}"
+  presets="{{presets}}" bind:confirm="addCustom" bind:close="closeAmount" />

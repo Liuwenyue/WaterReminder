@@ -7,6 +7,7 @@
         <text class="sheet-heading">{{heading}}</text>
         <button class="button link" hover-class="press" bindtap="dismiss">取消</button>
       </view>
+      <text wx:if="{{context}}" class="sheet-context">{{context}}</text>
       <view class="amount-field">
         <input class="amount-input numerals" type="number" maxlength="8" value="{{value}}" placeholder="0" placeholder-class="amount-placeholder"
           adjust-position="{{false}}" confirm-type="done" aria-label="水量，单位毫升"

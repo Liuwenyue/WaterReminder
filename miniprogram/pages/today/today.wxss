@@ -93,3 +93,10 @@
 .recent-empty .glyph-tile { width: 64rpx; height: 64rpx; }
 
 .sync-note { display: block; margin: 0 0 18rpx; color: var(--muted); font-size: 24rpx; }
+.registration-card { padding: 28rpx; }
+.registration-label { display: block; font-size: 29rpx; font-weight: 620; }
+.registration-name { box-sizing: border-box; width: 100%; min-height: 44px; padding: 0 20rpx; margin: 12rpx 0; background: var(--inset); border: 1rpx solid var(--line); border-radius: 18rpx; }
+.registration-note, .registration-error { display: block; font-size: 24rpx; line-height: 1.5; color: var(--muted); }
+.registration-error { color: var(--danger); margin-top: 8rpx; }
+.registration-card .primary { margin-top: 24rpx; }
+.registration-card .link { display: flex; margin: 6rpx auto 0; }

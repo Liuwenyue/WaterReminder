@@ -26,6 +26,9 @@ internal sealed class FamilyAccounts : IDisposable
         Owner = owner;
         _path = Path.Combine(options.DataDirectory, "family.json");
         _entries = File.Exists(_path) ? ReadEntries(File.ReadAllText(_path)) : [];
+        if (File.Exists(OwnerIdentityPath))
+            _ownerIdentity = JsonSerializer.Deserialize<OwnerIdentity>(File.ReadAllText(OwnerIdentityPath))
+                ?? throw new InvalidDataException("Invalid owner identity");
     }
 
     public FamilyOverview Overview(Guid caller)
@@ -45,7 +48,81 @@ internal sealed class FamilyAccounts : IDisposable
     }
 
     private sealed record ShareInvite(string Hash, DateTimeOffset ExpiresAt);
+    private sealed record OwnerIdentity(string Hash, List<string> Sessions);
+    private sealed record OwnerPair(string OpenId, DateTimeOffset ExpiresAt);
+    internal const string MissingDeviceAccount = "此设备没有旧账本，请用微信注册。";
+    private readonly Dictionary<string, OwnerPair> _ownerPairs = [];
+    private OwnerIdentity? _ownerIdentity;
+    private string OwnerIdentityPath => Path.Combine(_options.DataDirectory, "wechat-owner.json");
     internal sealed record WeChatLoginResult(string AccessCode, Guid MemberId, string MemberName, bool SharedWithOwner);
+    internal sealed record PairCode(string Code, DateTimeOffset ExpiresAt);
+
+    public PairCode? CreateOwnerPair(string openId)
+    {
+        lock (_gate)
+        {
+            if (_ownerIdentity is not null) return null;
+            var now = DateTimeOffset.UtcNow;
+            foreach (var code in _ownerPairs.Where(pair => pair.Value.ExpiresAt <= now || pair.Value.OpenId == openId)
+                         .Select(pair => pair.Key).ToList())
+                _ownerPairs.Remove(code);
+            if (_ownerPairs.Count >= 100) return null;
+            string pairingCode;
+            do { pairingCode = RandomNumberGenerator.GetInt32(10000000, 100000000).ToString(); }
+            while (_ownerPairs.ContainsKey(pairingCode));
+            var expiresAt = now.AddMinutes(5);
+            _ownerPairs.Add(pairingCode, new(openId, expiresAt));
+            return new(pairingCode, expiresAt);
+        }
+    }
+
+    public string? ConfirmOwnerPair(string? code)
+    {
+        lock (_gate)
+        {
+            if (_ownerIdentity is not null) return "管理员账本已经绑定微信。";
+            if (code is null || !_ownerPairs.TryGetValue(code, out var pair) || pair.ExpiresAt <= DateTimeOffset.UtcNow)
+                return "配对码无效或已过期，请在手机重新获取。";
+            SaveOwnerIdentity(new(Convert.ToHexString(Hash(pair.OpenId)), []));
+            _ownerPairs.Clear();
+            return null;
+        }
+    }
+
+    private void SaveOwnerIdentity(OwnerIdentity identity)
+    {
+        Directory.CreateDirectory(_options.DataDirectory);
+        var temp = OwnerIdentityPath + ".tmp";
+        File.WriteAllText(temp, JsonSerializer.Serialize(identity));
+        File.Move(temp, OwnerIdentityPath, overwrite: true);
+        _ownerIdentity = identity;
+    }
+
+    private WeChatLoginResult? LogInOwner(string openId, Guid? expectedMemberId, out string? error)
+    {
+        if (expectedMemberId is { } expected && expected != Guid.Empty)
+        {
+            error = "当前登录身份与原账号不匹配，请使用原登录身份重试。";
+            return null;
+        }
+        var session = "wr_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        var identity = _ownerIdentity!;
+        Owner.BindVerifiedWeChat(openId);
+        SaveOwnerIdentity(identity with { Sessions = identity.Sessions.TakeLast(9).Append(Convert.ToHexString(Hash(session))).ToList() });
+        error = null;
+        return new(session, Guid.Empty, "我", true);
+    }
+
+    public bool MergeOwnerPersonalRecords()
+    {
+        lock (_gate)
+        {
+            if (_ownerIdentity is null) return false;
+            var personal = _entries.Find(entry => !entry.Archived && entry.WeChatIdentityHash == _ownerIdentity.Hash);
+            if (personal is not null) Owner.MergePersonalRecords(Engine(personal));
+            return true;
+        }
+    }
 
     private string SharePath => Path.Combine(_options.DataDirectory, "wechat-shares.json");
 
@@ -68,22 +145,35 @@ internal sealed class FamilyAccounts : IDisposable
             ? JsonSerializer.Deserialize<List<ShareInvite>>(File.ReadAllText(SharePath)) ?? []
             : [];
 
-    public WeChatLoginResult? LogInWeChat(string openId, string? shareToken, Guid? expectedMemberId, out string? error)
-        => LogInIdentity(openId, shareToken, true, expectedMemberId, out error);
+    public WeChatLoginResult? LogInWeChat(string openId, string? shareToken, Guid? expectedMemberId,
+        string? name, bool ownerOnly, out string? error, out bool registrationRequired)
+        => LogInIdentity(openId, shareToken, true, expectedMemberId, name, ownerOnly, out error, out registrationRequired);
 
     public WeChatLoginResult? LogInDevice(string deviceId, Guid? expectedMemberId, out string? error)
     {
         var id = deviceId.Trim().ToLowerInvariant();
         if (id.Length != 64 || id.Any(c => !Uri.IsHexDigit(c)))
         { error = "设备标识无效。"; return null; }
-        return LogInIdentity("device:" + id, null, false, expectedMemberId, out error);
+        return LogInIdentity("device:" + id, null, false, expectedMemberId, null, false, out error, out _);
     }
 
-    private WeChatLoginResult? LogInIdentity(string openId, string? shareToken, bool bindWeChat, Guid? expectedMemberId, out string? error)
+    private WeChatLoginResult? LogInIdentity(string openId, string? shareToken, bool bindWeChat, Guid? expectedMemberId,
+        string? name, bool ownerOnly, out string? error, out bool registrationRequired)
     {
         var identity = Convert.ToHexString(Hash(openId));
         lock (_gate)
         {
+            registrationRequired = false;
+            // An explicit member ID also lets a paired owner renew an older ledger
+            // using the same verified identity, without turning it into the owner ledger.
+            if (bindWeChat && _ownerIdentity?.Hash == identity &&
+                (ownerOnly || expectedMemberId is null || expectedMemberId == Guid.Empty))
+                return LogInOwner(openId, expectedMemberId, out error);
+            if (ownerOnly)
+            {
+                error = "这次微信登录尚未绑定管理员账本，请在电脑确认配对。";
+                return null;
+            }
             var entry = _entries.Find(item => item.WeChatIdentityHash == identity);
             if (expectedMemberId is { } expected && entry?.Id != expected)
             { error = "当前登录身份与原账号不匹配，请使用原登录身份重试。"; return null; }
@@ -104,10 +194,27 @@ internal sealed class FamilyAccounts : IDisposable
             var sessionHash = Convert.ToHexString(Hash(session));
             if (entry is null)
             {
+                if (!bindWeChat)
+                {
+                    error = MissingDeviceAccount;
+                    return null;
+                }
+                name = name?.Trim();
+                if (string.IsNullOrEmpty(name))
+                {
+                    registrationRequired = true;
+                    error = "请输入你的名字。";
+                    return null;
+                }
+                if (name.Length > 32 || name.Any(char.IsControl))
+                {
+                    error = "请输入 1–32 个字符的名字。";
+                    return null;
+                }
                 if (_entries.Count >= 50) { error = "当前账号数量已达上限。"; return null; }
                 var id = Guid.NewGuid();
-                entry = new Entry(id, "成员" + id.ToString("N")[..6], sessionHash,
-                    WeChatIdentityHash: identity, SharedWithOwner: shareHash is not null,
+                entry = new Entry(id, name, sessionHash,
+                    WeChatIdentityHash: identity, SharedWithOwner: true,
                     WeChatSessionHashes: [], UsedShareHash: shareHash);
                 Save([.. _entries, entry]);
             }
@@ -133,6 +240,8 @@ internal sealed class FamilyAccounts : IDisposable
         var hash = Hash(header[7..]);
         lock (_gate)
         {
+            if (_ownerIdentity?.Sessions.Any(s => CryptographicOperations.FixedTimeEquals(hash, Convert.FromHexString(s))) == true)
+                return Guid.Empty;
             foreach (var entry in _entries.Where(item => !item.Archived))
             {
                 if (CryptographicOperations.FixedTimeEquals(hash, Convert.FromHexString(entry.CodeHash)) ||

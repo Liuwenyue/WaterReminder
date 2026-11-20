@@ -7,6 +7,41 @@ namespace WaterReminder.Services;
 
 public sealed partial class ReminderEngine
 {
+    /// <summary>Copies drinking events and their merge receipts in the same atomic write.</summary>
+    public void MergePersonalRecords(ReminderEngine source)
+    {
+        IReadOnlyList<DailyRecord> personalDays;
+        lock (source._gate) personalDays = source._storage.ListDailyRecords();
+        lock (_gate)
+        {
+            var now = RefreshLocked();
+            var today = now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            var stored = _storage.ListDailyRecords().ToDictionary(day => day.Date);
+            var processed = stored.Values.SelectMany(day => day.OwnerMergeReceipts ?? []).ToHashSet();
+            var knownIds = stored.Values.SelectMany(day => day.Events).Select(record => record.Id).ToHashSet();
+            var changed = new List<DailyRecord>();
+            foreach (var personalDay in personalDays)
+            {
+                var target = stored.GetValueOrDefault(personalDay.Date) ?? new DailyRecord { Date = personalDay.Date };
+                var matches = target.Events.Select(record => (record.At, record.AmountMl)).ToHashSet();
+                var newReceipts = false;
+                foreach (var record in personalDay.Events)
+                {
+                    if (!processed.Add(record.Id)) continue;
+                    (target.OwnerMergeReceipts ??= []).Add(record.Id);
+                    newReceipts = true;
+                    if (knownIds.Add(record.Id) && matches.Add((record.At, record.AmountMl))) target.Events.Add(record);
+                }
+                if (!newReceipts) continue;
+                target.GoalSnapshotMl ??= target.Date == today ? _settings.DailyGoalMl : personalDay.GoalSnapshotMl;
+                changed.Add(target);
+            }
+            if (changed.Count == 0) return;
+            _storage.SaveDailyRecords(changed);
+            RefreshLocked();
+        }
+    }
+
     public SyncSnapshotResponse SyncSnapshot(Guid memberId, string memberName, int days)
     {
         lock (_gate)
@@ -136,6 +171,8 @@ public sealed partial class ReminderEngine
             "import" => operation.AmountMl is not null and not 0 and >= -20000 and <= 20000
                 && operation.EventId is { } eventId && eventId != Guid.Empty && operation.At is not null,
             "setTotal" => operation.TotalMl is >= 0 and <= 20000,
+            "edit" => operation.EventId is { } target && target != Guid.Empty &&
+                operation.AmountMl is not null and not 0 and >= -3000 and <= 3000,
             "delete" => operation.EventId is { } eventId && eventId != Guid.Empty,
             "clear" or "pause" or "resume" => true,
             _ => false,
@@ -212,6 +249,23 @@ public sealed partial class ReminderEngine
                 }
                 break;
             case "delete": changed = record.Events.RemoveAll(e => e.Id == operation.EventId) > 0; break;
+            case "edit":
+                var edited = record.Events.FirstOrDefault(e => e.Id == operation.EventId);
+                if (edited is null)
+                {
+                    error = "找不到这条记录，请刷新后重试。";
+                    return false;
+                }
+                var updatedAmount = operation.AmountMl!.Value;
+                var updatedTotal = record.Events.Sum(e => (long)e.AmountMl) - edited.AmountMl + updatedAmount;
+                if (updatedTotal > WaterCalculator.MaxDailyTotalMl)
+                {
+                    error = $"最多 {WaterCalculator.MaxDailyTotalMl:N0} ml";
+                    return false;
+                }
+                changed = edited.AmountMl != updatedAmount;
+                edited.AmountMl = updatedAmount;
+                break;
             case "clear": changed = record.Events.Count > 0; record.Events.Clear(); break;
             case "pause":
             case "resume":

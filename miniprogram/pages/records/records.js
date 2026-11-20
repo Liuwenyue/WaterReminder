@@ -4,6 +4,8 @@ const app = getApp();
 const store = require('../../utils/storage.js');
 const calc = require('../../utils/calculator.js');
 const journal = require('../../utils/journal.js');
+const server = require('../../utils/server.js');
+const wechat = require('../../utils/wechat.js');
 
 const LAST_OFFSET = 30;
 
@@ -52,15 +54,24 @@ Page({
     } else this.reload();
   },
   onHide() {
+    this._edit = this._recordPrompt = null;
     if (this.data.amountOpen || this.data.editing) this.setData({ amountOpen: false, editing: false });
   },
+  onUnload() { this.onHide(); },
   reload() {
     const now = new Date();
-    const connected = !!store.accountKey();
+    const key = store.accountKey();
+    const connected = !!key;
+    const account = server.loadConnection();
+    const ledgerName = connected ? account.memberName || '当前账本' : '本机账本';
     const today = connected ? store.shanghaiClock(now) : now;
     const offset = this.data.offset;
     const date = journal.dayAtOffset(today, offset);
-    this._selectedDate = date;
+    const dateKey = calc.dateKey(date);
+    const old = this._view;
+    const changed = old && (old.key !== key || old.dateKey !== dateKey);
+    if (changed) this._edit = this._recordPrompt = null;
+    this._view = { key, date, dateKey, ledgerName };
     const snap = store.snapshot(now);
     const model = store.model(store.recordOn(snap.state, date));
     if (connected) model.events.forEach(event => { event.at = store.shanghaiClock(event.at); });
@@ -73,7 +84,8 @@ Page({
       dateLabel: journal.dateLabel(date),
       relativeLabel: offset === 0 ? '今天' : (offset === 1 ? '昨天' : journal.monthDay(date)),
       total, totalText: store.formatNumber(total),
-      events, empty: events.length === 0
+      events, empty: events.length === 0, ledgerName,
+      ...(changed ? { amountOpen: false, editing: false } : {})
     }));
   },
   selectDay(offset) {
@@ -90,52 +102,93 @@ Page({
     else wx.switchTab({ url: '/pages/today/today' });
   },
   adjust() {
-    this._editDate = this._selectedDate;
-    this.setData({ amountOpen: true, initialTotal: String(this.data.total) });
+    if (!this.validAction(this._view)) return;
+    const actionId = (this._editSequence || 0) + 1;
+    this._editSequence = actionId;
+    this._edit = { ...this._view, actionId };
+    this.setData({ amountOpen: true, actionId, editContext: this.actionLabel(this._edit), initialTotal: String(this.data.total) });
   },
   saveTotal(event) {
-    const result = store.setTotal(this._editDate, event.detail.amount);
-    if (!result.ok) {
-      this.selectComponent('#amountSheet').showError(result.error);
+    const edit = this._edit;
+    if (event.detail.actionId !== edit?.actionId || !edit) {
+      this.actionExpired();
       return;
     }
-    this.selectComponent('#amountSheet').dismiss();
+    if (!this.validAction(edit)) {
+      this.closeAmount(event);
+      return;
+    }
+    const result = store.setTotal(edit.date, event.detail.amount);
+    const sheet = this.selectComponent('#amountSheet');
+    if (!result.ok) {
+      sheet?.showError(result.error);
+      return;
+    }
+    this._edit = null;
+    sheet?.dismiss();
+    wechat.capture().then(wechat.report);
     if (result.pending) app.syncChanges();
     this.reload();
     wx.showToast({ title: result.unchanged ? '总量没有变化' : (result.pending ? '待同步' : '总量已更新'), icon: 'none' });
   },
-  closeAmount() { this.setData({ amountOpen: false }); },
+  closeAmount(event) {
+    if (event.detail.actionId !== this.data.actionId) return;
+    this._edit = null;
+    this.setData({ amountOpen: false });
+  },
+  actionLabel(action) { return action.ledgerName + ' · ' + action.dateKey; },
+  actionExpired(message = '账本已切换，请重新操作') {
+    wx.showToast({ title: message, icon: 'none' });
+  },
+  validAction(action) {
+    if (!action || action.key !== store.accountKey()) {
+      this.actionExpired();
+      return false;
+    }
+    const now = new Date();
+    const today = action.key ? store.shanghaiClock(now) : now;
+    if (action.dateKey !== calc.dateKey(journal.dayAtOffset(today, this.data.offset))) {
+      this.actionExpired('记录日期已变化，请重新操作');
+      return false;
+    }
+    return true;
+  },
   remove(event) {
     const id = event.currentTarget.dataset.id;
-    const date = this._selectedDate;
-    app.globalData.prompting = true;
-    wx.showModal({
-      title: '删除这笔饮水？', confirmText: '删除', confirmColor: '#BC3848',
-      success: result => {
-        if (!result.confirm) return;
-        const removed = store.deleteEvent(date, id);
-        if (removed && removed.pending) app.syncChanges();
-        if (removed && removed.ok === false) wx.showToast({ title: removed.error, icon: 'none' });
-        this.reload();
-      },
-      complete: () => { app.globalData.prompting = false; }
+    this.confirmRecordAction('删除这笔饮水？', '删除', '的这笔饮水记录将被删除。', date => {
+      const removed = store.deleteEvent(date, id);
+      if (removed && removed.pending) app.syncChanges();
+      if (removed && removed.ok === false) wx.showToast({ title: removed.error, icon: 'none' });
+      this.reload();
     });
   },
   clearDay() {
-    const date = this._selectedDate;
+    this.confirmRecordAction('清空当天记录？', '清空', '的全部饮水记录将被删除。', date => {
+      const cleared = store.clearDay(date);
+      if (cleared && !cleared.ok) return wx.showToast({ title: cleared.error, icon: 'none' });
+      if (cleared && cleared.pending) app.syncChanges();
+      this.setData({ editing: false });
+      this.reload();
+    });
+  },
+  confirmRecordAction(title, confirmText, consequence, write) {
+    if (!this.validAction(this._view)) return;
+    const action = { ...this._view };
+    this._recordPrompt = action;
     app.globalData.prompting = true;
     wx.showModal({
-      title: '清空当天记录？', content: '将删除 ' + journal.monthDay(date) + '的全部饮水记录。',
-      confirmText: '清空', confirmColor: '#BC3848',
+      title, content: this.actionLabel(action) + consequence, confirmText, confirmColor: '#BC3848',
       success: result => {
         if (!result.confirm) return;
-        const cleared = store.clearDay(date);
-        if (cleared && !cleared.ok) return wx.showToast({ title: cleared.error, icon: 'none' });
-        if (cleared && cleared.pending) app.syncChanges();
-        this.setData({ editing: false });
-        this.reload();
+        if (!this.validAction(action)) return;
+        if (this._recordPrompt !== action) return this.actionExpired('操作已失效，请重新操作');
+        this._recordPrompt = null;
+        write(action.date);
       },
-      complete: () => { app.globalData.prompting = false; }
+      complete: () => {
+        if (this._recordPrompt === action) this._recordPrompt = null;
+        if (!this._recordPrompt) app.globalData.prompting = false;
+      }
     });
   }
 });

@@ -510,7 +510,7 @@ function bindWeChat(code) {
 function reportSubscription(body) {
   return request('POST', '/api/wechat/subscription', body);
 }
-function requestWeChatLogin(serverUrl, active, expectedMemberId) {
+function requestWeChatCode(serverUrl, path, active, data) {
   const checked = validateConnection(serverUrl, 'login');
   if (checked.error || !/^https:\/\//.test(checked.serverUrl || ''))
     return Promise.resolve({ ok: false, error: '暂时无法连接，请稍后重试。' });
@@ -521,17 +521,17 @@ function requestWeChatLogin(serverUrl, active, expectedMemberId) {
         if (!active()) return resolve(switched());
         if (!login || !login.code) return resolve({ ok: false, error: '微信登录失败，请重试。' });
         wx.request({
-          url: checked.serverUrl + '/api/wechat/login', method: 'POST',
+          url: checked.serverUrl + path, method: 'POST',
           header: { 'content-type': 'application/json' }, timeout: 15000,
-          data: { code: login.code, shareToken: null, ...(expectedMemberId ? { expectedMemberId } : {}) },
+          data: { code: login.code, ...data },
           success: function (res) {
-            const data = res.data || {};
+            if (!active()) return resolve(switched());
+            const response = res.data || {};
             if (res.statusCode < 200 || res.statusCode >= 300)
-              return resolve({ ok: false, status: res.statusCode, error: httpError(res.statusCode, data) });
-            if (typeof data.accessCode !== 'string' || !/^wr_[0-9a-f]{64}$/.test(data.accessCode) ||
-                typeof data.memberId !== 'string' || !data.memberId || typeof data.memberName !== 'string')
-              return resolve({ ok: false, error: '登录结果无法识别。' });
-            resolve(loginResult(checked.serverUrl, data, 'wechat'));
+              return resolve({ ok: false, status: res.statusCode,
+                error: res.statusCode === 401 ? '微信身份验证失败，请重试。' : httpError(res.statusCode, response),
+                ...(response.registrationRequired === true ? { registrationRequired: true } : {}) });
+            resolve({ ok: true, serverUrl: checked.serverUrl, data: response });
           },
           fail: function () { resolve({ ok: false, error: '暂时无法连接，请稍后重试。' }); }
         });
@@ -539,6 +539,61 @@ function requestWeChatLogin(serverUrl, active, expectedMemberId) {
       fail: function () { resolve({ ok: false, error: '微信登录失败，请重试。' }); }
     });
   });
+}
+const OWNER_ID = '00000000-0000-0000-0000-000000000000';
+function isOwnerLedger(connection = loadConnection()) {
+  return connection.configured && connection.memberId === OWNER_ID;
+}
+
+async function requestWeChatLogin(serverUrl, active, expectedMemberId, { name, ownerOnly } = {}) {
+  const result = await requestWeChatCode(serverUrl, '/api/wechat/login', active, {
+    shareToken: null,
+    ...(expectedMemberId ? { expectedMemberId } : {}),
+    ...(name ? { name } : {}),
+    ...(ownerOnly ? { ownerOnly } : {})
+  });
+  if (!result.ok) return result;
+  const data = result.data;
+  if (typeof data.accessCode !== 'string' || !/^wr_[0-9a-f]{64}$/.test(data.accessCode) ||
+      typeof data.memberId !== 'string' || !data.memberId || typeof data.memberName !== 'string')
+    return { ok: false, error: '登录结果无法识别。' };
+  return loginResult(result.serverUrl, data, 'wechat');
+}
+
+function createOwnerPair() {
+  return requestWeChatCode(config.serverUrl, '/api/wechat/owner-pair', () => true, {});
+}
+
+function mergeOwnerRecords(connection) {
+  return request('POST', '/api/wechat/owner-merge', {}, connection);
+}
+
+async function openOwnerLedger() {
+  const revision = connectionRevision;
+  const intent = invitationRevision;
+  const previous = loadConnection();
+  const active = () => revision === connectionRevision && intent === invitationRevision && !joining && !previewedInvite;
+  if (!active()) return switched();
+  const result = await requestWeChatLogin(config.serverUrl, active, OWNER_ID, { ownerOnly: true });
+  if (!active()) return switched();
+  if (!result.ok) return result;
+  if (result.connection.memberId !== OWNER_ID) return { ok: false, error: '管理员账本身份不匹配。' };
+  do {
+    if (previous.configured && previous.memberId !== OWNER_ID && store.load().queue.length > 0) {
+      await syncLedger({ operationsOnly: true });
+      if (!active()) return switched();
+      if (store.load().queue.length > 0)
+        return { ok: false, pendingSwitch: true, error: '原账本还有待同步记录，请先完成同步，再打开管理员账本。' };
+    }
+    const merged = await mergeOwnerRecords(result.connection);
+    if (!active()) return switched();
+    if (!merged.ok)
+      return { ok: false, pendingSwitch: true, error: merged.error || '无法合并原账本，请稍后重试。' };
+    // Other pages can add a drink while the server is merging. Upload it first.
+  } while (previous.configured && previous.memberId !== OWNER_ID && store.load().queue.length > 0);
+  if (previous.configured && previous.memberId === OWNER_ID && previous.serverUrl === result.connection.serverUrl)
+    return commitLogin(result, { ledgerUrl: previous.ledgerUrl, bootstrapId: previous.bootstrapId });
+  return commitLogin(result);
 }
 function loginResult(serverUrl, data, loginMethod) {
   return { ok: true, connection: { serverUrl, apiToken: data.accessCode, loginMethod,
@@ -577,7 +632,8 @@ function loginDevice(serverUrl, expectedMemberId) {
       success: function (res) {
         const data = res.data || {};
         if (res.statusCode < 200 || res.statusCode >= 300)
-          return resolve({ ok: false, status: res.statusCode, error: httpError(res.statusCode, data) });
+          return resolve({ ok: false, status: res.statusCode, error: httpError(res.statusCode, data),
+            deviceAccountMissing: res.statusCode === 404 && data.deviceAccountMissing === true });
         if (typeof data.accessCode !== 'string' || !/^wr_[0-9a-f]{64}$/.test(data.accessCode) ||
             typeof data.memberId !== 'string' || !data.memberId || typeof data.memberName !== 'string')
           return resolve({ ok: false, error: '登录结果无法识别。' });
@@ -598,7 +654,7 @@ function upgradedUrl(serverUrl) {
     config.previousDefaultUrls.includes(serverUrl) ? next.serverUrl : serverUrl;
 }
 
-async function createAccount(active) {
+async function createAccount(active, options) {
   const existing = store.bootstrap();
   const current = validateConnection(config.serverUrl, 'login').serverUrl;
   const base = existing ? upgradedUrl(existing.serverUrl) : current;
@@ -606,18 +662,23 @@ async function createAccount(active) {
     store.pauseBootstrap(true);
     return { ok: false, error: '暂时无法继续创建账本，待归账饮水已保留，请确认默认服务器地址后重试。' };
   }
-  const method = existing ? existing.method : 'wechat';
-  const attempt = store.beginBootstrap(base, method);
-  let result = method === 'device' ? await loginDevice(base) : await requestWeChatLogin(base, active);
+  const method = existing && existing.method === 'device' &&
+    /^[0-9a-f]{64}$/.test(wx.getStorageSync('water-device-id') || '') ? 'device' : 'wechat';
+  let attempt = store.beginBootstrap(base, method);
+  let result = method === 'device' ? await loginDevice(base) : await requestWeChatLogin(base, active, undefined, options);
   if (!active()) return switched();
-  if (method === 'wechat' && (authFailure(result.status) || result.status === 404 || result.status === 503)) {
-    store.beginBootstrap(base, 'device');
-    result = await loginDevice(base);
+  if (method === 'device' && result.deviceAccountMissing) {
+    attempt = store.beginBootstrap(base, 'wechat');
+    result = await requestWeChatLogin(base, active, undefined, options);
   }
   if (!active()) return switched();
   if (!result.ok) return result;
-  if (result.connection.sharedWithOwner)
-    return commitLogin(result, { loginMethod: 'invite' });
+  if (result.connection.memberId === OWNER_ID) {
+    const merged = await mergeOwnerRecords(result.connection);
+    if (!active()) return switched();
+    if (!merged.ok) return merged;
+    return commitLogin(result);
+  }
   return commitLogin(result, { bootstrapId: attempt.id });
 }
 
@@ -658,6 +719,7 @@ function signIn(options) {
   if (!existing.configured && (existing.serverUrl || existing.apiToken)) {
     return Promise.resolve({ ok: false, error: '请确认服务器连接或使用邀请加入账本' });
   }
+  let checked = false;
   if (existing.configured) {
     const next = upgradedUrl(existing.serverUrl);
     if (next !== existing.serverUrl) {
@@ -666,17 +728,36 @@ function signIn(options) {
       existing = loadConnection();
     }
     store.finishBootstrap(existing);
-    if (checkedRevision === connectionRevision && !(options && options.force)) return Promise.resolve({ ok: true });
+    const refreshOwner = options?.restoreOwner && existing.memberId === OWNER_ID && existing.loginMethod === 'wechat';
+    checked = checkedRevision === connectionRevision && !options?.force && !refreshOwner;
   }
   const seen = connectionRevision;
   const intent = invitationRevision;
   const active = () => seen === connectionRevision && intent === invitationRevision && !joining;
-  const task = (existing.configured ? checkConnection(existing, active) : createAccount(active)).then(result => {
-    if (result.ok) checkedRevision = connectionRevision;
-    return result;
-  });
+  const task = signInCurrent();
   signingIn = task.finally(function () { signingIn = null; });
   return signingIn;
+
+  async function signInCurrent() {
+    const result = checked ? { ok: true } :
+      await (existing.configured ? checkConnection(existing, active) : createAccount(active, options));
+    if (result.stale) return result;
+    if (result.ok) checkedRevision = connectionRevision;
+    const current = loadConnection();
+    if (result.ok && options?.restoreOwner && existing.configured &&
+        current.memberId === OWNER_ID && current.loginMethod === 'wechat' && current.serverUrl === config.serverUrl) {
+      const merged = await mergeOwnerRecords(current);
+      const latest = loadConnection();
+      if (latest.apiToken !== current.apiToken || latest.serverUrl !== current.serverUrl) return switched();
+      return merged.ok ? result : merged;
+    }
+    if (!options?.restoreOwner || (!existing.configured && current.loginMethod !== 'device') || current.memberId === OWNER_ID ||
+        current.serverUrl !== config.serverUrl || previewedInvite || joining ||
+        (!result.ok && !authFailure(result.status))) return result;
+    const restored = await openOwnerLedger();
+    if (restored.ok) checkedRevision = connectionRevision;
+    return restored.ok || restored.pendingSwitch || restored.stale ? restored : result;
+  }
 }
 function refreshCachedSettings() {
   if (!loadConnection().configured) return Promise.resolve(false);
@@ -707,5 +788,8 @@ module.exports = {
   wechatStatus: wechatStatus,
   bindWeChat: bindWeChat,
   reportSubscription: reportSubscription,
-  signIn: signIn
+  signIn: signIn,
+  createOwnerPair: createOwnerPair,
+  openOwnerLedger: openOwnerLedger,
+  isOwnerLedger: isOwnerLedger
 };

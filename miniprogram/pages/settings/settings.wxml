@@ -27,16 +27,52 @@
     </view>
   </view>
 
-  <text wx:if="{{connected && memberName}}" class="device-note">当前账本 · {{memberName}}</text>
+  <text wx:if="{{ownerLedger || (connected && memberName)}}" class="device-note">当前账本 · {{ownerLedger ? '管理员' : memberName}}</text>
   <text wx:if="{{!loaded || loading || signInFailed}}" class="device-note" aria-live="polite">{{connectionText}}</text>
   <view wx:if="{{signInFailed}}" class="connection-actions">
     <button class="button link" hover-class="press" disabled="{{loading || saving || inviteBusy || invitePreview}}" bindtap="retrySignIn">重试连接</button>
   </view>
 
+  <view wx:if="{{!ownerLinked}}" class="ledger-link">
+    <button class="button link ledger-toggle" bindtap="toggleOwnerPair" aria-expanded="{{pairOpen}}">
+      <text>关联我的电脑账本</text><view class="chevron {{pairOpen ? 'expanded' : ''}}"></view>
+    </button>
+  </view>
+  <view wx:if="{{ownerLinked}}" class="surface invite-card owner-status">
+    <text class="pair-heading">微信已绑定</text>
+    <text class="invite-detail" aria-live="polite">{{ownerSyncText}}</text>
+    <button wx:if="{{ownerNeedsSync && pairBusy !== 'sync'}}" class="button link" hover-class="press"
+      disabled="{{saving || inviteBusy}}" bindtap="retryOwnerSync">重试同步</button>
+  </view>
+  <view wx:elif="{{pairOpen}}" class="surface invite-card">
+    <text class="pair-heading">绑定管理员微信</text>
+    <text class="invite-detail">配对成功后，会把同一微信的旧账本记录合并到管理员账本。</text>
+    <block wx:if="{{pairCode}}">
+      <view class="pair-code-row">
+        <view>
+          <text class="pair-code numerals" selectable="true">{{pairCode}}</text>
+          <text class="invite-detail">剩余 {{pairTime}}</text>
+        </view>
+        <button class="button link" hover-class="press" disabled="{{pairBusy}}" bindtap="copyOwnerPair">复制</button>
+      </view>
+      <text class="invite-detail">在电脑的「记录 → 绑定我的微信」输入配对码并确认，然后回到手机点继续。</text>
+      <button class="button primary pair-primary" hover-class="press" disabled="{{pairBusy || saving || inviteBusy || invitePreview}}"
+        bindtap="openOwnerLedger">{{pairBusy === 'open' ? '正在打开…' : '继续'}}</button>
+      <button class="button link pair-secondary" hover-class="press" disabled="{{pairBusy}}" bindtap="createOwnerPair">重新获取配对码</button>
+    </block>
+    <block wx:else>
+      <text wx:if="{{pairExpired}}" class="field-error" aria-live="polite">配对码已过期，可重新获取。</text>
+      <button class="button primary pair-primary" hover-class="press" disabled="{{pairBusy || saving || inviteBusy || invitePreview}}"
+        bindtap="createOwnerPair">{{pairBusy === 'code' ? '正在获取…' : pairExpired ? '重新获取' : '获取配对码'}}</button>
+      <button class="button link pair-secondary" hover-class="press" disabled="{{pairBusy || saving || inviteBusy || invitePreview}}"
+        bindtap="openOwnerLedger">{{pairBusy === 'open' ? '正在打开…' : '已在电脑确认？打开管理员账本'}}</button>
+    </block>
+    <text wx:if="{{pairError}}" class="field-error" aria-live="polite">{{pairError}}</text>
+  </view>
   <view class="ledger-link">
     <button class="button link ledger-toggle" bindtap="toggleInvitation"
-      disabled="{{inviteBusy && invitePreview}}" aria-expanded="{{inviteOpen}}">
-      <text>关联电脑账本</text><view class="chevron {{inviteOpen ? 'expanded' : ''}}"></view>
+      disabled="{{pairBusy || (inviteBusy && invitePreview)}}" aria-expanded="{{inviteOpen}}">
+      <text>使用旧版邀请码</text><view class="chevron {{inviteOpen ? 'expanded' : ''}}"></view>
     </button>
   </view>
   <view wx:if="{{inviteOpen}}" class="surface invite-card">
@@ -156,7 +192,7 @@
     <text wx:if="{{mobilePushEnabled && phoneMode === 'PushWard' && pushWardState === 'unavailable'}}" class="field-error save-note"
       aria-live="polite">当前设置收不到手机提醒。可选择其他提醒方式。</text>
     <button class="button primary save" hover-class="press"
-      disabled="{{!dirty || loading || saving || inviteBusy || invitePreview}}" bindtap="save">{{saving ? '正在保存…' : '保存设置'}}</button>
+        disabled="{{!dirty || loading || saving || pairBusy || inviteBusy || invitePreview}}" bindtap="save">{{saving ? '正在保存…' : '保存设置'}}</button>
   </block>
   <text wx:if="{{error}}" class="validation" aria-live="polite">{{error}}</text>
   <button wx:if="{{loaded && conflict}}" class="button link" disabled="{{loading || saving}}" bindtap="reloadConflict">重新读取服务器设置</button>

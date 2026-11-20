@@ -53,3 +53,10 @@
 .invite-preview .primary { flex: 1; width: auto; }
 .invite-detail, .channel-note { display: block; color: var(--muted); font-size: 24rpx; overflow-wrap: anywhere; }
 .invite-detail { margin-top: 8rpx; }
+.pair-heading { display: block; font-size: 30rpx; font-weight: 620; }
+.pair-code-row { display: flex; align-items: center; justify-content: space-between; gap: 12rpx; margin: 20rpx 0; padding: 16rpx 20rpx; border-radius: 20rpx; background: var(--inset); }
+.pair-code { display: block; color: var(--ink); font-size: 44rpx; font-weight: 670; letter-spacing: 4rpx; }
+.pair-code-row .link { padding: 0 14rpx; flex-shrink: 0; }
+.pair-primary { margin-top: 20rpx; }
+.pair-secondary { display: flex; margin: 4rpx auto 0; }
+.owner-status { margin: 14rpx 0; }

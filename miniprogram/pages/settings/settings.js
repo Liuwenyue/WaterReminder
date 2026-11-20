@@ -74,10 +74,17 @@ Page({
     inviteOpen: false,
     inviteBusy: false,
     invitePreview: null,
-    inviteError: ''
+    inviteError: '',
+    pairOpen: false, pairBusy: '', pairCode: '', pairTime: '', pairExpired: false, pairError: '',
+    ownerLedger: false, ownerLinked: false, ownerSyncText: '', ownerNeedsSync: false
   },
   onShow() {
     this._hidden = false;
+    const state = getApp().globalData;
+    if (state.openOwnerPair) {
+      state.openOwnerPair = false;
+      this.setData({ pairOpen: true });
+    }
     this.reload(false);
     if (!this.data.connected) return this.retrySignIn();
     if (this.data.dirty || this.data.saving || this.data.inviteBusy) return Promise.resolve(true);
@@ -85,27 +92,38 @@ Page({
   },
   onHide() {
     this._hidden = true;
+    this.cancelPairCodeRequest();
+    clearTimeout(this._pairTimer);
     this._read = null;
     this._wechatRequest = null;
     this._confirm = null;
     if (!this._invite || !this._invite.redeeming) this.cancelInvitation();
     this.setData({ loading: false });
   },
-  onUnload() { this.onHide(); },
+  onUnload() { this._unloaded = true; this.onHide(); },
   reload(refresh = true) {
     const connection = server.loadConnection();
     const account = store.accountKey();
     const changed = this._account !== undefined && this._account !== account;
     this._account = account;
     const sync = connection.configured ? store.syncInfo() : null;
+    const ownerLedger = server.isOwnerLedger(connection);
+    const ownerLinked = ownerLedger && connection.loginMethod === 'wechat';
+    const ownerNeedsSync = ownerLinked && (!sync.synced || !!sync.error || sync.pending > 0);
+    if (changed || ownerLinked) this.cancelPairCodeRequest();
+    if (changed || ownerLinked) this.clearPairCode();
     this.setData({
       connected: connection.configured, memberName: connection.memberName,
-      syncText: sync && (sync.pending || sync.error || sync.blocked) ? sync.text : '',
+      ownerLedger, ownerLinked, ownerNeedsSync,
+      ownerSyncText: ownerLinked && (this.data.pairBusy === 'sync' ? '正在同步记录…' :
+        ownerNeedsSync ? '记录尚未同步' : '记录已同步') || '',
+      syncText: !ownerLinked && sync && (sync.pending || sync.error || sync.blocked) ? sync.text : '',
       syncBlocked: !!(sync && sync.blocked),
       legacyCount: sync ? store.legacyCount() : 0,
-      ...(changed ? { loaded: false, dirty: false, fieldErrors: {}, conflict: false,
+      ...(changed ? { loaded: false, dirty: false, fieldErrors: {}, conflict: false, pairError: '',
         wechatReady: false, wechatState: 'unknown', pushWardState: 'unknown' } : {})
     });
+    if (!ownerLinked) this.updatePairTime();
     if (changed) {
       this.cancelInvitation();
       if (refresh && connection.configured && !this.data.saving) return this.loadFromServer();
@@ -114,6 +132,114 @@ Page({
   retrySignIn() {
     if (this.data.loading || this.data.saving || this.data.inviteBusy || this.data.invitePreview) return Promise.resolve(false);
     return this.loadFromServer({ signIn: true });
+  },
+  async createOwnerPair() {
+    if (this.data.pairBusy || this.data.ownerLinked || !this.data.pairOpen) return;
+    const attempt = { account: store.accountKey() };
+    this._pairCodeRequest = attempt;
+    const active = () => this._pairCodeRequest === attempt && !this._hidden && this.data.pairOpen &&
+      store.accountKey() === attempt.account;
+    this.clearPairCode();
+    this.setData({ pairBusy: 'code', pairError: '' });
+    try {
+      const result = await server.createOwnerPair();
+      if (!active()) return;
+      const pair = result.ok && result.data;
+      const expiresAt = pair ? Date.parse(pair.expiresAt) : NaN;
+      if (!pair || typeof pair.code !== 'string' || !/^[0-9]{8}$/.test(pair.code) || !Number.isFinite(expiresAt)) {
+        this.setData({ pairError: result.error || '无法获取配对码，请重试。' });
+        return;
+      }
+      this._pairCode = { code: pair.code, expiresAt, account: attempt.account };
+      this.updatePairTime();
+    } catch (_) {
+      if (active()) this.setData({ pairError: '无法获取配对码，请重试。' });
+    } finally {
+      this.cancelPairCodeRequest();
+      if (!this._unloaded) this.setData({ pairBusy: '' });
+    }
+  },
+  cancelPairCodeRequest() {
+    this._pairCodeRequest = null;
+  },
+  clearPairCode(expired = false) {
+    clearTimeout(this._pairTimer);
+    this._pairCode = null;
+    if (this.data.pairCode || this.data.pairExpired !== expired)
+      this.setData({ pairCode: '', pairTime: '', pairExpired: expired });
+  },
+  updatePairTime() {
+    clearTimeout(this._pairTimer);
+    const pair = this._pairCode;
+    if (!pair) return false;
+    if (pair.account !== store.accountKey()) {
+      this.clearPairCode();
+      return false;
+    }
+    const remaining = pair.expiresAt - Date.now();
+    if (remaining <= 0) {
+      this.clearPairCode(true);
+      return false;
+    }
+    if (this._hidden || !this.data.pairOpen) return false;
+    const seconds = Math.ceil(remaining / 1000);
+    const pairTime = Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+    this.setData({ pairCode: pair.code, pairTime });
+    this._pairTimer = setTimeout(() => this.updatePairTime(), (remaining - 1) % 1000 + 1);
+    return true;
+  },
+  copyOwnerPair() {
+    if (this.data.pairBusy || !this.updatePairTime()) return;
+    const pair = this._pairCode;
+    wx.setClipboardData({ data: pair.code, fail: () => {
+      if (!this._hidden && this._pairCode === pair && this.data.pairOpen)
+        this.setData({ pairError: '未能复制配对码，请重试。' });
+    } });
+  },
+  async openOwnerLedger() {
+    if (this.data.pairBusy || this.data.ownerLinked || this.data.saving || this.data.inviteBusy || this.data.invitePreview) return;
+    this.setData({ pairBusy: 'open', pairError: '' });
+    try {
+      const result = await server.openOwnerLedger();
+      if (!result.ok) {
+        if (!this._hidden && !result.stale) this.setData({ pairError: result.error || '无法打开管理员账本，请重试。' });
+        return;
+      }
+      if (this._unloaded) return;
+      this.clearPairCode();
+      this.setData({ pairBusy: '' });
+      this.reload(false);
+      await this.retryOwnerSync();
+    } catch (_) {
+      if (!this._hidden) this.setData({ pairError: '无法打开管理员账本，请重试。' });
+    } finally {
+      if (!this._unloaded && this.data.pairBusy === 'open') this.setData({ pairBusy: '' });
+    }
+  },
+  async retryOwnerSync() {
+    if (this.data.pairBusy || !this.data.ownerLinked) return;
+    const account = store.accountKey();
+    this.setData({ pairBusy: 'sync', ownerSyncText: '正在同步记录…' });
+    try {
+      const synced = await getApp().signIn();
+      if (account !== store.accountKey() || this._unloaded) return;
+      if (!synced.ok && !store.syncInfo().error)
+        store.syncFailure(synced.error || '暂时无法读取记录，请重试。', store.syncInfo().blocked);
+      if (!this._hidden && !this.data.dirty) await this.loadFromServer();
+    } catch (_) {
+      if (account === store.accountKey()) store.syncFailure('暂时无法读取记录，请重试。', store.syncInfo().blocked);
+    } finally {
+      if (!this._unloaded) {
+        this.setData({ pairBusy: '' });
+        this.reload(false);
+      }
+    }
+  },
+  toggleOwnerPair() {
+    const pairOpen = !this.data.pairOpen;
+    this.setData({ pairOpen });
+    if (!pairOpen) this.cancelPairCodeRequest();
+    this.updatePairTime();
   },
   async loadFromServer({ signIn = false, discard = false } = {}) {
     if (this.data.saving || this.data.inviteBusy) return false;

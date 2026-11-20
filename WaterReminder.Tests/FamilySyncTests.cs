@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.WebUtilities;
@@ -22,16 +24,20 @@ public sealed class FamilySyncTests
         using var files = new TestFiles();
         using var handler = new LoginIdentityHandler();
         using var weChat = new WeChatClient(new WeChatConfig { AppId = "test-app", AppSecret = "test-secret" }, handler);
-        await using var host = await Host.Start(files.Path, weChat);
         var route = $"api/{method}/login";
         var identityField = method == "wechat" ? "code" : "deviceId";
         var original = new string('a', 64);
         var other = new string('b', 64);
         var unknown = new string('c', 64);
-        using var firstLogin = await host.Anonymous.PostAsJsonAsync(route, new Dictionary<string, string> { [identityField] = original });
+        if (method == "device")
+            SeedLegacyDevices(files.Path, original, other);
+        await using var host = await Host.Start(files.Path, weChat);
+        using var firstLogin = await host.Anonymous.PostAsJsonAsync(route, new Dictionary<string, string>
+            { [identityField] = original, ["name"] = "甲" });
         firstLogin.EnsureSuccessStatusCode();
         var memberId = (await firstLogin.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("memberId").GetGuid();
-        using var otherLogin = await host.Anonymous.PostAsJsonAsync(route, new Dictionary<string, string> { [identityField] = other });
+        using var otherLogin = await host.Anonymous.PostAsJsonAsync(route, new Dictionary<string, string>
+            { [identityField] = other, ["name"] = "乙" });
         otherLogin.EnsureSuccessStatusCode();
         var otherId = (await otherLogin.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("memberId").GetGuid();
         Assert.NotEqual(memberId, otherId);
@@ -75,6 +81,108 @@ public sealed class FamilySyncTests
                 .OrderBy(path => path, StringComparer.Ordinal)
                 .Select(path => (path, Convert.ToBase64String(File.ReadAllBytes(path)), File.GetLastWriteTimeUtc(path)))
                 .ToArray();
+    }
+
+    internal static Guid[] SeedLegacyDevices(string directory, params string[] deviceIds)
+    {
+        var accounts = deviceIds.Select(deviceId => new
+        {
+            Id = Guid.NewGuid(), Name = "旧版设备", CodeHash = new string('0', 64), SharedWithOwner = false,
+            WeChatIdentityHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("device:" + deviceId)))
+        }).ToArray();
+        File.WriteAllText(Path.Combine(directory, "family.json"), JsonSerializer.Serialize(accounts));
+        return accounts.Select(account => account.Id).ToArray();
+    }
+
+    [Fact]
+    public async Task PhonePairingOpensExistingOwnerLedgerOnlyForThePairedWeChat()
+    {
+        using var files = new TestFiles();
+        using var handler = new LoginIdentityHandler();
+        using var weChat = new WeChatClient(new WeChatConfig { AppId = "test-app", AppSecret = "test-secret" }, handler);
+        var day = DateOnly.FromDateTime(ShanghaiClock.Now()).AddDays(-1).ToString("yyyy-MM-dd");
+        const string ownerCode = "aaaaaaaa-first-login";
+        const string otherCode = "bbbbbbbb-first-login";
+        Guid otherId;
+        await using (var host = await Host.Start(files.Path, weChat))
+        {
+            await PostSync(host.Owner, Operation(day, "drink", amount: 325));
+            var loginPath = "api/wechat/login";
+            using var missingDevice = await host.Anonymous.PostAsJsonAsync("api/device/login", new { deviceId = new string('c', 64) });
+            Assert.Equal(HttpStatusCode.NotFound, missingDevice.StatusCode);
+            Assert.True((await missingDevice.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("deviceAccountMissing").GetBoolean());
+
+            using var originalLogin = await host.Anonymous.PostAsJsonAsync(loginPath, new { code = ownerCode, name = "原账本" });
+            originalLogin.EnsureSuccessStatusCode();
+            var originalId = (await originalLogin.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("memberId").GetGuid();
+            using var unnamed = await host.Anonymous.PostAsJsonAsync(loginPath, new { code = otherCode });
+            Assert.Equal(HttpStatusCode.Conflict, unnamed.StatusCode);
+            Assert.True((await unnamed.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("registrationRequired").GetBoolean());
+            using var signUp = await host.Anonymous.PostAsJsonAsync(loginPath, new { code = otherCode, name = "我" });
+            signUp.EnsureSuccessStatusCode();
+            var registered = await signUp.Content.ReadFromJsonAsync<JsonElement>();
+            otherId = registered.GetProperty("memberId").GetGuid();
+            Assert.NotEqual(Guid.Empty, otherId);
+            using var member = host.Client(registered.GetProperty("accessCode").GetString());
+
+            using var attempt = await host.Anonymous.PostAsJsonAsync("api/wechat/owner-pair", new { code = ownerCode });
+            attempt.EnsureSuccessStatusCode();
+            var pairCode = (await attempt.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString();
+            using var tooEarly = await host.Anonymous.PostAsJsonAsync(loginPath, new { code = ownerCode, ownerOnly = true });
+            Assert.Equal(HttpStatusCode.BadRequest, tooEarly.StatusCode);
+            using var denied = await member.PostAsJsonAsync("api/family/owner-pair", new { code = pairCode });
+            Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+            using var confirmed = await host.Owner.PostAsJsonAsync("api/family/owner-pair", new { code = pairCode });
+            confirmed.EnsureSuccessStatusCode();
+            using var originalRenewed = await host.Anonymous.PostAsJsonAsync(loginPath, new { code = ownerCode, expectedMemberId = originalId });
+            originalRenewed.EnsureSuccessStatusCode();
+            var original = await originalRenewed.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(originalId, original.GetProperty("memberId").GetGuid());
+            using var originalPhone = host.Client(original.GetProperty("accessCode").GetString());
+            Assert.False((await originalPhone.GetFromJsonAsync<FamilyOverview>("api/family"))!.IsOwner);
+            await PostSync(originalPhone, Operation(day, "drink", amount: 325));
+            var personalOnly = Operation(day, "drink", amount: 150);
+            await PostSync(originalPhone, personalOnly);
+            using var unauthorizedMerge = await originalPhone.PostAsync("api/wechat/owner-merge", null);
+            Assert.Equal(HttpStatusCode.Forbidden, unauthorizedMerge.StatusCode);
+            using var wrongMember = await host.Anonymous.PostAsJsonAsync(loginPath, new { code = ownerCode, expectedMemberId = otherId });
+            Assert.Equal(HttpStatusCode.BadRequest, wrongMember.StatusCode);
+            using var replay = await host.Owner.PostAsJsonAsync("api/family/owner-pair", new { code = pairCode });
+            Assert.Equal(HttpStatusCode.BadRequest, replay.StatusCode);
+            using var impostor = await host.Anonymous.PostAsJsonAsync(loginPath, new { code = otherCode, ownerOnly = true });
+            Assert.Equal(HttpStatusCode.BadRequest, impostor.StatusCode);
+            Assert.Equal(0, (await Records(member, day)).GetProperty("consumedMl").GetInt32());
+
+            var drink = Operation(day, "drink", amount: 500);
+            await PostSync(member, drink);
+            var edit = new SyncOperation { Id = Guid.NewGuid(), Date = day, Kind = "edit", EventId = drink.Id, AmountMl = 300 };
+            var body = new SyncOperationsRequest { Operations = [edit] };
+            var editPath = $"api/family/{otherId}/records/operations";
+            using var forbiddenEdit = await member.PostAsJsonAsync(editPath, body);
+            Assert.Equal(HttpStatusCode.Forbidden, forbiddenEdit.StatusCode);
+            using var adminEdit = await host.Owner.PostAsJsonAsync(editPath, body);
+            adminEdit.EnsureSuccessStatusCode();
+            Assert.Equal(300, (await Records(member, day)).GetProperty("consumedMl").GetInt32());
+        }
+
+        await using var restarted = await Host.Start(files.Path, weChat);
+        using var freshLogin = await restarted.Anonymous.PostAsJsonAsync("api/wechat/login", new { code = "aaaaaaaa-fresh-phone" });
+        freshLogin.EnsureSuccessStatusCode();
+        var owner = await freshLogin.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(Guid.Empty, owner.GetProperty("memberId").GetGuid());
+        using var phone = restarted.Client(owner.GetProperty("accessCode").GetString());
+        Assert.Equal(325, (await Records(phone, day)).GetProperty("consumedMl").GetInt32());
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var merge = await phone.PostAsJsonAsync("api/wechat/owner-merge", new { });
+            merge.EnsureSuccessStatusCode();
+        }
+        var merged = await Records(phone, day);
+        Assert.Equal(475, merged.GetProperty("consumedMl").GetInt32());
+        Assert.Equal(2, merged.GetProperty("events").GetArrayLength());
+        var overview = await phone.GetFromJsonAsync<FamilyOverview>("api/family");
+        Assert.True(overview!.IsOwner);
+        Assert.Contains(overview.Members, member => member.Id == otherId);
     }
 
     [Fact]

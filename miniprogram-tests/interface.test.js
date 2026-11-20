@@ -78,25 +78,36 @@ test('one tap updates the amount, progress and recent entry; a rapid second tap 
   assert.equal(today.data.feedback, '');
 });
 
-test('opening the app creates a personal ledger without asking for a server or token', async () => {
+test('first opening asks for a name before creating a personal ledger', async () => {
   wx.login = options => options.success({ code: 'login-code-ok' });
   requestHandler = options => {
     if (String(options.url).endsWith('/api/wechat/login')) {
       assert.equal(options.data.shareToken, null);
+      if (!options.data.name) {
+        options.success({ statusCode: 409, data: { error: '请输入你的名字。', registrationRequired: true } });
+        return;
+      }
+      assert.equal(options.data.name, '小林');
       options.success({ statusCode: 200, data: {
         accessCode: 'wr_' + 'ab'.repeat(32),
         memberId: '11111111-1111-1111-1111-111111111111',
-        memberName: '成员abc123',
-        sharedWithOwner: false
+        memberName: '小林',
+        sharedWithOwner: true
       }});
       return;
     }
     options.success({ statusCode: 200, data: {} });
   };
-  await app.onShow({});
+  const today = mount(todayPage);
+  today.onShow();
+  await new Promise(resolve => setImmediate(resolve));
   const api = require('../miniprogram/utils/server.js');
+  assert.equal(api.loadConnection().configured, false);
+  assert.equal(today.data.registrationRequired, true);
+  today.updateName({ detail: { value: ' 小林 ' } });
+  await today.register();
   assert.equal(api.loadConnection().configured, true);
-  assert.equal(api.loadConnection().memberName, '成员abc123');
+  assert.equal(api.loadConnection().memberName, '小林');
   assert.equal(api.loadConnection().serverUrl, 'https://wednesday-holly-warcraft-beef.trycloudflare.com');
   const settings = mount(settingsPage);
   assert.equal(settings.data.apiToken, undefined);
@@ -104,13 +115,14 @@ test('opening the app creates a personal ledger without asking for a server or t
 });
 
 
-test('settings template has one save action and only desktop invitation controls', () => {
+test('settings has one save action and keeps pairing and legacy invitations separate', () => {
   const template = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '../miniprogram/pages/settings/settings.wxml'), 'utf8');
   assert.equal([...template.matchAll(/bindtap="save"/g)].length, 1);
   assert.match(template, /bindtap="scanInvite"/);
   assert.match(template, /bindtap="confirmInvitation"/);
-  assert.match(template, /关联电脑账本/);
+  assert.match(template, /关联我的电脑账本/);
+  assert.match(template, /bindtap="createOwnerPair"/);
   assert.match(template, /wx:if="{{inviteOpen}}" class="surface invite-card"/);
   assert.match(template, /disabled="{{inviteBusy}}" bindtap="cancelInvitation"/);
   assert.match(template, /当前设置收不到手机提醒/);
@@ -122,7 +134,7 @@ test('custom entry validates, persists once and releases the reminder and tab ba
   const today = mount(todayPage);
   today.onShow();
   today.customAmount();
-  const editor = mount(sheet, { initialValue: '', minimum: 1, maximum: 5000 });
+  const editor = mount(sheet, { actionId: today.data.actionId, initialValue: '', minimum: 1, maximum: 5000 });
   today.selectComponent = () => editor;
   editor.triggerEvent = (name, detail) => {
     if (name === 'confirm') today.addCustom({ detail });
@@ -145,7 +157,7 @@ test('custom entry validates, persists once and releases the reminder and tab ba
   assert.equal(today.data.consumedText, '20,000');
   assert.equal(today.data.recent[0].glyph, 'measure');
   sheet.lifetimes.detached.call(editor);
-  today.closeAmount();
+  today.closeAmount({ detail: { actionId: today.data.actionId } });
   today.onHide();
   assert.equal(tabVisible, true);
   assert.equal(app.globalData.amountEditorOpen, false);
@@ -167,7 +179,7 @@ test('chart selection and total corrections target the selected day, including t
   assert.equal(records.data.total, 250);
   records.adjust();
   records.selectComponent = () => ({ dismiss() {} });
-  records.saveTotal({ detail: { amount: 0 } });
+  records.saveTotal({ detail: { actionId: records.data.actionId, amount: 0 } });
   assert.equal(records.data.total, 0);
   assert.equal(records.data.empty, false);
   assert.ok(records.data.events.some(entry => entry.negative));
@@ -184,6 +196,143 @@ test('chart selection and total corrections target the selected day, including t
   assert.equal(records.data.total, 370);
   assert.equal(records.data.canNext, false);
   assert.equal(app.globalData.openTodayRecords, false);
+});
+
+test('account changes invalidate open record editors and delayed confirmations', () => {
+  const api = require('../miniprogram/utils/server.js');
+  const connect = (memberId, memberName, apiToken) => api.saveConnection({
+    serverUrl: 'https://cup.example', apiToken, memberId, memberName, loginMethod: 'wechat'
+  });
+  const day = store.shanghaiDate(new Date());
+  const seed = (amountMl, id) => store.applyRemote({
+    days: [{ date: day, events: [{ id, amountMl, at: day + 'T09:00:00' }] }], status: { goalMl: 2000 }
+  }, []);
+  connect('old', '原账本', 'old-session');
+  seed(350, 'old-event');
+  const oldKey = store.accountKey();
+  const records = mount(recordsPage);
+  const today = mount(todayPage);
+  records.onShow();
+  today.onShow();
+  records.adjust();
+  const correction = { detail: { amount: 500, actionId: records.data.actionId } };
+  today.customAmount();
+  const custom = { detail: { amount: 200, actionId: today.data.actionId } };
+  records.remove({ currentTarget: { dataset: { id: 'old-event' } } });
+  const deletePrompt = modal;
+  records.clearDay();
+  const clearPrompt = modal;
+  assert.match(clearPrompt.content, new RegExp('原账本 · ' + day));
+  connect('owner', '管理员', 'owner-session');
+  seed(270, 'owner-event');
+  records.reload();
+  today.reload();
+  assert.equal(records.data.ledgerName, '管理员');
+  assert.equal(records.data.amountOpen, false);
+  assert.equal(today.data.amountOpen, false);
+  records.saveTotal(correction);
+  today.addCustom(custom);
+  for (const prompt of [deletePrompt, clearPrompt]) {
+    prompt.success({ confirm: true });
+    prompt.complete();
+  }
+  assert.equal(store.load().queue.length, 0);
+  assert.equal(wx.getStorageSync(oldKey).queue.length, 0);
+  assert.equal(records.data.total, 270);
+
+  records.adjust();
+  records.selectComponent = () => ({ dismiss() {} });
+  connect('owner', '管理员', 'renewed-session');
+  records.reload();
+  assert.equal(records.data.amountOpen, true);
+  records.saveTotal({ detail: { amount: 300, actionId: records.data.actionId } });
+  assert.equal(store.load().queue[0].kind, 'setTotal');
+  assert.equal(store.load().queue[0].totalMl, 300);
+  today.onHide();
+});
+
+test('pair codes copy only digits, expire on return, and stale requests cannot update a new ledger', async () => {
+  const api = require('../miniprogram/utils/server.js');
+  const settings = mount(settingsPage, { pairOpen: true });
+  const originalNow = Date.now;
+  const originalPair = api.createOwnerPair;
+  let now = originalNow(), copied, respond;
+  Date.now = () => now;
+  wx.setClipboardData = options => { copied = options.data; };
+  api.createOwnerPair = async () => ({ ok: true, data: { code: '12345678', expiresAt: new Date(now + 5000).toISOString() } });
+  try {
+    await settings.createOwnerPair();
+    assert.equal(settings.data.pairTime, '0:05');
+    settings.copyOwnerPair();
+    assert.equal(copied, '12345678');
+    settings.onHide();
+    now += 5001;
+    settings._hidden = false;
+    settings.reload(false);
+    assert.equal(settings.data.pairCode, '');
+    assert.equal(settings.data.pairExpired, true);
+    copied = undefined;
+    settings.copyOwnerPair();
+    assert.equal(copied, undefined);
+    api.createOwnerPair = () => new Promise(resolve => { respond = resolve; });
+    const pending = settings.createOwnerPair();
+    api.saveConnection({ serverUrl: 'https://cup.example', apiToken: 'another', memberId: 'another' });
+    settings.reload(false);
+    respond({ ok: true, data: { code: '87654321', expiresAt: new Date(now + 5000).toISOString() } });
+    await pending;
+    assert.equal(settings.data.pairCode, '');
+    assert.equal(settings.data.pairBusy, '');
+    const leaving = settings.createOwnerPair();
+    settings.onHide();
+    await settings.createOwnerPair();
+    assert.equal(settings.data.pairBusy, 'code');
+    respond({ ok: true, data: { code: '87654321', expiresAt: new Date(now + 5000).toISOString() } });
+    await leaving;
+    assert.equal(settings.data.pairCode, '');
+    assert.equal(settings.data.pairBusy, '');
+  } finally {
+    settings.onHide();
+    Date.now = originalNow;
+    api.createOwnerPair = originalPair;
+    delete wx.setClipboardData;
+  }
+});
+
+test('owner pairing shows the current ledger and retries record sync separately', async () => {
+  const api = require('../miniprogram/utils/server.js');
+  const originalOpen = api.openOwnerLedger;
+  const originalSignIn = app.signIn;
+  const owner = '00000000-0000-0000-0000-000000000000';
+  function connect(memberId, loginMethod) {
+    api.saveConnection({ serverUrl: 'https://cup.example', apiToken: memberId, memberId, loginMethod });
+  }
+  const settings = mount(settingsPage, { pairOpen: true });
+  settings.loadFromServer = async () => true;
+  api.openOwnerLedger = async () => { connect(owner, 'wechat'); return { ok: true }; };
+  app.signIn = async () => ({ ok: false, error: '模拟网络故障' });
+  try {
+    await settings.openOwnerLedger();
+    assert.equal(settings.data.ownerLinked, true);
+    assert.equal(settings.data.ownerSyncText, '记录尚未同步');
+    assert.equal(settings.data.ownerNeedsSync, true);
+    app.signIn = async () => {
+      store.applyRemote({ days: [], status: { goalMl: 2000 } }, []);
+      return { ok: true };
+    };
+    await settings.retryOwnerSync();
+    assert.equal(settings.data.ownerSyncText, '记录已同步');
+    assert.equal(settings.data.ownerNeedsSync, false);
+    const reopened = mount(settingsPage);
+    reopened.reload(false);
+    assert.equal(reopened.data.ownerLinked, true);
+    connect('ordinary', 'wechat');
+    settings.reload(false);
+    assert.equal(settings.data.ownerLedger, false);
+    assert.equal(settings.data.ownerSyncText, '');
+  } finally {
+    api.openOwnerLedger = originalOpen;
+    app.signIn = originalSignIn;
+  }
 });
 
 function serverSettings(extra) {

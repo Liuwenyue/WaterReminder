@@ -141,28 +141,120 @@ test('network and auth failures stay on the form and do not invent settings', as
   assert.equal(store.load().settings.dailyGoalMl, store.load().settings.dailyGoalMl);
 });
 
-test('sign-in falls back to a device ledger when WeChat login is unavailable', async () => {
+test('a new user only registers with a verified WeChat identity and a name', async () => {
   wx.login = options => options.success({ code: 'login-code-ok' });
+  let unavailable = true;
   wx.request = options => {
-    assert.equal(Object.hasOwn(options.data, 'expectedMemberId'), false);
-    if (String(options.url).endsWith('/api/wechat/login')) {
+    assert.equal(options.url, config.serverUrl + '/api/wechat/login');
+    if (unavailable) {
       options.success({ statusCode: 503, data: {} });
       return;
     }
-    assert.equal(options.url, 'https://wednesday-holly-warcraft-beef.trycloudflare.com/api/device/login');
-    assert.match(options.data.deviceId, /^[0-9a-f]{64}$/);
+    if (!options.data.name) {
+      options.success({ statusCode: 409, data: { registrationRequired: true } });
+      return;
+    }
+    assert.equal(options.data.name, '小林');
     options.success({ statusCode: 200, data: {
       accessCode: 'wr_' + 'cd'.repeat(32),
       memberId: '22222222-2222-2222-2222-222222222222',
-      memberName: '成员device',
-      sharedWithOwner: false
+      memberName: '小林',
+      sharedWithOwner: true
     }});
   };
-  const result = await server.signIn();
-  assert.equal(result.ok, true);
-  assert.equal(server.loadConnection().memberName, '成员device');
-  assert.equal(server.loadConnection().sharedWithOwner, false);
-  delete wx.login;
+  try {
+    assert.equal((await server.signIn()).ok, false);
+    assert.equal(server.loadConnection().configured, false);
+    assert.equal(wx.getStorageSync('water-device-id'), undefined);
+    unavailable = false;
+    assert.equal((await server.signIn()).registrationRequired, true);
+    assert.equal((await server.signIn({ name: '小林' })).ok, true);
+    assert.equal(server.loadConnection().memberName, '小林');
+    assert.equal(server.loadConnection().loginMethod, 'wechat');
+  } finally { delete wx.login; }
+});
+
+test('old device retry only falls back to WeChat for a confirmed missing ledger', async () => {
+  wx.setStorageSync('water-device-id', 'a'.repeat(64));
+  const attempt = store.beginBootstrap(config.serverUrl, 'device');
+  const paths = [];
+  let missing = false;
+  wx.login = options => options.success({ code: 'fixture-wx-code' });
+  wx.request = options => {
+    const path = options.url.slice(config.serverUrl.length);
+    paths.push(path);
+    if (path === '/api/device/login') {
+      const data = missing ? { deviceAccountMissing: true } : {};
+      return options.success({ statusCode: missing ? 404 : 503, data });
+    }
+    assert.equal(path, '/api/wechat/login');
+    return options.success({ statusCode: 409, data: { registrationRequired: true } });
+  };
+  try {
+    assert.equal((await server.signIn()).status, 503);
+    assert.deepEqual(paths.splice(0), ['/api/device/login']);
+    missing = true;
+    assert.equal((await server.signIn()).registrationRequired, true);
+    assert.deepEqual(paths, ['/api/device/login', '/api/wechat/login']);
+    assert.equal(store.bootstrap().method, 'wechat');
+    assert.equal(store.bootstrap().id, attempt.id);
+  } finally { delete wx.login; }
+});
+
+test('opening a previously used phone syncs the old ledger before merging and activating the owner ledger', async () => {
+  const memberId = '11111111-1111-1111-1111-111111111111';
+  const ownerId = '00000000-0000-0000-0000-000000000000';
+  const ownerToken = 'wr_' + 'ab'.repeat(32);
+  server.saveConnection({ serverUrl: config.serverUrl, apiToken: 'old-token', memberId, loginMethod: 'wechat' });
+  store.applyRemote({ days: [], status: { goalMl: 2000 } }, []);
+  store.addEvent(220, 'cup');
+  const currentKey = store.accountKey();
+  const paths = [];
+  let offline = true;
+  let holdingMerge = true;
+  wx.login = options => options.success({ code: 'fixture-wx-code' });
+  wx.request = options => {
+    const path = options.url.slice(config.serverUrl.length);
+    paths.push(path);
+    if (path === '/api/settings') return options.success({ statusCode: 200, data: sample() });
+    if (path === '/api/wechat/login') {
+      assert.equal(options.data.ownerOnly, true);
+      assert.equal(options.data.expectedMemberId, ownerId);
+      return options.success({ statusCode: 200, data: { memberId: ownerId, memberName: '我', accessCode: ownerToken } });
+    }
+    assert.equal(server.loadConnection().memberId, memberId);
+    if (path === '/api/sync/operations') {
+      assert.equal(options.header.Authorization, 'Bearer old-token');
+      if (offline) return options.fail({ errMsg: 'request:fail' });
+      const operations = options.data.operations;
+      return options.success({ statusCode: 200, data: {
+        results: operations.map(op => ({ id: op.id })),
+        days: operations.map(op => ({ date: op.date, events: [] })),
+        status: { goalMl: 2000 }
+      }});
+    }
+    assert.equal(path, '/api/wechat/owner-merge');
+    assert.equal(options.header.Authorization, 'Bearer ' + ownerToken);
+    if (holdingMerge) {
+      holdingMerge = false;
+      store.addEvent(90, 'cup');
+    }
+    options.success({ statusCode: 200, data: { ok: true } });
+  };
+  try {
+    const failed = await server.signIn({ restoreOwner: true });
+    assert.equal(failed.pendingSwitch, true);
+    assert.equal(store.accountKey(), currentKey);
+    assert.equal(store.load().queue.length, 1);
+    assert.deepEqual(paths.splice(0), ['/api/settings', '/api/wechat/login', '/api/sync/operations']);
+    offline = false;
+    assert.equal((await server.signIn({ restoreOwner: true })).ok, true);
+    assert.equal(server.loadConnection().memberId, ownerId);
+    assert.equal(store.load().queue.length, 0);
+    assert.equal(wx.getStorageSync(currentKey).queue.length, 0);
+    assert.deepEqual(paths, ['/api/wechat/login', '/api/sync/operations', '/api/wechat/owner-merge',
+      '/api/sync/operations', '/api/wechat/owner-merge']);
+  } finally { delete wx.login; }
 });
 
 test('settings distinguish unknown PushWard capability and report all invalid form fields', () => {

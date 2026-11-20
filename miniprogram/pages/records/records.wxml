@@ -2,7 +2,7 @@
 <view class="page" aria-hidden="{{amountOpen}}">
   <view class="page-head">
     <view>
-      <text class="eyebrow">{{monthLabel}}</text>
+      <text class="eyebrow">{{ledgerName}} · {{monthLabel}}</text>
       <text class="page-title">饮水记录</text>
     </view>
     <button wx:if="{{offset}}" class="button link today-link" hover-class="press" bindtap="showToday">回到今天</button>
@@ -54,4 +54,4 @@
   </view>
 </view>
 <amount-sheet wx:if="{{amountOpen}}" id="amountSheet" heading="校正当天总量" confirm-text="保存总量"
-  initial-value="{{initialTotal}}" minimum="{{0}}" maximum="{{maximumTotal}}" bind:confirm="saveTotal" bind:close="closeAmount" />
+  action-id="{{actionId}}" context="{{editContext}}" initial-value="{{initialTotal}}" minimum="{{0}}" maximum="{{maximumTotal}}" bind:confirm="saveTotal" bind:close="closeAmount" />

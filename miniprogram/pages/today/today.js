@@ -4,6 +4,7 @@ const store = require('../../utils/storage.js');
 const calc = require('../../utils/calculator.js');
 const journal = require('../../utils/journal.js');
 const serverApi = require('../../utils/server.js');
+const wechat = require('../../utils/wechat.js');
 
 function notableSync(info) {
   if (!info || !(info.blocked || info.error || info.pending)) return '';
@@ -25,7 +26,8 @@ Page({
   data: {
     dateLabel: '', phaseLabel: '', consumedText: '0', goalText: '0', percent: 0, fraction: 0,
     done: false, cupAmount: 0, cupLabel: '', paused: false, nextText: '', hasNext: false,
-    planHint: '', recent: [], feedback: '', sipPulse: [], amountOpen: false, presets: [150, 250, 500]
+    planHint: '', recent: [], feedback: '', sipPulse: [], amountOpen: false, presets: [150, 250, 500],
+    needsConnection: true, registrationRequired: false, registrationName: '', loginError: '', registering: false
   },
   onShow() {
     this._alive = true;
@@ -37,23 +39,34 @@ Page({
   },
   onUnload() {
     this._alive = false;
-    clearTimeout(this._feedbackTimer);
+    this.resetTransient();
   },
   resetTransient() {
+    this._edit = null;
     clearTimeout(this._feedbackTimer);
     if (this.data.amountOpen || this.data.feedback) this.setData({ amountOpen: false, feedback: '', sipPulse: [] });
   },
   reload() {
     const instant = new Date();
+    const account = store.accountKey();
+    const now = account ? store.shanghaiClock(instant) : instant;
+    const view = { account, date: calc.dateKey(now) };
+    if (this._view && (view.account !== this._view.account || view.date !== this._view.date)) this.resetTransient();
+    this._view = view;
     const connection = serverApi.loadConnection();
-    if (!connection.configured && !this._signingIn) {
+    if (!connection.configured && !this._signingIn && !this.data.registrationRequired && !this.data.loginError) {
       this._signingIn = true;
       serverApi.signIn().then((result) => {
         this._signingIn = false;
-        if (this._alive && result.ok) this.reload();
+        if (!this._alive) return;
+        if (result.ok) this.reload();
+        else if (!result.stale) this.setData({ registrationRequired: !!result.registrationRequired,
+          loginError: result.registrationRequired ? '' : result.error || '连接失败，请重试。' });
+      }).catch(() => {
+        this._signingIn = false;
+        if (this._alive) this.setData({ loginError: '连接失败，请重试。' });
       });
     }
-    const now = connection.configured ? store.shanghaiClock(instant) : instant;
     const snap = store.snapshot(instant);
     const settings = snap.state.settings;
     let lastReminder = snap.record.lastReminderAt;
@@ -87,7 +100,36 @@ Page({
       needsConnection: !connection.configured
     });
   },
-  openSettings() { wx.switchTab({ url: '/pages/settings/settings' }); },
+  updateName(event) { this.setData({ registrationName: event.detail.value, loginError: '' }); },
+  retryConnection() {
+    this.setData({ loginError: '' });
+    this.reload();
+  },
+  async register() {
+    if (this.data.registering) return;
+    const name = String(this.data.registrationName || '').trim();
+    if (!name) {
+      this.setData({ loginError: '请输入你的名字。' });
+      return;
+    }
+    this.setData({ registering: true, loginError: '' });
+    try {
+      const result = await serverApi.signIn({ name });
+      if (!result.ok) this.setData({ loginError: result.error || '注册失败，请重试。' });
+      else {
+        this.setData({ registrationRequired: false });
+        this.reload();
+        await getApp().signIn();
+      }
+    } catch (_) {
+      this.setData({ loginError: '注册失败，请重试。' });
+    } finally { this.setData({ registering: false }); }
+  },
+  openOwnerPairSettings() {
+    const state = getApp().globalData;
+    state.openOwnerPair = true;
+    wx.switchTab({ url: '/pages/settings/settings', fail: () => { state.openOwnerPair = false; } });
+  },
   recordAmount(amount, source) {
     const result = store.addEvent(amount, source);
     if (!result.ok) return result;
@@ -107,14 +149,37 @@ Page({
     const result = this.recordAmount(this.data.cupAmount, 'cup');
     if (!result.ok) wx.showToast({ title: result.error, icon: 'none' });
   },
-  customAmount() { this.setData({ amountOpen: true }); },
+  customAmount() {
+    if (!this._view) return;
+    const actionId = (this._editSequence || 0) + 1;
+    this._editSequence = actionId;
+    this._edit = { ...this._view, actionId };
+    this.setData({ amountOpen: true, actionId,
+      editContext: (this.data.identity || (this._view.account ? '当前账本' : '本机账本')) + ' · ' + this._view.date });
+  },
   addCustom(event) {
+    const edit = this._edit;
+    const account = store.accountKey();
+    const now = new Date();
+    const date = calc.dateKey(account ? store.shanghaiClock(now) : now);
+    if (!edit || event.detail.actionId !== edit.actionId || account !== edit.account || date !== edit.date) {
+      if (edit && event.detail.actionId === edit.actionId) this.resetTransient();
+      wx.showToast({ title: '账本或日期已变化，请重新操作', icon: 'none' });
+      return;
+    }
     const sheet = this.selectComponent('#amountSheet');
     const result = this.recordAmount(event.detail.amount, 'custom');
-    if (result.ok) sheet.dismiss();
-    else sheet.showError(result.error);
+    if (result.ok) {
+      this._edit = null;
+      sheet?.dismiss();
+      wechat.capture().then(wechat.report);
+    } else sheet?.showError(result.error);
   },
-  closeAmount() { this.setData({ amountOpen: false }); },
+  closeAmount(event) {
+    if (event.detail.actionId !== this.data.actionId) return;
+    this._edit = null;
+    this.setData({ amountOpen: false });
+  },
   togglePause() {
     const result = this.data.paused ? store.resume() : store.pauseToday(new Date());
     if (result && result.pending) getApp().syncChanges();

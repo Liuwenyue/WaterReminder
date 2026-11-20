@@ -52,4 +52,5 @@ miniprogram/project.private.config.json
 !miniprogram/pages/settings/settings.json
 wechat.json
 wechat-user.json
+wechat-owner.json
 

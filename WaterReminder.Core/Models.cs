@@ -62,6 +62,8 @@ public sealed class DailyRecord
     /// <summary>Phone pause/resume for this calendar day only.</summary>
     public bool? RemindersPausedOverride { get; set; }
     public Dictionary<Guid, SyncOperationReceipt>? SyncReceipts { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public HashSet<Guid>? OwnerMergeReceipts { get; set; }
     public int ConsumedMl => Math.Max(0, Events.Sum(x => x.AmountMl));
 }
 

@@ -56,7 +56,7 @@ public sealed class FamilyAndPhoneTests
             var date = (await a.GetRecordsAsync()).Value!.Date;
             var other = (await admin.GetFamilyRecordsAsync(first.Member.Id, date)).Value!;
             Assert.Equal(222, other.ConsumedMl);
-            Assert.False(other.Editable);
+            Assert.True(other.Editable);
             Assert.True(await admin.ArchiveFamilyMemberAsync(first.Member.Id));
             using var stopped = await raw.GetAsync("/api/status");
             Assert.Equal(HttpStatusCode.Unauthorized, stopped.StatusCode);

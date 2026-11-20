@@ -34,3 +34,4 @@
 @keyframes sheet-out { from { transform: translateY(0); } to { transform: translateY(100%); } }
 @keyframes dim-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes dim-out { from { opacity: 1; } to { opacity: 0; } }
+.sheet-context { display: block; margin: 0 0 12rpx; color: var(--muted); font-size: 24rpx; overflow-wrap: anywhere; }

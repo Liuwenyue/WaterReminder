@@ -343,7 +343,7 @@ function dropQueue(ids) {
 }
 function syncInfo() {
   const state = load(); const count = state.queue.length;
-  return { pending: count, blocked: state.blocked, error: state.syncError,
+  return { pending: count, blocked: state.blocked, error: state.syncError, synced: !!state.syncedAt,
     text: state.syncError ? ((state.blocked ? '同步失败：' : '离线：') + state.syncError + (count ? '，待同步 ' + count + ' 笔' : '')) : (count ? '待同步 ' + count + ' 笔' : (state.syncedAt ? '已与服务器同步' : '等待首次同步')) };
 }
 function legacyCount() {

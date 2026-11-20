@@ -7,12 +7,12 @@ App({
   globalData: { prompting: false, amountEditorOpen: false, openTodayRecords: false },
   onLaunch() {
     if (wx.onNetworkStatusChange) wx.onNetworkStatusChange(status => {
-      if (status.isConnected) this.signIn();
+      if (status.isConnected) this.signIn({ restoreOwner: true });
     });
     return this.onShow();
   },
   onShow() {
-    return this.signIn();
+    return this.signIn({ restoreOwner: true });
   },
   async signIn(options) {
     const result = await server.signIn(options);

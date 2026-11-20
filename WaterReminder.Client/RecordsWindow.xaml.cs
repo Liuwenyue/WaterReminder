@@ -7,7 +7,7 @@ using WaterReminder.Services;
 
 namespace WaterReminder.Client;
 
-/// <summary>Records window: today is editable; past days are read-only history.</summary>
+/// <summary>Daily records and member management.</summary>
 public partial class RecordsWindow : Window
 {
     private readonly ReminderApiClient _api;
@@ -66,7 +66,7 @@ public partial class RecordsWindow : Window
             return;
         }
         _records = result.Value;
-        var editable = member is null && date == _today && result.Value.Editable;
+        var editable = result.Value.Editable && (member is not null || date == _today);
         var events = result.Value.Events
             .OrderByDescending(x => x.At)
             .Select(x => new RecordItem(x, editable))
@@ -77,17 +77,17 @@ public partial class RecordsWindow : Window
             ? day.ToString("M月d日 dddd")
             : result.Value.Date;
         DateLabel.Text = dateLabel;
-        TitleText.Text = editable ? "今日记录" : "历史记录";
+        TitleText.Text = date == _today ? "今日记录" : "历史记录";
         var goal = result.Value.GoalKnown ? $"{result.Value.GoalMl:N0} ml" : "目标未记录";
         SummaryText.Text = count == 0
             ? (editable ? dateLabel : $"{dateLabel} · 只读")
             : $"共 {count} 条 · 合计 {result.Value.ConsumedMl:N0} / {goal}" + (editable ? "" : " · 只读");
         EmptyState.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
         RecordsList.Visibility = count == 0 ? Visibility.Collapsed : Visibility.Visible;
-        EmptyTitle.Text = editable ? "今天还没有喝水记录" : "这一天没有记录";
-        EmptyHint.Text = editable ? "在主窗口点「喝一杯」就会出现在这里" : "可选择其他日期查看";
-        ClearButton.IsEnabled = editable && count > 0;
-        ClearButton.Visibility = editable ? Visibility.Visible : Visibility.Collapsed;
+        EmptyTitle.Text = date == _today ? "今天还没有喝水记录" : "这一天没有记录";
+        EmptyHint.Text = editable && member is null ? "在主窗口点「喝一杯」就会出现在这里" : "可选择其他日期查看";
+        ClearButton.IsEnabled = editable && member is null && count > 0;
+        ClearButton.Visibility = editable && member is null ? Visibility.Visible : Visibility.Collapsed;
         NextDayButton.IsEnabled = _selected < _today;
         PrevDayButton.IsEnabled = true;
     }
@@ -104,6 +104,11 @@ public partial class RecordsWindow : Window
         _updatingPickers = false;
         UpdateMemberActions();
         await LoadProgressAsync();
+    }
+
+    private void BindOwnerWeChat_Click(object sender, RoutedEventArgs e)
+    {
+        new OwnerPairWindow(_api) { Owner = this }.ShowDialog();
     }
 
     private async Task LoadHistoryAsync()
@@ -302,11 +307,18 @@ public partial class RecordsWindow : Window
 
     private async void Edit_Click(object sender, RoutedEventArgs e)
     {
-        if (_records is not { Editable: true }) return;
+        if (_records is not { Editable: true } records) return;
         if (ItemOf(sender) is not { } item) return;
-        var dialog = new AmountWindow(initial: Math.Abs(item.Event.AmountMl), cup: _cupMl, title: "修改记录", okText: "保存") { Owner = this };
+        var member = _member;
+        var title = member is null ? "修改记录" : $"{(MemberPicker.SelectedItem as MemberOption)?.Member.Name} · {records.Date}";
+        var dialog = new AmountWindow(initial: Math.Abs(item.Event.AmountMl), cup: _cupMl, title: title, okText: "保存") { Owner = this };
         if (dialog.ShowDialog() != true) return;
         var amount = item.Event.AmountMl < 0 ? -dialog.AmountMl : dialog.AmountMl;
+        if (member is { } memberId)
+        {
+            await ChangeMemberRecordAsync(memberId, records, item, amount);
+            return;
+        }
         var saved = await _api.EditRecordAsync(item.Event.Id, amount);
         if (!saved.Ok) { SummaryText.Text = saved.Error ?? "没能修改"; return; }
         await Task.WhenAll(ReloadAsync(), LoadHistoryAsync());
@@ -314,11 +326,26 @@ public partial class RecordsWindow : Window
 
     private async void Delete_Click(object sender, RoutedEventArgs e)
     {
-        if (_records is not { Editable: true }) return;
+        if (_records is not { Editable: true } records) return;
         if (ItemOf(sender) is not { } item) return;
-        if (!ConfirmDialog.Ask(this, "删除这条记录？", $"{item.TimeText} 的 {item.AmountDisplay} 将被删除。", "删除", danger: true)) return;
+        var member = _member;
+        var ledger = member is null ? "" : $"{(MemberPicker.SelectedItem as MemberOption)?.Member.Name} · {records.Date} ";
+        if (!ConfirmDialog.Ask(this, "删除这条记录？", $"{ledger}{item.TimeText} 的 {item.AmountDisplay} 将被删除。", "删除", danger: true)) return;
+        if (member is { } memberId)
+        {
+            await ChangeMemberRecordAsync(memberId, records, item, null);
+            return;
+        }
         var saved = await _api.DeleteRecordAsync(item.Event.Id);
         if (!saved.Ok) { SummaryText.Text = saved.Error ?? "没能删除"; return; }
+        await Task.WhenAll(ReloadAsync(), LoadHistoryAsync());
+    }
+
+    private async Task ChangeMemberRecordAsync(Guid memberId, TodayRecordsResponse records, RecordItem item, int? amount)
+    {
+        var saved = await _api.ChangeFamilyRecordAsync(memberId, records.Date, item.Event.Id, amount);
+        if (_closed || !ReferenceEquals(_records, records)) return;
+        if (!saved.Ok) { SummaryText.Text = saved.Error ?? "无法保存修改。"; return; }
         await Task.WhenAll(ReloadAsync(), LoadHistoryAsync());
     }
 

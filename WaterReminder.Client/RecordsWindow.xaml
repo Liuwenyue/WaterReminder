@@ -34,6 +34,7 @@
               <Button x:Name="InviteAgainButton" Style="{StaticResource SecondaryButton}" Content="微信邀请" IsEnabled="False" Click="InviteAgain_Click" Margin="0,0,8,0"/>
               <Button x:Name="PushTestButton" Style="{StaticResource SecondaryButton}" Content="测试提醒" Click="PushTest_Click" Margin="0,0,8,0"/>
               <Button x:Name="AddMemberButton" Style="{StaticResource SecondaryButton}" Content="添加成员" Click="AddMember_Click"/>
+              <Button Style="{StaticResource SecondaryButton}" Content="绑定我的微信" Click="BindOwnerWeChat_Click"/>
             </WrapPanel>
             <TextBlock x:Name="FamilyProgressText" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,12,0,0"/>
           </StackPanel>

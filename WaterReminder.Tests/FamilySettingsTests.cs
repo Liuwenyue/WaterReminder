@@ -20,6 +20,7 @@ public sealed class FamilySettingsTests
     {
         using var files = new TestFiles();
         new StorageService(files.Path).SaveSettings(new UserSettings { MobilePushEnabled = false });
+        FamilySyncTests.SeedLegacyDevices(files.Path, new string('a', 64));
         await using var host = await Host.Start(files.Path);
         var shared = await Invite(host.Owner, "共享成员", null);
         using var member = host.Client(shared.AccessCode);

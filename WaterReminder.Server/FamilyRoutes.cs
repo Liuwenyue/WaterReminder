@@ -2,7 +2,8 @@ using WaterReminder;
 namespace WaterReminder.Server;
 internal static class FamilyRoutes
 {
-    private sealed record LoginRequest(string? Code, string? ShareToken, Guid? ExpectedMemberId);
+    private sealed record LoginRequest(string? Code, string? ShareToken, Guid? ExpectedMemberId, string? Name, bool OwnerOnly);
+    private sealed record PairRequest(string? Code);
     private sealed record DeviceLoginRequest(string? DeviceId, Guid? ExpectedMemberId);
 
     public static void MapFamilyRoutes(this WebApplication app, ServerOptions options)
@@ -10,23 +11,42 @@ internal static class FamilyRoutes
         app.MapPost("/api/wechat/login", async (HttpContext context, FamilyAccounts accounts, LoginRequest request) =>
         {
             context.Response.Headers.CacheControl = "no-store";
-            var code = request.Code?.Trim() ?? "";
-            if (code.Length is < 8 or > 128 || code.Any(char.IsWhiteSpace) || code.Any(char.IsControl))
-                return Results.BadRequest(new { error = "微信登录信息无效，请重试。" });
-            if (!options.WeChat.CanIdentify)
-                return Results.StatusCode(503);
-            string? openId;
-            try { openId = await options.WeChat.ExchangeOpenIdAsync(code, context.RequestAborted); }
-            catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException)
-            { return Results.StatusCode(503); }
-            if (string.IsNullOrEmpty(openId)) return Results.Unauthorized();
-            var result = accounts.LogInWeChat(openId, request.ShareToken, request.ExpectedMemberId, out var error);
+            var (openId, failure) = await IdentifyAsync(options, request.Code, context.RequestAborted);
+            if (failure is not null) return failure;
+            var result = accounts.LogInWeChat(openId!, request.ShareToken, request.ExpectedMemberId,
+                request.Name, request.OwnerOnly, out var error, out var registrationRequired);
+            if (registrationRequired) return Results.Conflict(new { error, registrationRequired });
             return result is null ? Results.BadRequest(new { error }) : Results.Ok(result);
+        });
+        app.MapPost("/api/wechat/owner-pair", async (HttpContext context, FamilyAccounts accounts, PairRequest request) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            var (openId, failure) = await IdentifyAsync(options, request.Code, context.RequestAborted);
+            if (failure is not null) return failure;
+            var pair = accounts.CreateOwnerPair(openId!);
+            return pair is null
+                ? Results.Conflict(new { error = "暂时无法生成配对码。若已绑定，请直接打开管理员账本。" })
+                : Results.Ok(pair);
+        });
+        app.MapPost("/api/family/owner-pair", (HttpContext context, FamilyAccounts accounts, PairRequest request) =>
+        {
+            if (!ServerHost.Authorized(context.Request, options.ApiToken)) return Results.StatusCode(403);
+            var error = accounts.ConfirmOwnerPair(request.Code?.Trim());
+            return error is null ? Results.Ok(new { ok = true }) : Results.BadRequest(new { error });
+        });
+        app.MapPost("/api/wechat/owner-merge", (HttpContext context, FamilyAccounts accounts) =>
+        {
+            if (accounts.Authenticate(context.Request) != Guid.Empty) return Results.StatusCode(403);
+            return accounts.MergeOwnerPersonalRecords()
+                ? Results.Ok(new { ok = true })
+                : Results.Conflict(new { error = "请先确认管理员微信配对。" });
         });
         app.MapPost("/api/device/login", (HttpContext context, FamilyAccounts accounts, DeviceLoginRequest request) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             var result = accounts.LogInDevice(request.DeviceId ?? "", request.ExpectedMemberId, out var error);
+            if (result is null && error == FamilyAccounts.MissingDeviceAccount)
+                return Results.NotFound(new { error, deviceAccountMissing = true });
             return result is null ? Results.BadRequest(new { error }) : Results.Ok(result);
         });
         app.MapPost("/api/family/share", (HttpContext context, FamilyAccounts accounts) =>
@@ -76,5 +96,24 @@ internal static class FamilyRoutes
             if (caller == Guid.Empty && !accounts.OwnerCanAccess(id)) return Results.NotFound();
             return accounts.Find(id) is { } engine ? Results.Ok(engine.SafePushFeedback()) : Results.NotFound();
         });
+    }
+
+    private static async Task<(string? OpenId, IResult? Failure)> IdentifyAsync(
+        ServerOptions options, string? loginCode, CancellationToken cancellationToken)
+    {
+        var code = loginCode?.Trim() ?? "";
+        if (code.Length is < 8 or > 128 || code.Any(char.IsWhiteSpace) || code.Any(char.IsControl))
+            return (null, Results.BadRequest(new { error = "微信登录信息无效，请重试。" }));
+        if (!options.WeChat.CanIdentify)
+            return (null, Results.Json(new { error = "微信登录暂不可用，请稍后重试。" }, statusCode: 503));
+        try
+        {
+            var openId = await options.WeChat.ExchangeOpenIdAsync(code, cancellationToken);
+            return string.IsNullOrEmpty(openId) ? (null, Results.Unauthorized()) : (openId, null);
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException)
+        {
+            return (null, Results.Json(new { error = "微信登录暂不可用，请稍后重试。" }, statusCode: 503));
+        }
     }
 }

@@ -78,6 +78,19 @@ public sealed partial class ReminderApiClient : IDisposable
     public Task<ApiResult<FamilyOverview>> GetFamilyAsync(CancellationToken ct = default)
         => ReadAsync<FamilyOverview>("api/family", ct);
 
+    public async Task<ApiResult<bool>> ConfirmOwnerPairAsync(string code, CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await _http.PostAsJsonAsync("api/family/owner-pair", new { code }, Json, ct).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode) return ApiResult<bool>.Success(true);
+            return ApiResult<bool>.Fail((int)response.StatusCode,
+                ReadError(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false)));
+        }
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException)
+        { return ApiResult<bool>.Fail(0); }
+    }
+
     public Task<ApiResult<ClientSettingsResponse>> GetFamilySettingsAsync(Guid memberId, CancellationToken ct = default)
         => ReadAsync<ClientSettingsResponse>($"api/family/{memberId}/settings", ct);
 
@@ -106,6 +119,23 @@ public sealed partial class ReminderApiClient : IDisposable
 
     public Task<ApiResult<TodayRecordsResponse>> GetFamilyRecordsAsync(Guid memberId, string date, CancellationToken ct = default)
         => ReadAsync<TodayRecordsResponse>($"api/family/{memberId}/records?date={Uri.EscapeDataString(date)}", ct);
+
+    public async Task<ApiResult<bool>> ChangeFamilyRecordAsync(Guid memberId, string date, Guid eventId,
+        int? amountMl, CancellationToken ct = default)
+    {
+        var operation = new SyncOperation { Id = Guid.NewGuid(), Date = date, EventId = eventId,
+            Kind = amountMl.HasValue ? "edit" : "delete", AmountMl = amountMl };
+        try
+        {
+            using var response = await _http.PostAsJsonAsync($"api/family/{memberId}/records/operations",
+                new SyncOperationsRequest { Operations = [operation] }, Json, ct).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode) return ApiResult<bool>.Success(true);
+            return ApiResult<bool>.Fail((int)response.StatusCode,
+                ReadError(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false)));
+        }
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException)
+        { return ApiResult<bool>.Fail(0); }
+    }
 
     public async Task<ApiResult<FamilyInvitation>> AddFamilyMemberAsync(AddFamilyMember request)
     {
