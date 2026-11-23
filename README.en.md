@@ -11,6 +11,14 @@ Reminder rules run headless on Linux. The Windows client provides the floating w
 
 Phone reminders support WeChat subscription messages and PushWard. The server defaults to `127.0.0.1:8787`. The Windows client can open an SSH local forward from the optional `tunnel` block in `client.json`. The sample uses placeholder values.
 
+## Recent update
+
+- WeChat reminders go to the released mini program unless a developer state is configured.
+- Logging a cup asks for the next authorization. Today shows the remaining count and can renew it when it reaches zero.
+- In Auto mode, a failed WeChat send falls back to PushWard for that reminder.
+- API limits are per caller. A hidden floating window stops polling, and an unchanged window slows to about 30 seconds.
+
+
 ## Reminder rules (all configurable)
 
 | Setting | Default |
@@ -57,7 +65,7 @@ dotnet publish .\WaterReminder\WaterReminder.csproj -c Release -r win-x64 --self
 
 `miniprogram/` is the same drinking plan on a phone: today's progress, one cup, a custom amount, the log, and settings stay in WeChat local storage. Import the `miniprogram` folder with WeChat DevTools. See [miniprogram/README.md](miniprogram/README.md).
 
-The server schedules phone reminders. Select Auto, WeChat, PushWard, or both in the shared settings. Auto uses WeChat when the member has a binding and subscription credits, and uses configured PushWard otherwise. Connect the mini program to the desktop account using its HTTPS server address and API token.
+The server schedules phone reminders. Select Auto, WeChat, PushWard, or both in the shared settings. Auto uses WeChat when the member has a binding and subscription credits. If that send fails, the same reminder uses configured PushWard. The default target is the released mini program. Connect the mini program to the desktop account using its HTTPS server address and API token.
 
 ```bash
 node ./miniprogram-tests/calculator.test.js
