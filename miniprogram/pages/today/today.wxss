@@ -88,6 +88,11 @@
 .reminder-value { display: block; margin-top: 1rpx; font-size: 32rpx; font-weight: 650; }
 .has-time { font-size: 44rpx; letter-spacing: -1.6rpx; line-height: 1.16; }
 .reminder-detail { display: block; margin-top: 18rpx; font-size: 26rpx; color: var(--muted); }
+.wechat-hint {
+  display: flex; justify-content: flex-start; width: 100%; margin-top: 12rpx; padding: 8rpx 0 0;
+  min-height: 44px; color: var(--accent); font-size: 26rpx; font-weight: 550; text-align: left;
+}
+.wechat-hint.quiet { display: block; min-height: 0; margin-top: 14rpx; color: var(--muted); font-weight: 450; }
 .all-link { gap: 10rpx; }
 .recent-empty { min-height: 111rpx; color: var(--muted); font-size: 26rpx; }
 .recent-empty .glyph-tile { width: 64rpx; height: 64rpx; }

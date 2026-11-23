@@ -16,7 +16,7 @@ Keep these only on the server, in the environment or in the data directory. Do n
 | WeChat template ID | `WATERREMINDER_WECHAT_TEMPLATE_ID` | `wechat.json` 的 `templateId` |
 
 
-微信服务通知需要 AppSecret、模板 ID、成员绑定和可用的订阅次数。提醒渠道按成员配置，自动模式在微信未就绪时使用已配置的 PushWard。`wechat.json` 可以设置 `miniprogramState`（开发阶段用 `developer`）和 `fields`。默认字段 `thing1`、`time2`、`thing3` 分别对应「该喝水了」、提醒时间和「建议喝{suggested}毫升」。字段名必须和公众平台模板一致。
+微信服务通知需要 AppSecret、模板 ID、成员绑定和可用的订阅次数。提醒渠道按成员配置，自动模式在微信未就绪时使用已配置的 PushWard。`wechat.json` 可以设置 `miniprogramState`（不写时发给正式版 `formal`，开发者工具里才用 `developer`）和 `fields`。默认字段 `thing1`、`time2`、`thing3` 分别对应「该喝水了」、提醒时间和「建议喝{suggested}毫升」。字段名必须和公众平台模板一致。
 
 Environment wins over the file. A token found that way is not copied into `settings.json` when the service saves a pause. `settings.json` in the data directory may still contain `PushWardApiToken` for a hand-edited install; that file stays on the server and is gitignored.
 

@@ -72,6 +72,8 @@
       </view>
     </view>
     <text class="reminder-detail">{{planHint}}</text>
+    <button wx:if="{{wechatHintAction}}" class="button link wechat-hint" hover-class="press" bindtap="renewWeChat">{{wechatHint}}</button>
+    <text wx:elif="{{wechatHint}}" class="wechat-hint quiet">{{wechatHint}}</text>
   </view>
 
   <view class="section-head">

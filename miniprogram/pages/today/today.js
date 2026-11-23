@@ -27,11 +27,13 @@ Page({
     dateLabel: '', phaseLabel: '', consumedText: '0', goalText: '0', percent: 0, fraction: 0,
     done: false, cupAmount: 0, cupLabel: '', paused: false, nextText: '', hasNext: false,
     planHint: '', recent: [], feedback: '', sipPulse: [], amountOpen: false, presets: [150, 250, 500],
-    needsConnection: true, registrationRequired: false, registrationName: '', loginError: '', registering: false
+    needsConnection: true, registrationRequired: false, registrationName: '', loginError: '', registering: false,
+    wechatHint: '', wechatHintAction: false
   },
   onShow() {
     this._alive = true;
     this.reload();
+    this.refreshWeChatHint();
   },
   onHide() {
     this._alive = false;
@@ -147,7 +149,37 @@ Page({
     if (!this.data.cupAmount || now - (this._lastCupAt || 0) < 350) return;
     this._lastCupAt = now;
     const result = this.recordAmount(this.data.cupAmount, 'cup');
-    if (!result.ok) wx.showToast({ title: result.error, icon: 'none' });
+    if (!result.ok) {
+      wx.showToast({ title: result.error, icon: 'none' });
+      return;
+    }
+    this.renewWeChat();
+  },
+  refreshWeChatHint() {
+    const account = store.accountKey();
+    const settings = store.load().settings;
+    if (!serverApi.loadConnection().configured || !settings.mobilePushEnabled || settings.phoneMode === 'PushWard') {
+      if (this._alive) this.setData({ wechatHint: '', wechatHintAction: false });
+      return Promise.resolve();
+    }
+    return wechat.availability().then(status => {
+      if (!this._alive || account !== store.accountKey()) return;
+      if (!status || status.unknown || !status.enabled || !status.bound) {
+        this.setData({ wechatHint: '', wechatHintAction: false });
+        return;
+      }
+      if (status.credits > 0) this.setData({ wechatHint: '微信提醒还剩 ' + status.credits + ' 次', wechatHintAction: false });
+      else this.setData({ wechatHint: '还剩 0 次，点一下才能继续提醒', wechatHintAction: true });
+    }).catch(() => {
+      if (this._alive) this.setData({ wechatHint: '', wechatHintAction: false });
+    });
+  },
+  renewWeChat() {
+    if (this._renewing) return Promise.resolve();
+    this._renewing = true;
+    return wechat.capture().then(wechat.report).then(() => {
+      if (this._alive) return this.refreshWeChatHint();
+    }).finally(() => { this._renewing = false; });
   },
   customAmount() {
     if (!this._view) return;

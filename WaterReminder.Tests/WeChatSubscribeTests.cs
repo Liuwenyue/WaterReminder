@@ -190,6 +190,117 @@ public sealed class WeChatSubscribeTests
         }
     }
 
+    [Fact]
+    public async Task SendFailure_UsesPushWardOnce_AndKeepsWeChatCredit()
+    {
+        var dir = Temp();
+        var push = new Recorder();
+        var wechat = new Recorder(request => request.Path.Contains("/cgi-bin/token", StringComparison.Ordinal)
+            ? (HttpStatusCode.OK, """{"access_token":"token-1","expires_in":7200}""")
+            : (HttpStatusCode.OK, """{"errcode":47003,"errmsg":"argument invalid"}"""));
+        try
+        {
+            WeChatUsersSave(dir, "openid-test", 1);
+            using var client = new WeChatClient(Config(), wechat);
+            using var engine = Engine(dir, push, client, () => Tuesday);
+            await engine.TickAsync();
+            Assert.Equal(1, engine.WeChatStatus().Credits);
+            Assert.Single(wechat.Requests, item => item.Path.Contains("/message/subscribe/send", StringComparison.Ordinal));
+            Assert.Single(push.Requests, item => item.Body is not null);
+
+            await engine.TickAsync();
+            Assert.Single(push.Requests, item => item.Body is not null);
+        }
+        finally { TryDelete(dir); }
+    }
+
+    [Fact]
+    public async Task WeChatOnly_SendFailure_DoesNotUsePushWard()
+    {
+        var dir = Temp();
+        var push = new Recorder();
+        var wechat = new Recorder(request => request.Path.Contains("/cgi-bin/token", StringComparison.Ordinal)
+            ? (HttpStatusCode.OK, """{"access_token":"token-1","expires_in":7200}""")
+            : (HttpStatusCode.OK, """{"errcode":47003,"errmsg":"argument invalid"}"""));
+        try
+        {
+            WeChatUsersSave(dir, "openid-test", 1);
+            using var client = new WeChatClient(Config(), wechat);
+            using var engine = Engine(dir, push, client, () => Tuesday);
+            var update = SettingsEditor.FromResponse(engine.ClientSettings());
+            update.PhoneMode = PhoneDeliveryMode.WeChat;
+            Assert.True(engine.TryUpdateSettings(update, out var error), error);
+            await engine.TickAsync();
+            Assert.Equal(1, engine.WeChatStatus().Credits);
+            Assert.Equal(0, push.Requests.Count(item => item.Body is not null));
+        }
+        finally { TryDelete(dir); }
+    }
+
+    [Fact]
+    public async Task RateLimit_IsSeparateForEachCaller()
+    {
+        var dir = Temp();
+        WebApplication? app = null;
+        try
+        {
+            using var engine = new ReminderEngine(new ReminderEngineOptions
+            {
+                DataDirectory = dir,
+                Clock = () => Tuesday,
+                PollAnswers = false,
+            });
+            app = ServerHost.Build(ServerOptions.Create(dir, "desktop-api-token", 0, "127.0.0.1", true, false), engine);
+            await app.StartAsync();
+            using var owner = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+            owner.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "desktop-api-token");
+            for (var i = 0; i < ServerHost.PerCallerPermitLimit; i++)
+            {
+                var allowed = await owner.GetAsync("/api/status");
+                Assert.NotEqual(HttpStatusCode.TooManyRequests, allowed.StatusCode);
+            }
+
+            var blocked = await owner.GetAsync("/api/status");
+            Assert.Equal(HttpStatusCode.TooManyRequests, blocked.StatusCode);
+
+            using var other = new HttpClient { BaseAddress = owner.BaseAddress };
+            other.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "someone-else");
+            var separate = await other.GetAsync("/api/status");
+            Assert.NotEqual(HttpStatusCode.TooManyRequests, separate.StatusCode);
+
+            var health = await owner.GetAsync("/health");
+            Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+        }
+        finally
+        {
+            if (app is not null) await app.StopAsync();
+            TryDelete(dir);
+        }
+    }
+
+    [Fact]
+    public void MissingMiniProgramState_DefaultsToFormal()
+    {
+        var dir = Temp();
+        var previous = Environment.GetEnvironmentVariable("WATERREMINDER_WECHAT_STATE");
+        Environment.SetEnvironmentVariable("WATERREMINDER_WECHAT_STATE", null);
+        try
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "wechat.json"), """{"appId":"wx","appSecret":"s","templateId":"t"}""");
+            Assert.Equal("formal", WeChatClient.LoadConfig(dir).MiniProgramState);
+            File.WriteAllText(Path.Combine(dir, "wechat.json"), """{"miniprogramState":"nope"}""");
+            Assert.Equal("formal", WeChatClient.LoadConfig(dir).MiniProgramState);
+            File.WriteAllText(Path.Combine(dir, "wechat.json"), """{"miniprogramState":"developer"}""");
+            Assert.Equal("developer", WeChatClient.LoadConfig(dir).MiniProgramState);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("WATERREMINDER_WECHAT_STATE", previous);
+            TryDelete(dir);
+        }
+    }
+
     private static WeChatConfig Config() => new()
     {
         AppId = WeChatConfig.DefaultAppId,

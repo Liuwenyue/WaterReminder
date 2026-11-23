@@ -51,7 +51,7 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
         public string Body { get; init; } = "";
     }
 
-    private readonly record struct OutboundPush(PushWardMessage? Push, WeChatReminder? WeChat, DateTime At);
+    private readonly record struct OutboundPush(PushWardMessage? Push, WeChatReminder? WeChat, PushWardMessage? WeChatFallback, DateTime At);
 
     public ReminderEngine(ReminderEngineOptions options)
     {
@@ -90,12 +90,13 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
                 if (!MobilePushDeliveryPolicy.ShouldAttempt(now, _pushNextAttempt, _pushInFlight))
                     return;
                 _pushInFlight = true;
-                var push = channels.HasFlag(PhoneChannel.PushWard) ? PushWardMessageBuilder.BuildReminder(_settings.PushWardApiToken,
-                    plan.SuggestedMl, _progress.Today.ConsumedMl, _settings.DailyGoalMl, now,
-                    WaterCalculator.CurrentCupMl(_settings, now)) : null;
+                var push = channels.HasFlag(PhoneChannel.PushWard) ? BuildPushLocked(plan, now) : null;
                 WeChatReminder? wechat = channels.HasFlag(PhoneChannel.WeChat) ? new WeChatReminder(user!.OpenId,
                     plan.SuggestedMl, _progress.Today.ConsumedMl, _settings.DailyGoalMl, now) : null;
-                outbound = new OutboundPush(push, wechat, now);
+                var wechatFallback = wechat is not null && push is null && _settings.PhoneMode != PhoneDeliveryMode.WeChat
+                    && _settings.MobilePushEnabled && _push.IsConfigured
+                    ? BuildPushLocked(plan, now) : null;
+                outbound = new OutboundPush(push, wechat, wechatFallback, now);
             }
             else if (desktop)
             {
@@ -113,6 +114,8 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
             catch { wechatResult = default; }
         }
         var published = wechatResult.Sent;
+        if (!published && outbound.Value.WeChatFallback is { } fallbackPush)
+            published |= await _push.PublishTrackedAsync(fallbackPush, outbound.Value.At, send.Token).ConfigureAwait(false);
         if (outbound.Value.Push is { } message)
             published |= await _push.PublishTrackedAsync(message, outbound.Value.At, send.Token).ConfigureAwait(false);
 
@@ -736,6 +739,11 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
         if (should && !_push.IsRunning) _push.Start();
         else if (!should && _push.IsRunning) _push.Stop();
     }
+
+    private PushWardMessage BuildPushLocked(ReminderPlan plan, DateTime now)
+        => PushWardMessageBuilder.BuildReminder(_settings.PushWardApiToken,
+            plan.SuggestedMl, _progress.Today.ConsumedMl, _settings.DailyGoalMl, now,
+            WaterCalculator.CurrentCupMl(_settings, now));
 
     private void StageDesktopLocked(ReminderPlan plan, DateTime now)
     {

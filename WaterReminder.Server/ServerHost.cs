@@ -10,6 +10,9 @@ namespace WaterReminder.Server;
 
 public static class ServerHost
 {
+    public const int PerCallerPermitLimit = 60;
+    public const int AnonymousPermitLimit = 30;
+
     private static readonly object CallerKey = new();
     private static readonly object EngineKey = new();
 
@@ -27,14 +30,18 @@ public static class ServerHost
         {
             limiter.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
             limiter.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
-                context.Request.Path.StartsWithSegments("/api")
-                    ? RateLimitPartition.GetFixedWindowLimiter("public-api", _ => new FixedWindowRateLimiterOptions
-                    {
-                        PermitLimit = 120,
-                        Window = TimeSpan.FromMinutes(1),
-                        QueueLimit = 0,
-                    })
-                    : RateLimitPartition.GetNoLimiter("other"));
+            {
+                if (!context.Request.Path.StartsWithSegments("/api"))
+                    return RateLimitPartition.GetNoLimiter("other");
+                var key = RateLimitKey(context);
+                var permit = key.StartsWith("user:", StringComparison.Ordinal) ? PerCallerPermitLimit : AnonymousPermitLimit;
+                return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = permit,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0,
+                });
+            });
         });
         if (options.RunScheduler)
             builder.Services.AddHostedService<ReminderScheduler>();
@@ -328,6 +335,20 @@ public static class ServerHost
         catch (JsonException) { return false; }
     }
     private static ReminderEngine CurrentEngine(HttpContext context) => (ReminderEngine)context.Items[EngineKey]!;
+
+    private static string RateLimitKey(HttpContext context)
+    {
+        var header = context.Request.Headers.Authorization.ToString();
+        const string prefix = "Bearer ";
+        if (header.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var token = header[prefix.Length..].Trim();
+            if (token.Length > 0)
+                return "user:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+        }
+
+        return "ip:" + (context.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+    }
 
     public static bool Authorized(HttpRequest request, string expectedToken)
     {

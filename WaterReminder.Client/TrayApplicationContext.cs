@@ -256,12 +256,19 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var result = await _api.GetStatusAsync();
             if (!result.Ok || result.Value is null)
             {
-                if (_tunnel?.Enabled == true)
+                if (result.StatusCode == 429)
+                {
+                    _timer.Interval = 60_000;
+                    SetTip("请求太频繁，稍后再试");
+                }
+                else if (_tunnel?.Enabled == true)
                     SetTip("连接服务器中…");
                 else
                     SetTip(result.StatusCode == 401 ? "服务器拒绝了访问" : "无法连接服务器");
                 return;
             }
+
+            _timer.Interval = 20_000;
 
             var status = result.Value;
             UpdatePauseMenu(status.RemindersPaused);

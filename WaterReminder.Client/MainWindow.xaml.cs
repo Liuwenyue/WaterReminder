@@ -29,6 +29,8 @@ internal partial class MainWindow : Window
     private bool _allowClose;
     private bool _modeTransitioning;
     private int _modeGeneration;
+    private int _steadyPolls;
+    private string? _statusFingerprint;
 
 
     internal double DisplayMl { get => (double)GetValue(DisplayMlProperty); set => SetValue(DisplayMlProperty, value); }
@@ -40,9 +42,21 @@ internal partial class MainWindow : Window
         _api = api;
         _config = config;
         _openSettings = openSettings;
-        Loaded += async (_, _) => { ApplyMode(); PlaceWindow(); await RefreshAsync(); };
-        _refreshTimer.Tick += async (_, _) => await RefreshAsync();
-        _refreshTimer.Start();
+        Loaded += (_, _) => { ApplyMode(); PlaceWindow(); };
+        IsVisibleChanged += (_, _) =>
+        {
+            if (!IsVisible)
+            {
+                _refreshTimer.Stop();
+                return;
+            }
+
+            _steadyPolls = 0;
+            _refreshTimer.Interval = TimeSpan.FromSeconds(5);
+            if (!_refreshTimer.IsEnabled) _refreshTimer.Start();
+            _ = RefreshAsync();
+        };
+        _refreshTimer.Tick += async (_, _) => await RefreshAsync(fromTimer: true);
         _snackTimer.Tick += (_, _) => HideSnack();
         PreviewKeyDown += MainWindow_PreviewKeyDown;
         PreviewMouseLeftButtonDown += (_, e) =>
@@ -205,19 +219,45 @@ internal partial class MainWindow : Window
         ApplyMode();
     }
 
-    private async Task RefreshAsync()
+    private async Task RefreshAsync(bool fromTimer = false)
     {
+        if (!fromTimer)
+        {
+            _steadyPolls = 0;
+            _refreshTimer.Interval = TimeSpan.FromSeconds(5);
+        }
         if (_editing) return;
         try
         {
             var result = await _api.GetStatusAsync();
-            if (_editing || !result.Ok || result.Value is null) return;
-            ApplyStatus(result.Value);
+            if (_editing) return;
+            if (!result.Ok || result.Value is null)
+            {
+                if (result.StatusCode == 429)
+                    StatusText.Text = "请求太频繁，稍后再试";
+                NextInterval(unchanged: true);
+                return;
+            }
+
+            var status = result.Value;
+            var fingerprint = string.Join("|", status.ConsumedMl, status.GoalMl, status.RemindersPaused, status.NextReminder, status.StatusText, status.DesktopAlert?.Id, status.SuggestedMl);
+            var unchanged = fromTimer && fingerprint == _statusFingerprint;
+            _statusFingerprint = fingerprint;
+            NextInterval(unchanged);
+            ApplyStatus(status);
         }
         catch
         {
             // The tray already reports connection trouble. Keep the last numbers on screen.
+            NextInterval(unchanged: true);
         }
+    }
+
+    private void NextInterval(bool unchanged)
+    {
+        if (unchanged) _steadyPolls++;
+        else _steadyPolls = 0;
+        _refreshTimer.Interval = _steadyPolls >= 2 ? TimeSpan.FromSeconds(30) : TimeSpan.FromSeconds(5);
     }
 
     private void ApplyStatus(StatusResponse status)

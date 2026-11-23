@@ -14,7 +14,7 @@ public sealed class WeChatConfig
     public string AppId { get; init; } = "";
     public string AppSecret { get; init; } = "";
     public string TemplateId { get; init; } = "";
-    public string MiniProgramState { get; init; } = "developer";
+    public string MiniProgramState { get; init; } = "formal";
     public string Page { get; init; } = "pages/today/today";
     public IReadOnlyDictionary<string, string> Fields { get; init; } = DefaultFields;
 
@@ -98,8 +98,8 @@ public sealed class WeChatClient : IDisposable
             hasFile = false;
         }
 
-        var state = First(Environment.GetEnvironmentVariable("WATERREMINDER_WECHAT_STATE"), Text(file, hasFile, "miniprogramState"), "developer");
-        if (state is not ("developer" or "trial" or "formal")) state = "developer";
+        var state = First(Environment.GetEnvironmentVariable("WATERREMINDER_WECHAT_STATE"), Text(file, hasFile, "miniprogramState"), "formal");
+        if (state is not ("developer" or "trial" or "formal")) state = "formal";
         var page = Text(file, hasFile, "page");
         if (string.IsNullOrWhiteSpace(page) || page.Length > 80 || !page.StartsWith("pages/", StringComparison.Ordinal) || page.Contains('?', StringComparison.Ordinal))
             page = "pages/today/today";

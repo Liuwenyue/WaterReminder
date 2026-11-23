@@ -113,7 +113,7 @@ test('an unrecognizable WeChat status stays unknown and keeps the saved template
   assert.equal((await wechat.capture()).status, 'skip');
 });
 
-test('recording a cup does not ask for a subscription and routine sync text stays hidden', () => {
+test('recording a cup asks for the next WeChat reminder and routine sync text stays hidden', () => {
   const store = require('../miniprogram/utils/storage.js');
   const subscriptions = [];
   wx.requestSubscribeMessage = options => {
@@ -139,11 +139,57 @@ test('recording a cup does not ask for a subscription and routine sync text stay
   assert.equal(today.data.syncText, '');
   today.drinkCup();
   today.drinkCup();
-  assert.deepEqual(subscriptions, []);
+  assert.deepEqual(subscriptions, [['template-id-0123456789']]);
   assert.equal(today.data.recent.length, 1);
   store.syncFailure('网络中断', false);
   today.reload();
   assert.match(today.data.syncText, /网络中断/);
   today.onHide();
   assert.equal(today.data.feedback, '');
+});
+
+test('today page shows a used-up WeChat reminder and a tap asks again', async () => {
+  const store = require('../miniprogram/utils/storage.js');
+  const subscriptions = [];
+  wx.requestSubscribeMessage = options => {
+    subscriptions.push(options.tmplIds);
+    options.success({ [options.tmplIds[0]]: 'accept' });
+  };
+  wx.showToast = () => {};
+  wx.vibrateShort = () => {};
+  global.getApp = () => ({ syncChanges() {} });
+  let definition;
+  global.Page = options => { definition = options; };
+  delete require.cache[require.resolve('../miniprogram/pages/today/today.js')];
+  require('../miniprogram/pages/today/today.js');
+  const today = Object.assign({}, definition, {
+    data: Object.assign({}, definition.data),
+    setData(patch) { Object.assign(this.data, patch); }
+  });
+  server.saveConnection({ serverUrl: 'https://cup.example.com', apiToken: 'test-token', memberId: 'member-1' });
+  store.saveSettings({ mobilePushEnabled: true, phoneMode: 'WeChat' });
+  wechat.remember('template-id-0123456789');
+  wx.request = options => options.success({
+    statusCode: 200,
+    data: { enabled: true, bound: true, credits: 0, templateId: 'template-id-0123456789' }
+  });
+  today.onShow();
+  await today.refreshWeChatHint();
+  assert.equal(today.data.wechatHint, '还剩 0 次，点一下才能继续提醒');
+  assert.equal(today.data.wechatHintAction, true);
+  await today.renewWeChat();
+  assert.deepEqual(subscriptions, [['template-id-0123456789']]);
+
+  wx.request = options => options.success({
+    statusCode: 200,
+    data: { enabled: true, bound: true, credits: 2, templateId: 'template-id-0123456789' }
+  });
+  await today.refreshWeChatHint();
+  assert.equal(today.data.wechatHint, '微信提醒还剩 2 次');
+  assert.equal(today.data.wechatHintAction, false);
+
+  store.saveSettings({ mobilePushEnabled: true, phoneMode: 'PushWard' });
+  await today.refreshWeChatHint();
+  assert.equal(today.data.wechatHint, '');
+  assert.equal(today.data.wechatHintAction, false);
 });
