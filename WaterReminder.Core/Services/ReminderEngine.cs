@@ -98,10 +98,6 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
                     ? BuildPushLocked(plan, now) : null;
                 outbound = new OutboundPush(push, wechat, wechatFallback, now);
             }
-            else if (desktop)
-            {
-                _progress.MarkReminded(now);
-            }
         }
 
         if (outbound is null) return;
@@ -182,7 +178,7 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
         return response;
     }
 
-    /// <summary>Desktop tray action. Amount omitted means one work cup.</summary>
+    /// <summary>Desktop tray action. Amount omitted means the cup currently in effect.</summary>
     public int LogDrink(int? amountMl, string? source)
     {
         lock (_gate)
@@ -193,8 +189,6 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
             int amount;
             if (amountMl is > 0)
                 amount = amountMl.Value;
-            else if (string.Equals(src, "desktop", StringComparison.OrdinalIgnoreCase))
-                amount = WaterCalculator.WorkCupMl(_settings);
             else
                 amount = WaterCalculator.CurrentCupMl(_settings, now);
             return _progress.Drink(amount, src);
@@ -538,6 +532,7 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
             if (_pendingDesktop is null || string.IsNullOrWhiteSpace(id)) return false;
             if (!string.Equals(_pendingDesktop.Id, id.Trim(), StringComparison.Ordinal)) return false;
             _pendingDesktop = null;
+            _progress.MarkReminded(_clock());
             return true;
         }
     }
@@ -699,8 +694,11 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
         }
         EnsureAnswerLoopLocked();
         var show = WaterCalculator.ShouldShowDesktop(_settings, now);
-        if (!show || (_pendingDesktop is { } alert && now - alert.At > DesktopAlertLifetime))
+        if (_pendingDesktop is { } alert && (!show || now - alert.At > DesktopAlertLifetime))
+        {
             _pendingDesktop = null;
+            _progress.MarkReminded(now);
+        }
         return now;
     }
 

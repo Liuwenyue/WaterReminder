@@ -31,6 +31,8 @@ internal partial class MainWindow : Window
     private int _modeGeneration;
     private int _steadyPolls;
     private string? _statusFingerprint;
+    private bool _drinkRequestInFlight;
+    private bool _pauseRequestInFlight;
 
 
     internal double DisplayMl { get => (double)GetValue(DisplayMlProperty); set => SetValue(DisplayMlProperty, value); }
@@ -296,8 +298,8 @@ internal partial class MainWindow : Window
         _wasDone = done;
 
         var canDrink = FloatingWidgetView.CanDrink(consumed, status.GoalMl);
-        DrinkButton.IsEnabled = canDrink;
-        MiniDrink.IsEnabled = canDrink;
+        DrinkButton.IsEnabled = canDrink && !_drinkRequestInFlight;
+        MiniDrink.IsEnabled = canDrink && !_drinkRequestInFlight;
         DrinkLabel.Text = done ? "今日目标已完成" : "喝一杯";
         DrinkAmount.Visibility = done ? Visibility.Collapsed : Visibility.Visible;
         DrinkGlyph.Text = done ? "\uE73E" : "\uE710";
@@ -356,7 +358,7 @@ internal partial class MainWindow : Window
 
     private async void DrinkButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_status is null || !FloatingWidgetView.CanDrink(_status.ConsumedMl, _status.GoalMl)) return;
+        if (_drinkRequestInFlight || _status is null || !FloatingWidgetView.CanDrink(_status.ConsumedMl, _status.GoalMl)) return;
         await LogDrinkAsync(FloatingWidgetView.CurrentCupMl(_status));
     }
 
@@ -369,43 +371,64 @@ internal partial class MainWindow : Window
 
     private async Task LogDrinkAsync(int amount)
     {
-        var result = await _api.LogAmountAsync(amount);
-        if (!result.Ok || result.Value is null)
+        if (_drinkRequestInFlight) return;
+        _drinkRequestInFlight = true;
+        ApplyStatus(_status ?? new StatusResponse());
+        try
         {
-            ShowSnack(string.IsNullOrWhiteSpace(result.Error) ? "没能记下这一杯" : result.Error);
-            return;
+            var result = await _api.LogAmountAsync(amount);
+            if (!result.Ok || result.Value is null)
+            {
+                ShowSnack(string.IsNullOrWhiteSpace(result.Error) ? "没能记下这一杯" : result.Error);
+                return;
+            }
+            ShowSnack(string.IsNullOrWhiteSpace(result.Value.Message) ? $"已记 {result.Value.RecordedMl} ml" : result.Value.Message);
+            await RefreshAsync();
         }
-        ShowSnack(string.IsNullOrWhiteSpace(result.Value.Message) ? $"已记 {result.Value.RecordedMl} ml" : result.Value.Message);
-        await RefreshAsync();
+        finally
+        {
+            _drinkRequestInFlight = false;
+            if (_status is not null) ApplyStatus(_status);
+        }
     }
 
     private async void PauseButton_Click(object sender, RoutedEventArgs e)
     {
-        var settings = await _api.GetSettingsAsync();
-        if (!settings.Ok || settings.Value is null)
+        if (_pauseRequestInFlight) return;
+        _pauseRequestInFlight = true;
+        PauseButton.IsEnabled = false;
+        try
         {
-            ShowSnack(settings.Error ?? "无法读取设置");
-            return;
+            var settings = await _api.GetSettingsAsync();
+            if (!settings.Ok || settings.Value is null)
+            {
+                ShowSnack(settings.Error ?? "无法读取设置");
+                return;
+            }
+            var update = SettingsEditor.FromResponse(settings.Value);
+            update.PauseOnly = true;
+            if (settings.Value.RemindersPaused)
+            {
+                update.RemindersPaused = false;
+                update.PauseUntil = null;
+            }
+            else
+            {
+                var day = _status is not null
+                    && DateTime.TryParse(_status.Now, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var now)
+                    ? now.Date
+                    : DateTime.Today;
+                update.RemindersPaused = true;
+                update.PauseUntil = day.AddDays(1).ToString("yyyy-MM-ddTHH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
+            }
+            var saved = await _api.SaveSettingsAsync(update);
+            if (!saved.Ok) ShowSnack(saved.Error ?? "没能暂停提醒");
         }
-        var update = SettingsEditor.FromResponse(settings.Value);
-        update.PauseOnly = true;
-        if (settings.Value.RemindersPaused)
+        finally
         {
-            update.RemindersPaused = false;
-            update.PauseUntil = null;
+            _pauseRequestInFlight = false;
+            await RefreshAsync();
         }
-        else
-        {
-            var day = _status is not null
-                && DateTime.TryParse(_status.Now, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var now)
-                ? now.Date
-                : DateTime.Today;
-            update.RemindersPaused = true;
-            update.PauseUntil = day.AddDays(1).ToString("yyyy-MM-ddTHH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
-        }
-        var saved = await _api.SaveSettingsAsync(update);
-        if (!saved.Ok) ShowSnack(saved.Error ?? "没能暂停提醒");
-        await RefreshAsync();
     }
 
     private async void RecordsButton_Click(object sender, RoutedEventArgs e)

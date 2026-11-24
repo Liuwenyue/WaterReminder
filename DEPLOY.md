@@ -86,7 +86,7 @@ sudo systemctl enable --now waterreminder
 curl -sS http://127.0.0.1:8787/health
 ```
 
-The unit sets `TZ=Asia/Shanghai`. The process also converts from UTC with `Asia/Shanghai` itself, so a UTC host still fires at 08:30 Shanghai.
+The unit sets `TZ=Asia/Shanghai`. The process also converts from UTC with `Asia/Shanghai` itself, so a UTC host still fires at 09:00 Shanghai by default.
 
 ## Firewall
 

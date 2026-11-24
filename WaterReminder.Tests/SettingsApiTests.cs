@@ -13,7 +13,7 @@ namespace WaterReminder.Tests;
 /// <summary>Desktop settings round-trip: validate, persist, and apply without restarting the process.</summary>
 public sealed class SettingsApiTests
 {
-    private static readonly DateTime Tuesday = new(2026, 11, 3, 10, 0, 0);
+    private static readonly DateTime Tuesday = new(2026, 11, 3, 10, 10, 0);
 
     [Fact]
     public void Validate_RejectsGoalCupTimesAndEmptyWeek()
@@ -65,7 +65,7 @@ public sealed class SettingsApiTests
         Assert.Equal("hlk_file_token", target.PushWardApiToken);
         Assert.Equal(2400, target.DailyGoalMl);
         Assert.Equal(45, target.MinReminderGapMinutes);
-        Assert.Equal(370, target.WorkCupCapacityMl);
+        Assert.Equal(300, target.WorkCupCapacityMl);
     }
 
     [Fact]
@@ -96,7 +96,7 @@ public sealed class SettingsApiTests
             using var client = new ReminderApiClient(baseUrl, "desktop-api-token");
             var loaded = await client.GetSettingsAsync();
             Assert.True(loaded.Ok);
-            Assert.Equal(3000, loaded.Value!.DailyGoalMl);
+            Assert.Equal(2000, loaded.Value!.DailyGoalMl);
             Assert.Equal(20, loaded.Value.MinReminderGapMinutes);
             var before = await client.GetStatusAsync();
             Assert.True(before.Value!.ShowDesktop);
@@ -190,7 +190,7 @@ public sealed class SettingsApiTests
 
             using var client = new ReminderApiClient(app.Urls.Single(), "desktop-api-token");
             var still = await client.GetSettingsAsync();
-            Assert.Equal(3000, still.Value!.DailyGoalMl);
+            Assert.Equal(2000, still.Value!.DailyGoalMl);
 
             var file = File.Exists(Path.Combine(dir, "settings.json"))
                 ? await File.ReadAllTextAsync(Path.Combine(dir, "settings.json"))
@@ -232,7 +232,7 @@ public sealed class SettingsApiTests
             var after = engine.Status();
             Assert.Equal(120, after.MinReminderGapMinutes);
             Assert.Equal(0, after.SuggestedMl);
-            Assert.Equal("2026-11-03T10:30:00", after.NextReminder);
+            Assert.Equal("2026-11-03T11:00:00", after.NextReminder);
             Assert.Equal(120, engine.ClientSettings().MinReminderGapMinutes);
         }
         finally { TryDelete(dir); }
@@ -240,11 +240,11 @@ public sealed class SettingsApiTests
 
     private static SettingsUpdate Sample() => new()
     {
-        DailyGoalMl = 3000,
-        WorkCupMl = 370,
-        HomeCupMl = 800,
-        WorkStart = "08:30",
-        WorkEnd = "17:30",
+        DailyGoalMl = 2000,
+        WorkCupMl = 300,
+        HomeCupMl = 300,
+        WorkStart = "09:00",
+        WorkEnd = "18:00",
         LunchEnabled = true,
         LunchStart = "11:50",
         LunchEnd = "13:30",

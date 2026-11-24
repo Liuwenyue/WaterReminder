@@ -129,26 +129,26 @@ public sealed class DynamicReminderTests
     [Fact]
     public void DefaultWorkday_ReservesHomeCup_PlansSixWorkCupsNotNine()
     {
-        // Product defaults: 3000 ml, work cup 370, home cup 800, 08:30–17:30, lunch 11:50–13:30, cutoff 17:00.
-        // Drinking time is 410 minutes. Six work cups land about every 63 minutes, not nine cups every ~43.
+        // Product defaults: 2000 ml, work cup 300, home cup 300, 09:00–18:00, lunch 11:50–13:30, cutoff 17:30.
+        // Drinking time is 410 minutes. Six work cups land about every 63 minutes.
         var s = new UserSettings();
         var morning = new DateTime(2026, 11, 3, 8, 0, 0);
         var plan = WaterCalculator.CalculateDynamic(s, new DailyRecord(), morning);
 
-        Assert.Equal(3000, s.DailyGoalMl);
-        Assert.Equal(370, WaterCalculator.WorkCupMl(s));
-        Assert.Equal(800, WaterCalculator.HomeCupMl(s));
+        Assert.Equal(2000, s.DailyGoalMl);
+        Assert.Equal(300, WaterCalculator.WorkCupMl(s));
+        Assert.Equal(300, WaterCalculator.HomeCupMl(s));
         Assert.Equal(20, s.MinReminderGapMinutes);
         Assert.Equal(6, plan.TotalReminders);
         Assert.NotEqual(9, plan.TotalReminders);
         Assert.Equal(63, Math.Round(plan.Interval.TotalMinutes));
         Assert.True(plan.Interval.TotalMinutes > s.MinReminderGapMinutes);
-        Assert.Equal(new DateTime(2026, 11, 3, 9, 34, 0), plan.NextReminder);
+        Assert.Equal(new DateTime(2026, 11, 3, 10, 4, 0), plan.NextReminder);
         Assert.Equal(0, plan.SuggestedMl);
 
         var during = new DateTime(2026, 11, 3, 9, 0, 0);
-        Assert.Equal("下次 09:34 · 370 ml", WaterCalculator.StatusLine(s, new DailyRecord(), plan, during, compact: true));
-        Assert.Equal("下次提醒 09:34 · 建议 370 ml", WaterCalculator.StatusLine(s, new DailyRecord(), plan, during, compact: false));
+        Assert.Equal("下次 10:04 · 300 ml", WaterCalculator.StatusLine(s, new DailyRecord(), plan, during, compact: true));
+        Assert.Equal("下次提醒 10:04 · 建议 300 ml", WaterCalculator.StatusLine(s, new DailyRecord(), plan, during, compact: false));
     }
 
     [Fact]
@@ -161,11 +161,11 @@ public sealed class DynamicReminderTests
             Events = Enumerable.Range(0, 6).Select(i => new WaterEvent
             {
                 At = day.AddHours(9).AddMinutes(i * 50),
-                AmountMl = 370,
+                AmountMl = 300,
                 Source = "cup",
             }).ToList(),
         };
-        Assert.Equal(2220, six.ConsumedMl);
+        Assert.Equal(1800, six.ConsumedMl);
 
         var during = WaterCalculator.CalculateDynamic(s, six, day.AddHours(16));
         Assert.Equal(0, during.TotalReminders);
@@ -174,18 +174,18 @@ public sealed class DynamicReminderTests
         Assert.Equal("下班后再提醒", WaterCalculator.StatusLine(s, six, during, day.AddHours(16), false));
 
         six.Events.Add(new WaterEvent { At = day.AddHours(16).AddMinutes(10), AmountMl = 20, Source = "custom" });
-        Assert.True(six.ConsumedMl > 2220);
+        Assert.True(six.ConsumedMl > 1800);
         Assert.Null(WaterCalculator.CalculateDynamic(s, six, day.AddHours(16).AddMinutes(20)).NextReminder);
 
-        var five = new DailyRecord { Events = [new WaterEvent { At = day.AddHours(9), AmountMl = 1850, Source = "cup" }] };
+        var five = new DailyRecord { Events = [new WaterEvent { At = day.AddHours(9), AmountMl = 1600, Source = "cup" }] };
         var stillWorking = WaterCalculator.CalculateDynamic(s, five, day.AddHours(10));
         Assert.Equal(1, stillWorking.TotalReminders);
         Assert.NotNull(stillWorking.NextReminder);
 
-        var eveningRecord = new DailyRecord { Events = [new WaterEvent { At = day.AddHours(9), AmountMl = 2220, Source = "cup" }] };
-        var evening = WaterCalculator.CalculateDynamic(s, eveningRecord, day.AddHours(17).AddMinutes(30));
+        var eveningRecord = new DailyRecord { Events = [new WaterEvent { At = day.AddHours(9), AmountMl = 1800, Source = "cup" }] };
+        var evening = WaterCalculator.CalculateDynamic(s, eveningRecord, day.AddHours(18).AddMinutes(30));
         Assert.Equal(1, evening.TotalReminders);
-        Assert.Equal(day.AddHours(21).AddMinutes(10), evening.NextReminder);
+        Assert.Equal(day.AddHours(21).AddMinutes(20), evening.NextReminder);
         Assert.Equal(0, evening.SuggestedMl);
     }
 
@@ -194,7 +194,7 @@ public sealed class DynamicReminderTests
     {
         var s = new UserSettings { QuietStart = new TimeSpan(17, 30, 0) };
         var plan = WaterCalculator.CalculateDynamic(s, new DailyRecord(), new DateTime(2026, 11, 3, 8, 0, 0));
-        Assert.Equal(9, plan.TotalReminders);
+        Assert.Equal(7, plan.TotalReminders);
     }
 
     // ---------- every path that changes today's total recomputes immediately ----------

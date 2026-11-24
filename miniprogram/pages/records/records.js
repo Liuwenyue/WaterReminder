@@ -55,6 +55,7 @@ Page({
   },
   onHide() {
     this._edit = this._recordPrompt = null;
+    this._totalSubmitting = false;
     if (this.data.amountOpen || this.data.editing) this.setData({ amountOpen: false, editing: false });
   },
   onUnload() { this.onHide(); },
@@ -109,6 +110,7 @@ Page({
     this.setData({ amountOpen: true, actionId, editContext: this.actionLabel(this._edit), initialTotal: String(this.data.total) });
   },
   saveTotal(event) {
+    if (this._totalSubmitting) return;
     const edit = this._edit;
     if (event.detail.actionId !== edit?.actionId || !edit) {
       this.actionExpired();
@@ -124,6 +126,7 @@ Page({
       sheet?.showError(result.error);
       return;
     }
+    this._totalSubmitting = true;
     this._edit = null;
     sheet?.dismiss();
     wechat.capture().then(wechat.report);
@@ -133,6 +136,7 @@ Page({
   },
   closeAmount(event) {
     if (event.detail.actionId !== this.data.actionId) return;
+    this._totalSubmitting = false;
     this._edit = null;
     this.setData({ amountOpen: false });
   },

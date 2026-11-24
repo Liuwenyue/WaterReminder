@@ -23,6 +23,7 @@ public partial class RecordsWindow : Window
     private CancellationTokenSource? _memberSettingsRequest;
     private int _memberSettingsVersion;
     private bool _closed;
+    private bool _recordMutationInFlight;
 
     public RecordsWindow(ReminderApiClient api, int cupMl, DateTime? serverNow = null)
     {
@@ -307,38 +308,58 @@ public partial class RecordsWindow : Window
 
     private async void Edit_Click(object sender, RoutedEventArgs e)
     {
-        if (_records is not { Editable: true } records) return;
+        if (_recordMutationInFlight || _records is not { Editable: true } records) return;
         if (ItemOf(sender) is not { } item) return;
         var member = _member;
         var title = member is null ? "修改记录" : $"{(MemberPicker.SelectedItem as MemberOption)?.Member.Name} · {records.Date}";
         var dialog = new AmountWindow(initial: Math.Abs(item.Event.AmountMl), cup: _cupMl, title: title, okText: "保存") { Owner = this };
         if (dialog.ShowDialog() != true) return;
         var amount = item.Event.AmountMl < 0 ? -dialog.AmountMl : dialog.AmountMl;
-        if (member is { } memberId)
+        _recordMutationInFlight = true;
+        if (sender is Button button) button.IsEnabled = false;
+        try
         {
-            await ChangeMemberRecordAsync(memberId, records, item, amount);
-            return;
+            if (member is { } memberId)
+            {
+                await ChangeMemberRecordAsync(memberId, records, item, amount);
+                return;
+            }
+            var saved = await _api.EditRecordAsync(item.Event.Id, amount);
+            if (!saved.Ok) { SummaryText.Text = saved.Error ?? "没能修改"; return; }
+            await Task.WhenAll(ReloadAsync(), LoadHistoryAsync());
         }
-        var saved = await _api.EditRecordAsync(item.Event.Id, amount);
-        if (!saved.Ok) { SummaryText.Text = saved.Error ?? "没能修改"; return; }
-        await Task.WhenAll(ReloadAsync(), LoadHistoryAsync());
+        finally
+        {
+            _recordMutationInFlight = false;
+            if (sender is Button restore) restore.IsEnabled = true;
+        }
     }
 
     private async void Delete_Click(object sender, RoutedEventArgs e)
     {
-        if (_records is not { Editable: true } records) return;
+        if (_recordMutationInFlight || _records is not { Editable: true } records) return;
         if (ItemOf(sender) is not { } item) return;
         var member = _member;
         var ledger = member is null ? "" : $"{(MemberPicker.SelectedItem as MemberOption)?.Member.Name} · {records.Date} ";
         if (!ConfirmDialog.Ask(this, "删除这条记录？", $"{ledger}{item.TimeText} 的 {item.AmountDisplay} 将被删除。", "删除", danger: true)) return;
-        if (member is { } memberId)
+        _recordMutationInFlight = true;
+        if (sender is Button button) button.IsEnabled = false;
+        try
         {
-            await ChangeMemberRecordAsync(memberId, records, item, null);
-            return;
+            if (member is { } memberId)
+            {
+                await ChangeMemberRecordAsync(memberId, records, item, null);
+                return;
+            }
+            var saved = await _api.DeleteRecordAsync(item.Event.Id);
+            if (!saved.Ok) { SummaryText.Text = saved.Error ?? "没能删除"; return; }
+            await Task.WhenAll(ReloadAsync(), LoadHistoryAsync());
         }
-        var saved = await _api.DeleteRecordAsync(item.Event.Id);
-        if (!saved.Ok) { SummaryText.Text = saved.Error ?? "没能删除"; return; }
-        await Task.WhenAll(ReloadAsync(), LoadHistoryAsync());
+        finally
+        {
+            _recordMutationInFlight = false;
+            if (sender is Button restore) restore.IsEnabled = true;
+        }
     }
 
     private async Task ChangeMemberRecordAsync(Guid memberId, TodayRecordsResponse records, RecordItem item, int? amount)
@@ -351,34 +372,43 @@ public partial class RecordsWindow : Window
 
     private async void Clear_Click(object sender, RoutedEventArgs e)
     {
-        if (_member is not null || _records is not { Editable: true } records || records.Events.Count == 0) return;
+        if (_recordMutationInFlight || _member is not null || _records is not { Editable: true } records || records.Events.Count == 0) return;
         if (!ConfirmDialog.Ask(this, "清空今天的所有记录？", $"{records.Date} 的饮水进度将归零，此操作无法撤销。", "清空", danger: true)) return;
+        _recordMutationInFlight = true;
         ClearButton.IsEnabled = false;
-        var saved = await _api.ClearTodayForDateAsync(records.Date);
-        if (_closed || !ReferenceEquals(_records, records)) return;
-        if (saved.StatusCode == 409)
+        try
         {
-            var current = await _api.GetRecordsAsync();
             if (_closed || !ReferenceEquals(_records, records)) return;
-            if (current.Value is { } today &&
-                DateOnly.TryParseExact(today.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+            var saved = await _api.ClearTodayForDateAsync(records.Date);
+            if (_closed || !ReferenceEquals(_records, records)) return;
+            if (saved.StatusCode == 409)
             {
-                _selected = _today = date;
-                var refreshedVersion = _detailVersion + 1;
-                await Task.WhenAll(ReloadAsync(), LoadHistoryAsync());
-                if (_closed || refreshedVersion != _detailVersion) return;
+                var current = await _api.GetRecordsAsync();
+                if (_closed || !ReferenceEquals(_records, records)) return;
+                if (current.Value is { } today &&
+                    DateOnly.TryParseExact(today.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+                {
+                    _selected = _today = date;
+                    var refreshedVersion = _detailVersion + 1;
+                    await Task.WhenAll(ReloadAsync(), LoadHistoryAsync());
+                    if (_closed || refreshedVersion != _detailVersion) return;
+                }
+                SummaryText.Text = saved.Error ?? "账本日期已变更，请查看今日记录后重新确认清空。";
+                return;
             }
-            else ClearButton.IsEnabled = true;
-            SummaryText.Text = saved.Error ?? "账本日期已变更，请查看今日记录后重新确认清空。";
-            return;
+
+            if (!saved.Ok)
+            {
+                SummaryText.Text = saved.Error ?? "没能清空";
+                return;
+            }
+            await Task.WhenAll(ReloadAsync(), LoadHistoryAsync());
         }
-        if (!saved.Ok)
+        finally
         {
-            ClearButton.IsEnabled = true;
-            SummaryText.Text = saved.Error ?? "没能清空";
-            return;
+            _recordMutationInFlight = false;
+            if (!_closed) ClearButton.IsEnabled = true;
         }
-        await Task.WhenAll(ReloadAsync(), LoadHistoryAsync());
     }
 
     private void Close_Click(object sender, RoutedEventArgs e)

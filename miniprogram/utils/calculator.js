@@ -56,12 +56,12 @@ function ceilToMinute(date) {
 
 function defaultSettings() {
   return {
-    dailyGoalMl: 3000,
+    dailyGoalMl: 2000,
     cupCapacityMl: 370,
-    workCupCapacityMl: 370,
-    homeCupCapacityMl: 800,
-    workStart: '08:30',
-    workEnd: '17:30',
+    workCupCapacityMl: 300,
+    homeCupCapacityMl: 300,
+    workStart: '09:00',
+    workEnd: '18:00',
     lunchEnabled: true,
     lunchStart: '11:50',
     lunchEnd: '13:30',

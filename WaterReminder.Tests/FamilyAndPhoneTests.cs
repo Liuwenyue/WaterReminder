@@ -81,7 +81,7 @@ public sealed class FamilyAndPhoneTests
         using var files = new TempData();
         using var fake = new PushInbox();
         using var http = new HttpClient(fake);
-        var now = new DateTime(2026, 11, 3, 10, 0, 0);
+        var now = new DateTime(2026, 11, 3, 11, 0, 0);
         const string token = "test-only-phone-key";
         using (var first = Engine(files, () => now, http, token))
             await first.TickAsync();
@@ -154,7 +154,7 @@ public sealed class FamilyAndPhoneTests
     public async Task Phone_DelayedTapUsesDisplayedCupAfterSettingsChangeAndRestart(int sentHour, int tappedHour, int expected)
     {
         using var files = new TempData();
-        files.Storage.SaveSettings(new UserSettings { DailyGoalMl = 3000, WorkCupCapacityMl = 370, HomeCupCapacityMl = 800 });
+        files.Storage.SaveSettings(new UserSettings { DailyGoalMl = 3000, WorkCupCapacityMl = 370, HomeCupCapacityMl = 800, WorkStart = new(8, 30, 0), WorkEnd = new(17, 30, 0) });
         using var fake = new PushInbox();
         using var http = new HttpClient(fake);
         var now = new DateTime(2026, 11, 3, sentHour, 0, 0);
@@ -165,7 +165,7 @@ public sealed class FamilyAndPhoneTests
         Assert.Equal(2, actions.GetArrayLength());
         Assert.Equal($"已喝水 · {expected} ml", actions[0].GetProperty("title").GetString());
         var action = actions[0].GetProperty("id").GetString()!;
-        files.Storage.SaveSettings(new UserSettings { DailyGoalMl = 3000, WorkCupCapacityMl = 999, HomeCupCapacityMl = 999 });
+        files.Storage.SaveSettings(new UserSettings { DailyGoalMl = 3000, WorkCupCapacityMl = 999, HomeCupCapacityMl = 999, WorkStart = new(8, 30, 0), WorkEnd = new(17, 30, 0) });
         now = now.Date.AddHours(tappedHour);
         using var restart = Engine(files, () => now, http, token);
         Assert.True(((IPushWardReplies)restart).Accept(token, "begin+001", new("next", [new("1234", action)])));

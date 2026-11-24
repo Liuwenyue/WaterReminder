@@ -1,14 +1,13 @@
-# 验收说明（PushWard 唯一手机通道 + Notification Answers）
+# 验收说明（手机提醒通道与 Notification Answers）
 
-> 这份记录对应「只保留 PushWard」那一次改动。现在的运行方式是 Linux 上的无界面服务加上 Windows 托盘客户端，说明见 [README.md](README.md) 和 [DEPLOY.md](DEPLOY.md)。
+> 这份记录对应 PushWard Notification Answers 的验收。现在的运行方式是 Linux 上的无界面服务加上 Windows 托盘客户端，说明见 [README.md](README.md) 和 [DEPLOY.md](DEPLOY.md)。
 
 
 
 ## 改了什么
 
-- 手机推送只保留 **PushWard**：删除 ntfy 与 Pushover 的服务、通道枚举、设置字段、
-  界面和测试，不再保留“旧版可选”死代码。
-- 设置只剩 `MobilePushEnabled` 和 `PushWardApiToken`（`hlk_…`）。
+- 手机提醒支持微信订阅消息和 **PushWard**。PushWard 的 Notification Answers 仍按本文验证。
+- PushWard 设置保留 `MobilePushEnabled` 和 `PushWardApiToken`（`hlk_…`），微信提醒另有绑定和一次性订阅授权。
   旧 `settings.json` 里的 `MobilePushChannel`、`Ntfy*`、`Pushover*` 字段在读取时被
   System.Text.Json 忽略，下次保存时不再写回；不会因为旧键导致加载失败。
 - `PushWardMessageBuilder` 的动作只剩
@@ -29,7 +28,7 @@
 - 记账来源标签只保留 `pushward` →「手机 Pushward」。
 - 设置页：PushWard Token 使用 PasswordBox；删除 Pushover/ntfy 输入框、通道下拉框和
   「高级」折叠区。测试发送成功只看 PushWard API 是否返回 2xx（正常 201）。
-- 文档：`PUSHWARD.md` 是唯一的手机推送指南；README/ACCEPT 已改为
+- 文档：`PUSHWARD.md` 是 PushWard 手机推送指南；README/ACCEPT 同时说明
   **无需 ntfy / Pushover**，并说明 iOS 需长按或下拉通知才能看到按钮、
   免费约 500 条/月、付费约 $24/年。
 
@@ -80,8 +79,8 @@ dotnet build WaterReminder.sln -c Release -p:EnableWindowsTargeting=true
    - 预期：iPhone 收到一条 PushWard 测试通知。
    - 通知上可能只显示标题/正文；**长按通知或下拉通知中心**后应看到「喝水了」。
 3. 点「喝水了」：
-   - 预期：不打开 PushWard，也不打开 Safari；电脑记录 `+800 ml`（来源「手机 Pushward」）；
-     iPhone 再收到「已记录 / 已记 800 ml」确认（无按钮）。
+   - 预期：不打开 PushWard，也不打开 Safari；电脑记录 `+300 ml`（来源「手机 Pushward」）；
+     iPhone 再收到「已记录 / 已记 300 ml」确认（无按钮）。
 4. 再点一次同一条通知的「喝水了」（或断网重连触发重放）：
    - 预期：不会重复记账（按 `notification_id` 去重）。
 5. 把「下班时间」调到一分钟后，等待晚间提醒：

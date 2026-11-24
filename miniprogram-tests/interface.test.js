@@ -61,7 +61,7 @@ beforeEach(() => {
   delete wx.pageScrollTo;
 });
 
-test('one tap updates the amount, progress and recent entry; a rapid second tap is ignored', () => {
+test('one tap updates the amount, progress and recent entry; a rapid second tap is ignored', async () => {
   const today = mount(todayPage);
   today.onShow();
   today.drinkCup();
@@ -72,6 +72,7 @@ test('one tap updates the amount, progress and recent entry; a rapid second tap 
   today.togglePause();
   assert.equal(today.data.paused, true);
   assert.equal(today.data.hasNext, false);
+  await new Promise(resolve => setTimeout(resolve, 550));
   today.togglePause();
   assert.equal(today.data.paused, false);
   today.onHide();

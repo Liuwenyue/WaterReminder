@@ -45,6 +45,7 @@ Page({
   },
   resetTransient() {
     this._edit = null;
+    this._customSubmitting = false;
     clearTimeout(this._feedbackTimer);
     if (this.data.amountOpen || this.data.feedback) this.setData({ amountOpen: false, feedback: '', sipPulse: [] });
   },
@@ -190,6 +191,7 @@ Page({
       editContext: (this.data.identity || (this._view.account ? '当前账本' : '本机账本')) + ' · ' + this._view.date });
   },
   addCustom(event) {
+    if (this._customSubmitting) return;
     const edit = this._edit;
     const account = store.accountKey();
     const now = new Date();
@@ -200,23 +202,31 @@ Page({
       return;
     }
     const sheet = this.selectComponent('#amountSheet');
+    this._customSubmitting = true;
     const result = this.recordAmount(event.detail.amount, 'custom');
     if (result.ok) {
       this._edit = null;
       sheet?.dismiss();
       wechat.capture().then(wechat.report);
-    } else sheet?.showError(result.error);
+    } else {
+      this._customSubmitting = false;
+      sheet?.showError(result.error);
+    }
   },
   closeAmount(event) {
     if (event.detail.actionId !== this.data.actionId) return;
+    this._customSubmitting = false;
     this._edit = null;
     this.setData({ amountOpen: false });
   },
   togglePause() {
+    if (this._pauseBusy) return;
+    this._pauseBusy = true;
     const result = this.data.paused ? store.resume() : store.pauseToday(new Date());
     if (result && result.pending) getApp().syncChanges();
     if (result && !result.ok) wx.showToast({ title: result.error, icon: 'none' });
     this.reload();
+    setTimeout(() => { this._pauseBusy = false; }, 500);
   },
   goRecords() {
     getApp().globalData.openTodayRecords = true;

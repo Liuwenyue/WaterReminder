@@ -23,15 +23,15 @@ Phone reminders support WeChat subscription messages and PushWard. The server de
 
 | Setting | Default |
 | --- | --- |
-| Daily goal | 3000 ml |
-| Work | 08:30–17:30 |
+| Daily goal | 2000 ml |
+| Work | 09:00–18:00 |
 | Lunch | 11:50–13:30 |
 | No drinks before work ends | 30 minutes |
 | Quiet hours | from 23:00 until the next workday |
-| Work cup / home cup | 370 ml / 800 ml |
+| Work cup / home cup | 300 ml / 300 ml |
 | Minimum gap | 20 minutes |
 
-The schedule reserves one home cup (800 ml by default) for the evening. The default 3000 ml goal calls for about six work-cup reminders. Reminders pause during lunch and the configured window before work ends. During the rest of the workday, the Windows client shows desktop toasts and the server sends phone reminders according to the account settings. After work, phone reminders use the home cup until the goal is met or quiet hours begin.
+The schedule reserves one home cup for the evening. The default 2000 ml goal calls for about seven 300 ml reminders. Reminders pause during lunch and the configured window before work ends. During the rest of the workday, the Windows client shows desktop toasts and the server sends phone reminders according to the account settings. After work, phone reminders use the home cup until the goal is met or quiet hours begin.
 
 Copy stays short: title 「该喝水了」, body 「已喝 {已喝}/{目标} ml，建议 {建议} ml」, confirmation 「已记录 / 已记 {N} ml」. On the phone, one tap on the notification records the drink and does not open a browser.
 

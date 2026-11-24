@@ -95,14 +95,14 @@ public sealed class ServerSplitTests
     {
         var s = new UserSettings();
         var day = Tuesday;
-        Assert.Equal(3000, s.DailyGoalMl);
-        Assert.Equal(new TimeSpan(8, 30, 0), s.WorkStart);
-        Assert.Equal(new TimeSpan(17, 30, 0), s.WorkEnd);
+        Assert.Equal(2000, s.DailyGoalMl);
+        Assert.Equal(new TimeSpan(9, 0, 0), s.WorkStart);
+        Assert.Equal(new TimeSpan(18, 0, 0), s.WorkEnd);
         Assert.Equal(new TimeSpan(11, 50, 0), s.LunchStart);
         Assert.Equal(new TimeSpan(13, 30, 0), s.LunchEnd);
         Assert.Equal(new TimeSpan(23, 0, 0), s.QuietStart);
-        Assert.Equal(370, WaterCalculator.WorkCupMl(s));
-        Assert.Equal(800, WaterCalculator.HomeCupMl(s));
+        Assert.Equal(300, WaterCalculator.WorkCupMl(s));
+        Assert.Equal(300, WaterCalculator.HomeCupMl(s));
         Assert.Equal(TimeSpan.FromMinutes(20), WaterCalculator.MinReminderGap);
 
         Assert.True(WaterCalculator.ShouldShowDesktop(s, day.AddHours(10)));
@@ -112,7 +112,7 @@ public sealed class ServerSplitTests
         Assert.False(WaterCalculator.ShouldShowDesktop(s, lunch));
         Assert.False(WaterCalculator.ShouldSendMobilePush(s, lunch));
 
-        var noDrink = day.AddHours(17).AddMinutes(10);
+        var noDrink = day.AddHours(17).AddMinutes(40);
         Assert.Equal(WaterCalculator.DayPhase.NoDrinkWindow, WaterCalculator.PhaseAt(s, noDrink));
         Assert.False(WaterCalculator.ShouldShowDesktop(s, noDrink));
         Assert.False(WaterCalculator.ShouldSendMobilePush(s, noDrink));
@@ -131,7 +131,7 @@ public sealed class ServerSplitTests
     {
         var dir = TempDir();
         var handler = new FakeHandler();
-        var now = Tuesday.AddHours(10);
+        var now = Tuesday.AddHours(10).AddMinutes(10);
         try
         {
             using var engine = Engine(dir, handler, () => now);
@@ -142,7 +142,7 @@ public sealed class ServerSplitTests
             Assert.EndsWith("/notifications", post.Uri.AbsolutePath);
             Assert.Equal("hlk_test_token", post.Authorization);
             Assert.Contains("该喝水了", post.Body);
-            Assert.Contains("已喝 0/3000 ml，建议 370 ml", post.Body);
+            Assert.Contains("已喝 0/2000 ml，建议 300 ml", post.Body);
             Assert.Contains("\"id\":\"drink-", post.Body);
             Assert.DoesNotContain("\"url\"", post.Body);
             Assert.DoesNotContain("foreground", post.Body);
@@ -159,12 +159,61 @@ public sealed class ServerSplitTests
             Assert.NotNull(status.DesktopAlert);
             var alert = status.DesktopAlert!;
             Assert.Equal("该喝水了", alert.Title);
-            Assert.Equal("已喝 0/3000 ml，建议 370 ml", alert.Body);
+            Assert.Equal("已喝 0/2000 ml，建议 300 ml", alert.Body);
             Assert.True(DesktopToastPolicy.ShouldToast(status.ShowDesktop, status.Phase, alert.Id, lastShownId: null));
             Assert.False(DesktopToastPolicy.ShouldToast(status.ShowDesktop, status.Phase, alert.Id, alert.Id));
 
             await engine.TickAsync();
             Assert.Single(handler.Requests);
+        }
+        finally { TryDelete(dir); }
+    }
+
+    [Fact]
+    public void DesktopDrinkWithoutAmountUsesTheCurrentCup()
+    {
+        var dir = TempDir();
+        var now = Tuesday.AddHours(10).AddMinutes(10);
+        try
+        {
+            using var engine = Engine(dir, new FakeHandler(), () => now, pushToken: null);
+            var update = SettingsEditor.FromResponse(engine.ClientSettings());
+            update.WorkCupMl = 300;
+            update.HomeCupMl = 800;
+            update.MobilePushEnabled = false;
+            Assert.True(engine.TryUpdateSettings(update, out var error), error);
+
+            Assert.Equal(300, engine.LogDrink(null, "desktop"));
+            now = Tuesday.AddHours(19);
+            Assert.Equal(800, engine.LogDrink(null, "desktop"));
+            now = Tuesday.AddDays(4).AddHours(10);
+            Assert.Equal(800, engine.LogDrink(null, "desktop"));
+        }
+        finally { TryDelete(dir); }
+    }
+
+    [Fact]
+    public async Task DesktopAlertAdvancesOnAcknowledgementAndExpiresAfterWake()
+    {
+        var dir = TempDir();
+        var now = Tuesday.AddHours(10).AddMinutes(10);
+        try
+        {
+            using var engine = Engine(dir, new FakeHandler(), () => now, pushToken: null);
+            var update = SettingsEditor.FromResponse(engine.ClientSettings());
+            update.MobilePushEnabled = false;
+            Assert.True(engine.TryUpdateSettings(update, out var error), error);
+
+            await engine.TickAsync();
+            var first = engine.Status().DesktopAlert;
+            Assert.NotNull(first);
+            Assert.True(engine.AcknowledgeDesktop(first!.Id));
+            Assert.Null(engine.Status().DesktopAlert);
+
+            now = Tuesday.AddHours(10).AddMinutes(30);
+            Assert.Null(engine.Status().DesktopAlert);
+            await engine.TickAsync();
+            Assert.Null(engine.Status().DesktopAlert);
         }
         finally { TryDelete(dir); }
     }
@@ -216,7 +265,7 @@ public sealed class ServerSplitTests
     {
         var dir = TempDir();
         var handler = new FakeHandler { Respond = _ => (HttpStatusCode.BadGateway, "{}") };
-        var now = Tuesday.AddHours(10);
+        var now = Tuesday.AddHours(10).AddMinutes(10);
         try
         {
             using var engine = Engine(dir, handler, () => now);
@@ -227,7 +276,7 @@ public sealed class ServerSplitTests
             await engine.TickAsync();
             Assert.Single(handler.Requests);
 
-            now = Tuesday.AddHours(10) + MobilePushDeliveryPolicy.FailureBackoff;
+            now = Tuesday.AddHours(10).AddMinutes(10) + MobilePushDeliveryPolicy.FailureBackoff;
             await engine.TickAsync();
             Assert.Equal(2, handler.Requests.Count);
         }
@@ -243,6 +292,10 @@ public sealed class ServerSplitTests
         try
         {
             using var engine = Engine(dir, handler, () => now, pushToken: null);
+            var update = SettingsEditor.FromResponse(engine.ClientSettings());
+            update.WorkCupMl = 370;
+            update.HomeCupMl = 800;
+            Assert.True(engine.TryUpdateSettings(update, out var error), error);
             Assert.Equal(370, engine.RecordPhoneDrink());
             now = Tuesday.AddHours(19);
             Assert.Equal(800, engine.RecordPhoneDrink());
@@ -289,7 +342,7 @@ public sealed class ServerSplitTests
     {
         var dir = TempDir();
         var handler = new FakeHandler();
-        var now = Tuesday.AddHours(10);
+        var now = Tuesday.AddHours(10).AddMinutes(10);
         const string apiToken = "desktop-api-token";
         const string pushToken = "hlk_server_only";
         WebApplication? app = null;
@@ -323,15 +376,15 @@ public sealed class ServerSplitTests
             Assert.NotNull(status.Value);
             Assert.True(status.Value!.ShowDesktop);
             Assert.Equal("该喝水了", status.Value.DesktopAlert?.Title);
-            Assert.Equal("已喝 0/3000 ml，建议 370 ml", status.Value.DesktopAlert?.Body);
+            Assert.Equal("已喝 0/2000 ml，建议 300 ml", status.Value.DesktopAlert?.Body);
 
             var settings = await client.GetSettingsAsync();
             Assert.True(settings.Ok);
-            Assert.Equal(3000, settings.Value!.DailyGoalMl);
-            Assert.Equal(370, settings.Value.WorkCupMl);
-            Assert.Equal(800, settings.Value.HomeCupMl);
-            Assert.Equal("08:30", settings.Value.WorkStart);
-            Assert.Equal("17:30", settings.Value.WorkEnd);
+            Assert.Equal(2000, settings.Value!.DailyGoalMl);
+            Assert.Equal(300, settings.Value.WorkCupMl);
+            Assert.Equal(300, settings.Value.HomeCupMl);
+            Assert.Equal("09:00", settings.Value.WorkStart);
+            Assert.Equal("18:00", settings.Value.WorkEnd);
             Assert.Equal("11:50", settings.Value.LunchStart);
             Assert.Equal("13:30", settings.Value.LunchEnd);
             Assert.Equal("23:00", settings.Value.QuietStart);
@@ -344,10 +397,10 @@ public sealed class ServerSplitTests
 
             var drink = await client.LogDesktopDrinkAsync();
             Assert.True(drink.Ok);
-            Assert.Equal(370, drink.Value!.RecordedMl);
+            Assert.Equal(300, drink.Value!.RecordedMl);
             Assert.Equal("已记录", drink.Value.Title);
-            Assert.Equal("已记 370 ml", drink.Value.Message);
-            Assert.Equal(370, drink.Value.ConsumedMl);
+            Assert.Equal("已记 300 ml", drink.Value.Message);
+            Assert.Equal(300, drink.Value.ConsumedMl);
 
             var alertId = status.Value.DesktopAlert!.Id;
             Assert.True(await client.AckDesktopAsync(alertId));

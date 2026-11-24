@@ -14,7 +14,7 @@ public sealed class WeChatSubscribeTests
 {
     private const string Secret = "test-wechat-secret";
     private const string Template = "template-id-0123456789";
-    private static readonly DateTime Tuesday = new(2026, 11, 3, 10, 0, 0);
+    private static readonly DateTime Tuesday = new(2026, 11, 3, 10, 10, 0);
 
     [Fact]
     public void Auto_PrefersReadyWeChat()
@@ -32,7 +32,7 @@ public sealed class WeChatSubscribeTests
         Assert.Contains("\"touser\":\"openid-test\"", payload);
         Assert.Contains(Template, payload);
         Assert.Contains("该喝水了", payload);
-        Assert.Contains("2026年11月3日 10:00", payload);
+        Assert.Contains("2026年11月3日 10:10", payload);
         Assert.Contains("建议喝370毫升", payload);
         Assert.Contains("\"miniprogram_state\":\"developer\"", payload);
         Assert.DoesNotContain(Secret, payload);
@@ -69,7 +69,7 @@ public sealed class WeChatSubscribeTests
 
             Assert.Empty(push.Requests);
             var send = Assert.Single(wechat.Requests, item => item.Path.Contains("/message/subscribe/send", StringComparison.Ordinal));
-            Assert.Contains("建议喝370毫升", send.Body);
+            Assert.Contains("建议喝300毫升", send.Body);
             Assert.DoesNotContain(Secret, send.Body);
             Assert.Equal(0, engine.WeChatStatus().Credits);
 

@@ -190,7 +190,7 @@ public sealed class WaterCalculatorTests
         Assert.Equal(30, s.NoDrinkBeforeEndMinutes);
         Assert.Equal(2220, s.DailyGoalMl);
         Assert.Equal(new TimeSpan(23, 0, 0), s.QuietStart);
-        Assert.Equal(new TimeSpan(8, 30, 0), s.WorkStart);
+        Assert.Equal(new TimeSpan(9, 0, 0), s.WorkStart);
     }
 
     [Theory]

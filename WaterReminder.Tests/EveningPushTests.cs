@@ -210,11 +210,11 @@ public sealed class EveningPushTests
     public void NewSettingsUseAfterWorkDefaults()
     {
         var s = new UserSettings();
-        Assert.Equal(3000, s.DailyGoalMl);
-        Assert.Equal(370, s.WorkCupCapacityMl);
-        Assert.Equal(800, s.HomeCupCapacityMl);
-        Assert.Equal(new TimeSpan(8, 30, 0), s.WorkStart);
-        Assert.Equal(new TimeSpan(17, 30, 0), s.WorkEnd);
+        Assert.Equal(2000, s.DailyGoalMl);
+        Assert.Equal(300, s.WorkCupCapacityMl);
+        Assert.Equal(300, s.HomeCupCapacityMl);
+        Assert.Equal(new TimeSpan(9, 0, 0), s.WorkStart);
+        Assert.Equal(new TimeSpan(18, 0, 0), s.WorkEnd);
         Assert.Equal(new TimeSpan(11, 50, 0), s.LunchStart);
         Assert.Equal(new TimeSpan(13, 30, 0), s.LunchEnd);
         Assert.Equal(new TimeSpan(23, 0, 0), s.QuietStart);
@@ -297,7 +297,7 @@ public sealed class EveningPushTests
             var s = storage.LoadSettings();
             Assert.Equal(500, s.WorkCupCapacityMl);
             Assert.Equal(500, s.CupCapacityMl); // legacy field kept in sync
-            Assert.Equal(800, s.HomeCupCapacityMl);
+            Assert.Equal(300, s.HomeCupCapacityMl);
             Assert.Equal(new TimeSpan(23, 0, 0), s.QuietStart);
         });
     }

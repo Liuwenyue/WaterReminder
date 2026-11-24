@@ -1,4 +1,4 @@
-# PushWard 手机推送（唯一手机通道）
+# PushWard 手机推送
 
 > 本文件只说明用法。PushWard API Token 只放在服务器的环境变量
 > `WATERREMINDER_PUSHWARD_TOKEN` 或数据目录的 `pushward.token`
@@ -6,7 +6,7 @@
 > 不会写入本仓库，也不会出现在日志或 Windows 客户端里。
 > 程序**不需要 ntfy，也不需要 Pushover**。
 
-## 为什么是 PushWard
+## PushWard 在本项目中的作用
 
 PushWard 支持自定义通知动作：按钮可以是 **Notification Answer**，点按只被 PushWard
 记录下来，由服务器轮询取回。按钮没有 `url`、没有 `foreground`，所以不会打开 App，
@@ -20,7 +20,7 @@ PushWard 支持自定义通知动作：按钮可以是 **Notification Answer**�
 | `WorkEnd` ≤ 现在 < `QuietStart` 且开启手机推送 | 只发 PushWard；不弹桌面 |
 | `QuietStart` 到次日 `WorkStart`、周末/非提醒日、暂停提醒 | 完全不推送 |
 
-- 家庭杯默认 800 ml；手机上点「喝水了」记录的就是家庭杯，来源标记为 `pushward`。
+- 家庭杯默认 300 ml；手机上点「喝水了」记录的就是家庭杯，来源标记为 `pushward`。
 - 只有 PushWard API 接受了提醒（2xx）才算成功并重新计时；发送失败约 90 秒后重试。
 - 同一条通知只记一次（按 `notification_id` 去重），重复的 Answer 不会重复记账。
 
@@ -46,7 +46,7 @@ PushWard 支持自定义通知动作：按钮可以是 **Notification Answer**�
 ```json
 {
   "title": "该喝水了",
-  "body": "已喝 400/3000 ml，建议 370 ml",
+  "body": "已喝 400/2000 ml，建议 300 ml",
   "source": "waterreminder",
   "source_display_name": "喝水提醒",
   "level": "time-sensitive",
@@ -74,7 +74,7 @@ PushWard 支持自定义通知动作：按钮可以是 **Notification Answer**�
    上班记工作杯、下班后记家庭杯（来源 `pushward`），然后发送「已记录 / 已记 N ml」确认（无 actions）。
 4. 每个响应都推进 `cursor`；网络失败只做短退避重试，不会弹窗或打断提醒计时。
 
-轮询只在「开启手机推送 + 服务器上已配置 API Token」时运行。旧版 WPF 保存设置时会重启或停止本机轮询；服务器则在每次调度时按环境变量或 `pushward.token` 决定是否轮询。
+轮询只在「开启手机推送 + 服务器上已配置 API Token」时运行。服务器会按成员设置选择微信订阅消息、PushWard 或自动回退。旧版 WPF 保存设置时会重启或停止本机轮询；服务器则在每次调度时按环境变量或 `pushward.token` 决定是否轮询。
 
 ## 设置测试
 

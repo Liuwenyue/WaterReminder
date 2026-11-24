@@ -2,17 +2,17 @@ namespace WaterReminder;
 
 public sealed class UserSettings
 {
-    public int DailyGoalMl { get; set; } = 3000;
+    public int DailyGoalMl { get; set; } = 2000;
     /// <summary>Legacy single-cup value. Kept in sync with <see cref="WorkCupCapacityMl"/> so old JSON still loads.</summary>
-    public int CupCapacityMl { get; set; } = 370;
+    public int CupCapacityMl { get; set; } = 300;
     private int? _workCupCapacityMl;
     /// <summary>Work-hours cup. When the new field is unset (older settings.json), falls back to the legacy cup.</summary>
     public int WorkCupCapacityMl { get => _workCupCapacityMl ?? CupCapacityMl; set => _workCupCapacityMl = value; }
     /// <summary>Cup used outside work hours (evening phone reminders and desktop clicks).</summary>
-    public int HomeCupCapacityMl { get; set; } = 800;
+    public int HomeCupCapacityMl { get; set; } = 300;
     internal bool WorkCupCapacityWasSet => _workCupCapacityMl.HasValue;
-    public TimeSpan WorkStart { get; set; } = new(8, 30, 0);
-    public TimeSpan WorkEnd { get; set; } = new(17, 30, 0);
+    public TimeSpan WorkStart { get; set; } = new(9, 0, 0);
+    public TimeSpan WorkEnd { get; set; } = new(18, 0, 0);
     public bool LunchEnabled { get; set; } = true;
     public TimeSpan LunchStart { get; set; } = new(11, 50, 0);
     public TimeSpan LunchEnd { get; set; } = new(13, 30, 0);

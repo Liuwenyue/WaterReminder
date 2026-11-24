@@ -28,6 +28,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private string? _lastAlertId;
     private bool _clickLogsDrink;
     private DateTime _lastDrinkUtc = DateTime.MinValue;
+    private bool _drinkRequestInFlight;
     private bool _paused;
 
     public TrayApplicationContext(ClientConfig config, SshTunnelManager? tunnel, EventWaitHandle showEvent)
@@ -304,8 +305,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private async Task LogDrinkAsync()
     {
-        if (DateTime.UtcNow - _lastDrinkUtc < TimeSpan.FromSeconds(2)) return;
+        if (_drinkRequestInFlight || DateTime.UtcNow - _lastDrinkUtc < TimeSpan.FromMilliseconds(350)) return;
         _lastDrinkUtc = DateTime.UtcNow;
+        _drinkRequestInFlight = true;
         try
         {
             var result = await _api.LogDesktopDrinkAsync();
@@ -324,6 +326,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
         catch
         {
             ShowBalloon("没能记下这一杯", "喝水提醒", logsDrink: false);
+        }
+        finally
+        {
+            _drinkRequestInFlight = false;
         }
     }
 

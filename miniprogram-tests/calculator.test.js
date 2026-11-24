@@ -201,32 +201,32 @@ test('default workday reserves one home cup', function () {
   const plan = calc.calculateDynamic(s, rec(), day(2026, 11, 3, 8));
   assert.strictEqual(plan.totalReminders, 6);
   assert.strictEqual(Math.round(plan.intervalMin), 63);
-  assert.strictEqual(clock(plan.nextReminder), '09:34');
+  assert.strictEqual(clock(plan.nextReminder), '10:04');
   assert.strictEqual(plan.suggestedMl, 0);
   const during = day(2026, 11, 3, 9);
-  assert.strictEqual(calc.statusLine(s, rec(), plan, during, true), '下次 09:34 · 370 ml');
-  assert.strictEqual(calc.statusLine(s, rec(), plan, during, false), '下次提醒 09:34 · 建议 370 ml');
+  assert.strictEqual(calc.statusLine(s, rec(), plan, during, true), '下次 10:04 · 300 ml');
+  assert.strictEqual(calc.statusLine(s, rec(), plan, during, false), '下次提醒 10:04 · 建议 300 ml');
 });
 
 test('evening plan and quiet-hours fallback', function () {
   const s = calc.defaultSettings();
   const day0 = day(2026, 11, 3);
   const six = rec([0, 1, 2, 3, 4, 5].map(function (i) {
-    return { at: new Date(day0.getTime() + (9 * 60 + i * 50) * 60000), amountMl: 370, source: 'cup' };
+    return { at: new Date(day0.getTime() + (9 * 60 + i * 50) * 60000), amountMl: 300, source: 'cup' };
   }));
-  assert.strictEqual(calc.consumedMl(six), 2220);
+  assert.strictEqual(calc.consumedMl(six), 1800);
   const during = calc.calculateDynamic(s, six, day(2026, 11, 3, 16));
   assert.strictEqual(during.totalReminders, 0);
   assert.strictEqual(during.nextReminder, null);
   assert.strictEqual(calc.statusLine(s, six, during, day(2026, 11, 3, 16), false), '下班后再提醒');
 
-  const evening = calc.calculateDynamic(s, rec([{ at: day(2026, 11, 3, 9), amountMl: 2220 }]), day(2026, 11, 3, 17, 30));
+  const evening = calc.calculateDynamic(s, rec([{ at: day(2026, 11, 3, 9), amountMl: 1800 }]), day(2026, 11, 3, 18, 30));
   assert.strictEqual(evening.totalReminders, 1);
-  assert.strictEqual(clock(evening.nextReminder), '21:10');
+  assert.strictEqual(clock(evening.nextReminder), '21:20');
   assert.strictEqual(evening.suggestedMl, 0);
 
   const whole = settings({ quietStart: '17:30' });
-  assert.strictEqual(calc.calculateDynamic(whole, rec(), day(2026, 11, 3, 8)).totalReminders, 9);
+  assert.strictEqual(calc.calculateDynamic(whole, rec(), day(2026, 11, 3, 8)).totalReminders, 7);
 });
 
 test('drink and correction move the next reminder', function () {
@@ -316,8 +316,8 @@ test('normalize keeps an older single cup and the product defaults', function ()
   assert.strictEqual(legacy.noDrinkBeforeEndMinutes, 30);
   assert.strictEqual(legacy.quietStart, '23:00');
   const fresh = calc.normalizeSettings({});
-  assert.strictEqual(fresh.dailyGoalMl, 3000);
-  assert.strictEqual(fresh.homeCupCapacityMl, 800);
+  assert.strictEqual(fresh.dailyGoalMl, 2000);
+  assert.strictEqual(fresh.homeCupCapacityMl, 300);
   assert.deepStrictEqual(fresh.activeDays, [true, true, true, true, true, false, false]);
 });
 
