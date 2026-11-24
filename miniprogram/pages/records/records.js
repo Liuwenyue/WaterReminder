@@ -4,10 +4,11 @@ const app = getApp();
 const store = require('../../utils/storage.js');
 const calc = require('../../utils/calculator.js');
 const journal = require('../../utils/journal.js');
+const history = require('../../utils/history-view.js');
 const server = require('../../utils/server.js');
 const wechat = require('../../utils/wechat.js');
 
-const LAST_OFFSET = 30;
+const LAST_OFFSET = history.SPAN;
 
 function rangeDate(date) {
   return (date.getMonth() + 1) + '.' + String(date.getDate()).padStart(2, '0');
@@ -20,31 +21,55 @@ function goalOf(state, day, today) {
   if ((record.events || []).length || record.goalKnown === false) return { known: false, goal: 0 };
   return { known: true, goal: state.settings.dailyGoalMl };
 }
-function weekChart(state, today, selected, endOffset) {
-  const bars = [];
-  const oldest = journal.dayAtOffset(today, endOffset + 6);
-  const newest = journal.dayAtOffset(today, endOffset);
-  const selectedGoal = goalOf(state, journal.dayAtOffset(today, selected), today);
-  let ceiling = Math.max(1, selectedGoal.known ? selectedGoal.goal : 1);
-  for (let offset = endOffset + 6; offset >= endOffset; offset--) {
-    const day = journal.dayAtOffset(today, offset);
-    const total = calc.consumedMl(store.model(store.recordOn(state, day)));
-    ceiling = Math.max(ceiling, total);
-    bars.push({
-      key: calc.dateKey(day), offset, total, selected: offset === selected,
-      label: offset === 0 ? '今' : String(day.getDate()),
-      ariaLabel: journal.monthDay(day) + '，' + total + ' 毫升' + (offset === selected ? '，已选中' : '')
+function readDay(state, day, today) {
+  const record = store.recordOn(state, day);
+  const goal = goalOf(state, day, today);
+  return { total: calc.consumedMl(store.model(record)), goal: goal.known ? goal.goal : 0, known: goal.known };
+}
+
+function picture(state, today, selectedOffset, mode) {
+  const selected = journal.dayAtOffset(today, selectedOffset);
+  const chosen = readDay(state, selected, today);
+  const days = mode === "month" ? history.monthCells(today, selected).filter(cell => !cell.blank).map(cell => cell.day) : history.weekDays(today, selected).map(item => item.day);
+  let ceiling = Math.max(1, chosen.known ? chosen.goal : 0);
+  days.forEach(day => { ceiling = Math.max(ceiling, readDay(state, day, today).total); });
+  const bars = history.weekDays(today, selected).map(item => {
+    const info = readDay(state, item.day, today);
+    return {
+      key: calc.dateKey(item.day), offset: item.offset, total: info.total, selected: item.offset === selectedOffset,
+      future: item.offset < 0, tooOld: item.offset > history.SPAN,
+      label: item.offset === 0 ? "今" : String(item.day.getDate()),
+      fraction: info.total / ceiling,
+      ariaLabel: journal.monthDay(item.day) + "，" + info.total + " 毫升" + (item.offset === selectedOffset ? "，已选中" : "")
+    };
+  });
+  const monthCells = history.monthCells(today, selected).map(cell => {
+    if (cell.blank) return Object.assign({}, cell, { future: false, tooOld: false, selected: false, amount: "" });
+    const info = readDay(state, cell.day, today);
+    return Object.assign({}, cell, {
+      future: cell.offset < 0, tooOld: cell.offset > history.SPAN, selected: cell.offset === selectedOffset,
+      amount: info.total ? store.formatNumber(info.total) : ""
     });
-  }
-  bars.forEach(bar => { bar.fraction = bar.total / ceiling; });
-  return { bars, goalKnown: selectedGoal.known, goalText: selectedGoal.known ? store.formatNumber(selectedGoal.goal) : '未记录', goalTop: selectedGoal.known ? (1 - selectedGoal.goal / ceiling) * 100 : 0, rangeLabel: rangeDate(oldest) + ' – ' + rangeDate(newest) };
+  });
+  const periodDays = mode === "month" ? monthCells.filter(cell => !cell.blank && !cell.future).map(cell => cell.day) : history.weekDays(today, selected).filter(item => item.offset >= 0).map(item => item.day);
+  const consumed = periodDays.reduce((sum, day) => sum + readDay(state, day, today).total, 0);
+  const achieved = periodDays.filter(day => { const info = readDay(state, day, today); return info.known && info.goal > 0 && info.total >= info.goal; }).length;
+  const oldest = days[0];
+  const newest = days[days.length - 1];
+  return {
+    bars, monthCells, dowLabels: history.DOW,
+    goalKnown: chosen.known, goalText: chosen.known ? store.formatNumber(chosen.goal) : "未记录",
+    goalTop: chosen.known ? (1 - chosen.goal / ceiling) * 100 : 0,
+    rangeLabel: (oldest.getMonth() + 1) + "." + String(oldest.getDate()).padStart(2, "0") + " – " + (newest.getMonth() + 1) + "." + String(newest.getDate()).padStart(2, "0"),
+    periodLabel: "合计 " + store.formatNumber(consumed) + " mL · 达标 " + achieved + " 天"
+  };
 }
 
 Page({
   data: {
-    offset: 0, chartEnd: 0, canPrev: true, canNext: false, monthLabel: '', dateLabel: '',
+    offset: 0, viewMode: 'week', canShiftNext: false, canPrev: true, canNext: false, monthLabel: '', periodLabel: '', dateLabel: '',
     relativeLabel: '', total: 0, totalText: '0', goalText: '0', goalTop: 0, rangeLabel: '',
-    bars: [], events: [], empty: true, editing: false, amountOpen: false,
+    bars: [], monthCells: [], dowLabels: history.DOW, events: [], empty: true, editing: false, amountOpen: false,
     initialTotal: '', maximumTotal: calc.MAX_DAILY_TOTAL_ML
   },
   onShow() {
@@ -78,9 +103,13 @@ Page({
     if (connected) model.events.forEach(event => { event.at = store.shanghaiClock(event.at); });
     const events = journal.entries(model);
     const total = calc.consumedMl(model);
-    const chartEnd = Math.max(0, offset - 6, Math.min(offset, this.data.chartEnd));
-    this.setData(Object.assign(weekChart(snap.state, today, offset, chartEnd), {
-      chartEnd, canPrev: offset < LAST_OFFSET, canNext: offset > 0,
+    this._today = today;
+    const mode = this.data.viewMode === 'month' ? 'month' : 'week';
+    const canShiftNext = mode === 'month'
+      ? date.getFullYear() < today.getFullYear() || (date.getFullYear() === today.getFullYear() && date.getMonth() < today.getMonth())
+      : offset >= 7;
+    this.setData(Object.assign(picture(snap.state, today, offset, mode), {
+      viewMode: mode, canShiftNext, canPrev: offset < LAST_OFFSET, canNext: offset > 0,
       monthLabel: date.getFullYear() + '年' + (date.getMonth() + 1) + '月',
       dateLabel: journal.dateLabel(date),
       relativeLabel: offset === 0 ? '今天' : (offset === 1 ? '昨天' : journal.monthDay(date)),
@@ -97,6 +126,20 @@ Page({
   prev() { this.selectDay(this.data.offset + 1); },
   next() { this.selectDay(this.data.offset - 1); },
   showToday() { this.selectDay(0); },
+  setMode(event) {
+    const mode = event.currentTarget.dataset.mode === 'month' ? 'month' : 'week';
+    if (mode === this.data.viewMode) return;
+    this.setData({ viewMode: mode }, () => this.reload());
+  },
+  shiftPeriod(event) {
+    if (!this._today) return;
+    const dir = Number(event.currentTarget.dataset.dir);
+    const selected = journal.dayAtOffset(this._today, this.data.offset);
+    const offset = this.data.viewMode === 'month'
+      ? history.shiftMonth(this._today, selected, dir, LAST_OFFSET)
+      : Math.max(0, Math.min(LAST_OFFSET, this.data.offset - dir * 7));
+    this.selectDay(offset);
+  },
   toggleEdit() { this.setData({ editing: !this.data.editing }); },
   emptyAction() {
     if (this.data.offset) this.adjust();

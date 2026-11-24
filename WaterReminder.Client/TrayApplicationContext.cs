@@ -29,6 +29,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private bool _clickLogsDrink;
     private DateTime _lastDrinkUtc = DateTime.MinValue;
     private bool _drinkRequestInFlight;
+    private int _actionBusy;
+    private bool _settingsHoldsWindow;
     private bool _paused;
 
     public TrayApplicationContext(ClientConfig config, SshTunnelManager? tunnel, EventWaitHandle showEvent)
@@ -46,22 +48,19 @@ internal sealed class TrayApplicationContext : ApplicationContext
         };
 
         var menu = new ContextMenuStrip();
+        menu.Renderer = new FluentMenuRenderer();
         menu.Items.Add("打开悬浮窗", null, (_, _) => ShowFloating());
         menu.Items.Add("今天状态", null, async (_, _) => await RefreshAsync(announceStatus: true));
-        menu.Items.Add("记录一杯", null, async (_, _) => await LogDrinkAsync());
+        menu.Items.Add("记录一杯", null, async (_, _) => await RunMenuAsync(LogDrinkAsync));
         menu.Items.Add(new ToolStripSeparator());
-        _pause30 = new ToolStripMenuItem("暂停 30 分钟", null, async (_, _) => await PauseAsync(TimeSpan.FromMinutes(30)));
-        _pauseToday = new ToolStripMenuItem("今日暂停", null, async (_, _) => await PauseAsync(null));
-        _resume = new ToolStripMenuItem("恢复提醒", null, async (_, _) => await ResumeAsync()) { Enabled = false };
+        _pause30 = new ToolStripMenuItem("暂停 30 分钟", null, async (_, _) => await RunMenuAsync(() => PauseAsync(TimeSpan.FromMinutes(30))));
+        _pauseToday = new ToolStripMenuItem("今日暂停", null, async (_, _) => await RunMenuAsync(() => PauseAsync(null)));
+        _resume = new ToolStripMenuItem("恢复提醒", null, async (_, _) => await RunMenuAsync(ResumeAsync)) { Enabled = false };
         menu.Items.Add(_pause30);
         menu.Items.Add(_pauseToday);
         menu.Items.Add(_resume);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("设置", null, (_, _) =>
-        {
-            var ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
-            _ = OpenSettingsAsync(ui);
-        });
+        menu.Items.Add("设置", null, (_, _) => OpenSettingsFromUi());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => ExitThread());
         _tray.ContextMenuStrip = menu;
@@ -101,8 +100,33 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _ = RefreshAsync(announceStatus: false);
     }
 
+    private void OpenSettingsFromUi()
+    {
+        if (System.Threading.Interlocked.CompareExchange(ref _actionBusy, 1, 0) != 0) return;
+        if (_window is { } window)
+        {
+            if (!window.TryBeginAction())
+            {
+                System.Threading.Interlocked.Exchange(ref _actionBusy, 0);
+                return;
+            }
+            _settingsHoldsWindow = true;
+            window.SetSettingsEnabled(false);
+        }
+        var ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+        _ = OpenSettingsAsync(ui);
+    }
+
+    private async Task RunMenuAsync(Func<Task> action)
+    {
+        if (System.Threading.Interlocked.CompareExchange(ref _actionBusy, 1, 0) != 0) return;
+        try { await action().ConfigureAwait(false); }
+        finally { System.Threading.Interlocked.Exchange(ref _actionBusy, 0); }
+    }
+
     private async Task OpenSettingsAsync(SynchronizationContext ui)
     {
+        try {
         ClientSettingsResponse? current = null;
         var now = DateTime.Now;
         var consumed = 0;
@@ -154,6 +178,22 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 else HideFloating();
             }
         }, null);
+        }
+        finally
+        {
+            System.Threading.Interlocked.Exchange(ref _actionBusy, 0);
+            if (_window is { } window)
+            {
+                void Enable() => window.SetSettingsEnabled(true);
+                if (window.Dispatcher.CheckAccess()) Enable();
+                else window.Dispatcher.Invoke(Enable);
+                if (_settingsHoldsWindow)
+                {
+                    _settingsHoldsWindow = false;
+                    window.EndAction();
+                }
+            }
+        }
     }
 
     private async Task<string?> SaveSettingsAsync(SettingsUpdate update, SynchronizationContext ui)
@@ -229,11 +269,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         if (_window is null)
         {
-            _window = new MainWindow(_api, _config, () =>
-            {
-                var ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
-                _ = OpenSettingsAsync(ui);
-            });
+            _window = new MainWindow(_api, _config, OpenSettingsFromUi);
         }
         if (!_window.IsVisible) _window.Show();
         _window.Activate();
@@ -379,5 +415,85 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
         catch { }
         return SystemIcons.Information;
+    }
+
+    /// <summary>Tray menu uses the same light or dark colors as the floating window.</summary>
+    private sealed class FluentMenuRenderer : ToolStripProfessionalRenderer
+    {
+        public FluentMenuRenderer() : base(new MenuColors()) { RoundedEdges = false; }
+
+        private static Color ThemeColor(string key, byte red, byte green, byte blue)
+        {
+            ClientTheme.Ensure();
+            if (System.Windows.Application.Current?.TryFindResource(key) is System.Windows.Media.SolidColorBrush brush)
+            {
+                var color = brush.Color;
+                return Color.FromArgb(color.A, color.R, color.G, color.B);
+            }
+            return Color.FromArgb(red, green, blue);
+        }
+
+        protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
+        {
+            using var brush = new SolidBrush(ThemeColor("WindowBg", 0xFC, 0xFD, 0xFE));
+            e.Graphics.FillRectangle(brush, e.AffectedBounds);
+        }
+
+        protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
+        {
+            using var pen = new Pen(ThemeColor("Stroke", 0xE2, 0xE8, 0xF0));
+            var bounds = e.AffectedBounds;
+            bounds.Width -= 1;
+            bounds.Height -= 1;
+            e.Graphics.DrawRectangle(pen, bounds);
+        }
+
+        protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+        {
+            if (!e.Item.Selected || !e.Item.Enabled) return;
+            var bounds = new Rectangle(4, 1, e.Item.Width - 8, e.Item.Height - 2);
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using var path = Rounded(bounds, 4);
+            using var brush = new SolidBrush(ThemeColor("AccentSoft", 0xE9, 0xF2, 0xFD));
+            e.Graphics.FillPath(brush, path);
+        }
+
+        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+        {
+            e.TextColor = e.Item.Enabled
+                ? ThemeColor("TextPrimary", 0x17, 0x21, 0x2F)
+                : ThemeColor("TextTertiary", 0x89, 0x94, 0xA3);
+            base.OnRenderItemText(e);
+        }
+
+        protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+        {
+            using var pen = new Pen(ThemeColor("Stroke", 0xE2, 0xE8, 0xF0));
+            var y = e.Item.Height / 2;
+            e.Graphics.DrawLine(pen, 12, y, e.Item.Width - 12, y);
+        }
+
+        private static System.Drawing.Drawing2D.GraphicsPath Rounded(Rectangle bounds, int radius)
+        {
+            var diameter = radius * 2;
+            var path = new System.Drawing.Drawing2D.GraphicsPath();
+            path.AddArc(bounds.X, bounds.Y, diameter, diameter, 180, 90);
+            path.AddArc(bounds.Right - diameter, bounds.Y, diameter, diameter, 270, 90);
+            path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
+            path.AddArc(bounds.X, bounds.Bottom - diameter, diameter, diameter, 90, 90);
+            path.CloseFigure();
+            return path;
+        }
+
+        private sealed class MenuColors : ProfessionalColorTable
+        {
+            public override Color ToolStripDropDownBackground => ThemeColor("WindowBg", 0xFC, 0xFD, 0xFE);
+            public override Color MenuBorder => ThemeColor("Stroke", 0xE2, 0xE8, 0xF0);
+            public override Color MenuItemBorder => Color.Transparent;
+            public override Color MenuItemSelected => ThemeColor("AccentSoft", 0xE9, 0xF2, 0xFD);
+            public override Color ImageMarginGradientBegin => ThemeColor("WindowBg", 0xFC, 0xFD, 0xFE);
+            public override Color ImageMarginGradientMiddle => ThemeColor("WindowBg", 0xFC, 0xFD, 0xFE);
+            public override Color ImageMarginGradientEnd => ThemeColor("WindowBg", 0xFC, 0xFD, 0xFE);
+        }
     }
 }

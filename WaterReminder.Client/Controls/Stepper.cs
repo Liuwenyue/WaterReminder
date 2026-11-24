@@ -35,8 +35,16 @@ public sealed class Stepper : Grid
         ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         _minus = MakeButton("\uE738", "减少");
         _plus = MakeButton("\uE710", "增加");
-        _box = new TextBox { TextAlignment = TextAlignment.Center, Margin = new Thickness(6, 0, 6, 0), VerticalContentAlignment = VerticalAlignment.Center };
+        _box = new TextBox
+        {
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(6, 0, 6, 0),
+            Padding = new Thickness(4, 0, 4, 0),
+            MinWidth = 96,
+            VerticalContentAlignment = VerticalAlignment.Center
+        };
         _box.SetResourceReference(StyleProperty, "FluentTextBox");
+        MinWidth = 180;
         SetColumn(_minus, 0); SetColumn(_box, 1); SetColumn(_plus, 2);
         Children.Add(_minus); Children.Add(_box); Children.Add(_plus);
         _minus.Click += (_, _) => Bump(-1);

@@ -24,6 +24,9 @@ public partial class RecordsWindow : Window
     private int _memberSettingsVersion;
     private bool _closed;
     private bool _recordMutationInFlight;
+    private bool _monthView;
+    private readonly Dictionary<DateOnly, HistoryDayResponse> _history = new();
+    private readonly ClickGuard _clicks = new();
 
     public RecordsWindow(ReminderApiClient api, int cupMl, DateTime? serverNow = null)
     {
@@ -36,6 +39,7 @@ public partial class RecordsWindow : Window
         _selected = _today;
         WindowEx.EnableDrag(this);
         WpfInterop.EnableKeyboard(this);
+        DialogLayout.KeepOnScreen(this);
         Closed += (_, _) => { _closed = true; CancelMemberSettingsLoad(); };
         Loaded += async (_, _) =>
         {
@@ -91,6 +95,7 @@ public partial class RecordsWindow : Window
         ClearButton.Visibility = editable && member is null ? Visibility.Visible : Visibility.Collapsed;
         NextDayButton.IsEnabled = _selected < _today;
         PrevDayButton.IsEnabled = true;
+        ShowPeriod();
     }
 
     private async Task LoadFamilyAsync()
@@ -109,15 +114,20 @@ public partial class RecordsWindow : Window
 
     private void BindOwnerWeChat_Click(object sender, RoutedEventArgs e)
     {
+        if (!_clicks.Enter()) return;
+        try {
         new OwnerPairWindow(_api) { Owner = this }.ShowDialog();
+    
+        }
+        finally { _clicks.Exit(); }
     }
 
     private async Task LoadHistoryAsync()
     {
         var version = ++_viewVersion;
         var response = _member is { } member
-            ? await _api.GetFamilyHistoryAsync(member, 30)
-            : await _api.GetHistoryAsync(30);
+            ? await _api.GetFamilyHistoryAsync(member, 366)
+            : await _api.GetHistoryAsync(366);
         if (version != _viewVersion) return;
         _updatingPickers = true;
         var options = new List<HistoryOption>();
@@ -136,6 +146,14 @@ public partial class RecordsWindow : Window
         HistoryPicker.SelectedItem = options.FirstOrDefault(option => option.Date == _selected);
         HistoryPicker.Visibility = response.Ok ? Visibility.Visible : Visibility.Collapsed;
         _updatingPickers = false;
+        _history.Clear();
+        if (response.Ok && response.Value is { } loaded)
+        {
+            foreach (var day in loaded.Days)
+                if (DateOnly.TryParseExact(day.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var parsed))
+                    _history[parsed] = day;
+        }
+        ShowPeriod();
     }
 
     private async void Member_Changed(object sender, SelectionChangedEventArgs e)
@@ -158,21 +176,33 @@ public partial class RecordsWindow : Window
 
     private async void AddMember_Click(object sender, RoutedEventArgs e)
     {
+        if (!_clicks.Enter()) return;
+        try {
         var dialog = new FamilyInviteWindow(_api) { Owner = this };
         dialog.ShowDialog();
         await LoadFamilyAsync();
+    
+        }
+        finally { _clicks.Exit(); }
     }
 
     private async void InviteAgain_Click(object sender, RoutedEventArgs e)
     {
+        if (!_clicks.Enter()) return;
+        try {
         if (MemberPicker.SelectedItem is not MemberOption option) return;
         var dialog = new FamilyInviteWindow(_api, option.Member) { Owner = this };
         dialog.ShowDialog();
         await LoadProgressAsync();
+    
+        }
+        finally { _clicks.Exit(); }
     }
 
     private async void PushTest_Click(object sender, RoutedEventArgs e)
     {
+        if (!_clicks.Enter()) return;
+        try {
         var id = MemberPicker.SelectedItem is MemberOption option ? option.Member.Id : Guid.Empty;
         PushTestButton.IsEnabled = false;
         FamilyProgressText.Text = "正在发送连接测试…";
@@ -180,6 +210,9 @@ public partial class RecordsWindow : Window
         PushTestButton.IsEnabled = true;
         FamilyProgressText.Text = result.Ok ? result.Value?.Message ?? "已发送" : result.Error ?? "测试失败，请检查服务端连接。";
         await LoadProgressAsync();
+    
+        }
+        finally { _clicks.Exit(); }
     }
 
     private async Task LoadProgressAsync()
@@ -192,7 +225,7 @@ public partial class RecordsWindow : Window
             return;
         }
         var id = _member ?? Guid.Empty;
-        var row = response.Value.Members.FirstOrDefault(item => item.Member.Id == id);
+        var row = response.Value.Members?.FirstOrDefault(item => item.Member.Id == id);
         if (row is null) return;
         var amount = row.GoalMl > 0 ? $"{row.ConsumedMl:N0} / {row.GoalMl:N0} ml" : $"{row.ConsumedMl:N0} ml";
         var last = DateTime.TryParse(row.LastRecordAt, out var at) ? at.ToString("M月d日 HH:mm") : "还没有记录";
@@ -220,6 +253,8 @@ public partial class RecordsWindow : Window
 
     private async void MemberSettings_Click(object sender, RoutedEventArgs e)
     {
+        if (!_clicks.Enter()) return;
+        try {
         if (_memberSettingsRequest is not null
             || MemberPicker.SelectedItem is not MemberOption { Member: { Archived: false } } option
             || option.Member.Id == Guid.Empty) return;
@@ -266,10 +301,15 @@ public partial class RecordsWindow : Window
                 if (!_closed) UpdateMemberActions();
             }
         }
+    
+        }
+        finally { _clicks.Exit(); }
     }
 
     private async void ArchiveMember_Click(object sender, RoutedEventArgs e)
     {
+        if (!_clicks.Enter()) return;
+        try {
         if (MemberPicker.SelectedItem is not MemberOption option || option.Member.Id == Guid.Empty || option.Member.Archived)
             return;
         if (!ConfirmDialog.Ask(this, $"停用 {option.Member.Name}？", "该访问码将失效并停止提醒，已有记录仍可查看。", "停用", danger: true))
@@ -282,6 +322,9 @@ public partial class RecordsWindow : Window
             return;
         }
         await LoadFamilyAsync();
+    
+        }
+        finally { _clicks.Exit(); }
     }
 
     private sealed record HistoryOption(DateOnly Date, string Label);
@@ -291,23 +334,124 @@ public partial class RecordsWindow : Window
         public string Label => Member.Archived ? $"{Member.Name}（已停用）" : Member.Name;
     }
 
+
+    private void WeekView_Click(object sender, RoutedEventArgs e)
+    {
+        _monthView = false;
+        WeekViewButton.IsChecked = true;
+        MonthViewButton.IsChecked = false;
+        ShowPeriod();
+    }
+
+    private void MonthView_Click(object sender, RoutedEventArgs e)
+    {
+        _monthView = true;
+        WeekViewButton.IsChecked = false;
+        MonthViewButton.IsChecked = true;
+        ShowPeriod();
+    }
+
+    private async void PeriodDay_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: DateOnly date } || date > _today || date == _selected) return;
+        if (!_clicks.Enter()) return;
+        try
+        {
+            _selected = date;
+            await ReloadAsync();
+        }
+        finally { _clicks.Exit(); }
+    }
+
+    private void ShowPeriod()
+    {
+        if (PeriodGrid is null) return;
+        var cells = _monthView
+            ? HistoryCalendar.Month(_selected, _today, _history)
+            : HistoryCalendar.Week(_selected, _today, _history);
+        PeriodGrid.Children.Clear();
+        if (_monthView)
+        {
+            foreach (var name in new[] { "\u4e00", "\u4e8c", "\u4e09", "\u56db", "\u4e94", "\u516d", "\u65e5" })
+                PeriodGrid.Children.Add(new TextBlock
+                {
+                    Text = name,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    FontSize = 11,
+                    Margin = new Thickness(0, 0, 0, 4)
+                });
+        }
+        foreach (var cell in cells)
+        {
+            if (cell.Date is not { } date)
+            {
+                PeriodGrid.Children.Add(new Border());
+                continue;
+            }
+            var label = new TextBlock { Text = cell.Label, FontSize = 13, HorizontalAlignment = HorizontalAlignment.Center, TextWrapping = TextWrapping.NoWrap };
+            var amountText = new TextBlock
+            {
+                Text = cell.ConsumedMl > 0 ? cell.ConsumedMl.ToString("N0") : "",
+                FontSize = 11,
+                TextWrapping = TextWrapping.NoWrap
+            };
+            var amount = new Viewbox
+            {
+                Child = amountText,
+                Stretch = System.Windows.Media.Stretch.Uniform,
+                StretchDirection = StretchDirection.DownOnly,
+                MaxHeight = 14,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(1, 1, 1, 0)
+            };
+            var button = new Button
+            {
+                Content = new StackPanel { Children = { label, amount } },
+                Tag = date,
+                IsEnabled = !cell.Future,
+                ToolTip = cell.ConsumedMl > 0 ? cell.ConsumedMl.ToString("N0") + " ml" : "没有记录",
+                Margin = new Thickness(3),
+                Padding = new Thickness(0),
+                Height = 52,
+                ClipToBounds = false
+            };
+            button.SetResourceReference(FrameworkElement.StyleProperty, cell.Selected ? "DayCellSelected" : "DayCell");
+            button.Click += PeriodDay_Click;
+            PeriodGrid.Children.Add(button);
+        }
+        var summary = HistoryCalendar.Summary(cells.Where(cell => cell.Date is { } day && day <= _today).Select(cell => cell.Date!.Value), _today, _history);
+        PeriodSummary.Text = (_monthView ? "\u672c\u6708\u5408\u8ba1 " : "\u672c\u5468\u5408\u8ba1 ") + summary.Consumed.ToString("N0") + " ml \u00b7 \u8fbe\u6807 " + summary.Achieved + " \u5929";
+    }
+
     private async void PrevDay_Click(object sender, RoutedEventArgs e)
     {
+        if (!_clicks.Enter()) return;
+        try {
         _selected = _selected.AddDays(-1);
         await ReloadAsync();
+    
+        }
+        finally { _clicks.Exit(); }
     }
 
     private async void NextDay_Click(object sender, RoutedEventArgs e)
     {
+        if (!_clicks.Enter()) return;
+        try {
         if (_selected >= _today) return;
         _selected = _selected.AddDays(1);
         await ReloadAsync();
+    
+        }
+        finally { _clicks.Exit(); }
     }
 
     private static RecordItem? ItemOf(object sender) => (sender as FrameworkElement)?.DataContext as RecordItem;
 
     private async void Edit_Click(object sender, RoutedEventArgs e)
     {
+        if (!_clicks.Enter()) return;
+        try {
         if (_recordMutationInFlight || _records is not { Editable: true } records) return;
         if (ItemOf(sender) is not { } item) return;
         var member = _member;
@@ -333,10 +477,15 @@ public partial class RecordsWindow : Window
             _recordMutationInFlight = false;
             if (sender is Button restore) restore.IsEnabled = true;
         }
+    
+        }
+        finally { _clicks.Exit(); }
     }
 
     private async void Delete_Click(object sender, RoutedEventArgs e)
     {
+        if (!_clicks.Enter()) return;
+        try {
         if (_recordMutationInFlight || _records is not { Editable: true } records) return;
         if (ItemOf(sender) is not { } item) return;
         var member = _member;
@@ -360,6 +509,9 @@ public partial class RecordsWindow : Window
             _recordMutationInFlight = false;
             if (sender is Button restore) restore.IsEnabled = true;
         }
+    
+        }
+        finally { _clicks.Exit(); }
     }
 
     private async Task ChangeMemberRecordAsync(Guid memberId, TodayRecordsResponse records, RecordItem item, int? amount)
@@ -372,6 +524,8 @@ public partial class RecordsWindow : Window
 
     private async void Clear_Click(object sender, RoutedEventArgs e)
     {
+        if (!_clicks.Enter()) return;
+        try {
         if (_recordMutationInFlight || _member is not null || _records is not { Editable: true } records || records.Events.Count == 0) return;
         if (!ConfirmDialog.Ask(this, "清空今天的所有记录？", $"{records.Date} 的饮水进度将归零，此操作无法撤销。", "清空", danger: true)) return;
         _recordMutationInFlight = true;
@@ -409,6 +563,9 @@ public partial class RecordsWindow : Window
             _recordMutationInFlight = false;
             if (!_closed) ClearButton.IsEnabled = true;
         }
+    
+        }
+        finally { _clicks.Exit(); }
     }
 
     private void Close_Click(object sender, RoutedEventArgs e)

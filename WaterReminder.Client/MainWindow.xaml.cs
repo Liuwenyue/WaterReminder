@@ -33,6 +33,7 @@ internal partial class MainWindow : Window
     private string? _statusFingerprint;
     private bool _drinkRequestInFlight;
     private bool _pauseRequestInFlight;
+    private readonly ClickGuard _clicks = new();
 
 
     internal double DisplayMl { get => (double)GetValue(DisplayMlProperty); set => SetValue(DisplayMlProperty, value); }
@@ -358,15 +359,25 @@ internal partial class MainWindow : Window
 
     private async void DrinkButton_Click(object sender, RoutedEventArgs e)
     {
+        if (!_clicks.Enter()) return;
+        try {
         if (_drinkRequestInFlight || _status is null || !FloatingWidgetView.CanDrink(_status.ConsumedMl, _status.GoalMl)) return;
         await LogDrinkAsync(FloatingWidgetView.CurrentCupMl(_status));
+    
+        }
+        finally { _clicks.Exit(); }
     }
 
     private async void CustomButton_Click(object sender, RoutedEventArgs e)
     {
+        if (!_clicks.Enter()) return;
+        try {
         var cup = _status is null ? 370 : FloatingWidgetView.CurrentCupMl(_status);
         var dialog = new AmountWindow(initial: cup, cup: cup) { Owner = this };
         if (dialog.ShowDialog() == true) await LogDrinkAsync(dialog.AmountMl);
+    
+        }
+        finally { _clicks.Exit(); }
     }
 
     private async Task LogDrinkAsync(int amount)
@@ -394,6 +405,8 @@ internal partial class MainWindow : Window
 
     private async void PauseButton_Click(object sender, RoutedEventArgs e)
     {
+        if (!_clicks.Enter()) return;
+        try {
         if (_pauseRequestInFlight) return;
         _pauseRequestInFlight = true;
         PauseButton.IsEnabled = false;
@@ -429,10 +442,15 @@ internal partial class MainWindow : Window
             _pauseRequestInFlight = false;
             await RefreshAsync();
         }
+    
+        }
+        finally { _clicks.Exit(); }
     }
 
     private async void RecordsButton_Click(object sender, RoutedEventArgs e)
     {
+        if (!_clicks.Enter()) return;
+        try {
         var cup = _status is null ? 370 : FloatingWidgetView.CurrentCupMl(_status);
         DateTime? serverNow = null;
         if (_status is not null
@@ -441,9 +459,26 @@ internal partial class MainWindow : Window
         var dialog = new RecordsWindow(_api, cup, serverNow) { Owner = this };
         dialog.ShowDialog();
         await RefreshAsync();
+    
+        }
+        finally { _clicks.Exit(); }
     }
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e) => _openSettings();
+
+    internal bool TryBeginAction() => _clicks.Enter();
+
+    internal void EndAction() => _clicks.Exit();
+
+    internal void SetSettingsEnabled(bool enabled)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.Invoke(() => SetSettingsEnabled(enabled));
+            return;
+        }
+        SettingsButton.IsEnabled = enabled;
+    }
     private void HideButton_Click(object sender, RoutedEventArgs e) => Hide();
 
     private void CompactButton_Click(object sender, RoutedEventArgs e)

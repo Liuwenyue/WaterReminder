@@ -45,3 +45,22 @@
 .edit-action { flex: 1; background: var(--surface); color: var(--accent); border-radius: 21rpx; font-size: 27rpx; }
 .edit-action.delete { color: var(--danger); }
 .edit-action[disabled] { background: var(--surface); }
+
+.mode-switch { display: flex; gap: 8rpx; margin: 0 4rpx 18rpx; padding: 6rpx; border-radius: 24rpx; background: var(--inset); }
+.mode { flex: 1; border-radius: 18rpx; color: var(--muted); font-size: 28rpx; }
+.mode.on { background: var(--surface); color: var(--accent); font-weight: 700; }
+.period-label { margin-top: 8rpx; }
+.future { opacity: .38; }
+.month { margin-top: 8rpx; }
+.dows, .month-grid { display: flex; flex-wrap: wrap; }
+.dows text, .cell { width: 14.285%; }
+.dows text { display: block; text-align: center; color: var(--muted); font-size: 22rpx; line-height: 48rpx; }
+.cell {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 84rpx; margin: 0; padding: 4rpx 0 8rpx; border-radius: 16rpx; color: var(--ink);
+}
+.cell.blank { visibility: hidden; }
+.cell.selected { background: var(--wash); color: var(--accent); }
+.cell-day { font-size: 26rpx; font-weight: 650; line-height: 1.2; }
+.cell-amount { min-height: 22rpx; color: var(--muted); font-size: 18rpx; line-height: 1.2; }
+.cell.selected .cell-amount { color: var(--accent); }

@@ -20,6 +20,7 @@ public partial class ConfirmDialog : Window
         }
         WindowEx.EnableDrag(this);
         WpfInterop.EnableKeyboard(this);
+        DialogLayout.KeepOnScreen(this);
     }
 
     public static bool Ask(Window? owner, string title, string message, string confirmText, bool danger = false)

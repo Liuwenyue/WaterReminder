@@ -15,6 +15,7 @@ public partial class OwnerPairWindow : Window
     {
         _api = api;
         InitializeComponent();
+        DialogLayout.KeepOnScreen(this);
         Loaded += (_, _) => CodeBox.Focus();
         Closing += (_, e) => e.Cancel = _binding;
     }

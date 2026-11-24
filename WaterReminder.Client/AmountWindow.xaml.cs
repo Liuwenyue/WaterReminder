@@ -26,6 +26,7 @@ public partial class AmountWindow : Window
         }
         WindowEx.EnableDrag(this);
         WpfInterop.EnableKeyboard(this);
+        DialogLayout.KeepOnScreen(this);
     }
 
     private void Ok_Click(object sender, RoutedEventArgs e)

@@ -5,6 +5,8 @@ using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Globalization;
+using System.Windows.Media;
 using System.Windows.Threading;
 using WaterReminder;
 using WaterReminder.Client;
@@ -47,6 +49,16 @@ internal static class Program
             window = Create(config);
             window.Show();
             Pump(200);
+            var amountText = (TextBlock)window.FindName("AmountText");
+            var goalText = (TextBlock)window.FindName("GoalText");
+            var percentText = (TextBlock)window.FindName("PercentText");
+            amountText.Text = "1,110";
+            goalText.Text = "/ 3,000 ml";
+            percentText.Text = "37%";
+            window.UpdateLayout();
+            AssertTextFits(amountText, "expanded amount");
+            AssertTextFits(goalText, "expanded goal");
+            AssertInside(window, percentText, "expanded percent");
             window.Left = 60;
             window.Top = 60;
             var fullHeight = window.ActualHeight;
@@ -81,6 +93,17 @@ internal static class Program
             if (SystemParameters.ClientAreaAnimation)
                 Check(intermediate, "animated collapse has an intermediate height");
             var compactHeight = window.ActualHeight;
+            var miniAmount = (TextBlock)window.FindName("MiniAmount");
+            var miniGoal = (TextBlock)window.FindName("MiniGoal");
+            var miniPercent = (TextBlock)window.FindName("MiniPercent");
+            miniAmount.Text = "1,110";
+            miniGoal.Text = " / 3,000 ml";
+            miniPercent.Text = "37%";
+            window.UpdateLayout();
+            AssertTextFits(miniAmount, "compact amount");
+            AssertTextFits(miniGoal, "compact goal");
+            AssertInside(window, miniPercent, "compact percent");
+            AssertInside(window, miniGoal, "compact goal");
             Check(compactHeight < fullHeight, "compact natural height is restored");
             Check(window.SizeToContent == SizeToContent.Height
                 && !DependencyPropertyHelper.GetValueSource(window, Window.HeightProperty).IsAnimated,
@@ -203,6 +226,11 @@ internal static class Program
                     Check(popup is { IsOpen: false }, "themed dropdown closes");
                 }
                 Check(clear.IsEnabled && summary.Text.Contains("300"), "today's own record is editable");
+                history.UpdateLayout();
+                var dayButtons = ((UniformGrid)history.FindName("PeriodGrid")).Children.OfType<Button>().Where(day => day.ActualWidth > 0).ToList();
+                Check(dayButtons.Count >= 7, "week calendar renders its days");
+                foreach (var day in dayButtons)
+                    AssertInside(history, day, "calendar day");
                 historyPicker.SelectedIndex = 1;
                 Pump(80);
                 Check(!clear.IsEnabled && summary.Text.Contains("500"), "past record opens read-only");
@@ -233,6 +261,7 @@ internal static class Program
                     if (failure is not null) throw failure;
                     Check(seen, "selected member's settings dialog opens");
                 }
+                InspectMemberSettings(AssertSettingsReadable);
                 InspectMemberSettings(dialog =>
                 {
                     Check(dialog.Title.Contains("家人甲"), "member settings identify the selected person");
@@ -306,6 +335,90 @@ internal static class Program
             if (File.Exists(configFile)) File.Delete(configFile);
             Application.Current?.Shutdown();
         }
+    }
+
+
+    static void AssertSettingsReadable(SettingsWindow dialog)
+    {
+        var lunch = (CheckBox)dialog.FindName("LunchBox");
+        lunch.IsChecked = true;
+        lunch.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        dialog.UpdateLayout();
+        ((ScrollViewer)dialog.FindName("SettingsScroll")).ScrollToEnd();
+        dialog.UpdateLayout();
+        foreach (var name in new[]
+        {
+            "GoalStepper", "WorkCupStepper", "HomeCupStepper", "StartStepper", "EndStepper",
+            "LunchStartStepper", "LunchEndStepper", "NoDrinkStepper", "GapStepper", "QuietStepper"
+        })
+        {
+            var stepper = (FrameworkElement)dialog.FindName(name);
+            AssertInside(dialog, stepper, name);
+            var box = FindChild<TextBox>(stepper);
+            var shown = box?.Text ?? "";
+            Check(box is not null && TextFits(box), name + " shows '" + shown + "' in full");
+        }
+        foreach (var name in new[] { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" })
+        {
+            var chip = (FrameworkElement)dialog.FindName(name);
+            AssertInside(dialog, chip, "weekday " + name);
+            Check(chip.ActualWidth >= 28 && chip.ActualHeight >= 24, "weekday " + name + " is large enough to read");
+        }
+        var sunday = (FrameworkElement)dialog.FindName("Sun");
+        var save = (FrameworkElement)dialog.FindName("SaveButton");
+        Check(sunday.TranslatePoint(new Point(0, sunday.ActualHeight), dialog).Y
+            <= save.TranslatePoint(new Point(0, 0), dialog).Y + 0.5,
+            "weekday chips sit above the save button");
+    }
+
+
+
+    static void AssertInside(Window window, FrameworkElement element, string name)
+    {
+        var topLeft = element.TranslatePoint(new Point(1, 1), window);
+        var bottomRight = element.TranslatePoint(new Point(Math.Max(0, element.ActualWidth - 1), Math.Max(0, element.ActualHeight - 1)), window);
+        Check(element.IsVisible && element.ActualWidth > 8 && element.ActualHeight > 8
+            && topLeft.X >= -0.5 && topLeft.Y >= -0.5
+            && bottomRight.X <= window.ActualWidth + 1
+            && bottomRight.Y <= window.ActualHeight + 1,
+            name + " is fully inside the window");
+    }
+
+    static void AssertTextFits(TextBlock block, string name)
+    {
+        var needed = Measure(block.Text, block.FontFamily, block.FontStyle, block.FontWeight, block.FontStretch, block.FontSize, block);
+        Check(block.ActualWidth + 2 >= needed, name + " is fully visible");
+    }
+
+    static bool TextFits(TextBox box)
+    {
+        var needed = Measure(box.Text, box.FontFamily, box.FontStyle, box.FontWeight, box.FontStretch, box.FontSize, box);
+        return box.ActualWidth - box.Padding.Left - box.Padding.Right + 2 >= needed;
+    }
+
+    static double Measure(string? text, FontFamily family, FontStyle style, FontWeight weight, FontStretch stretch, double size, Visual visual)
+    {
+        var dpi = VisualTreeHelper.GetDpi(visual).PixelsPerDip;
+        return new FormattedText(
+            text ?? "",
+            CultureInfo.CurrentUICulture,
+            FlowDirection.LeftToRight,
+            new Typeface(family, style, weight, stretch),
+            size,
+            Brushes.Black,
+            dpi).WidthIncludingTrailingWhitespace;
+    }
+
+    static T? FindChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T match) return match;
+            var nested = FindChild<T>(child);
+            if (nested is not null) return nested;
+        }
+        return null;
     }
 
     static void Check(bool condition, string name)

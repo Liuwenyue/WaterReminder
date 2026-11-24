@@ -20,6 +20,7 @@ public partial class FamilyInviteWindow : Window
         _existing = existing;
         WindowEx.EnableDrag(this);
         WpfInterop.EnableKeyboard(this);
+        DialogLayout.KeepOnScreen(this);
         if (existing is not null)
         {
             Title = "微信邀请";

@@ -19,6 +19,8 @@ public readonly record struct ScreenRect(double Left, double Top, double Width, 
     }
 }
 
+public readonly record struct DialogFit(double Left, double Top, double MaxWidth, double MaxHeight);
+
 /// <summary>
 /// Compact-mode top-left is the stable anchor (pure logic, unit-tested).
 /// Expanding may move the window so the taller frame stays on screen; collapsing returns to the anchor.
@@ -115,5 +117,69 @@ public static class WindowPlacement
         var l = Math.Clamp(left, target.Left, Math.Max(target.Left, target.Right - width));
         var t = Math.Clamp(top, target.Top, Math.Max(target.Top, target.Bottom - height));
         return (l, t);
+    }
+
+    /// <summary>
+    /// Keeps a dialog inside the work area that contains its owner, or the dialog when it has no owner.
+    /// The size is capped with an 8px margin on every side, then the top-left moves only as far as needed.
+    /// A dialog that already fits is left where it is.
+    /// </summary>
+    public static DialogFit FitDialog(double left, double top, double width, double height,
+        IReadOnlyList<ScreenRect> workAreas, ScreenRect? anchor = null)
+    {
+        if (workAreas.Count == 0 || width <= 0 || height <= 0 || double.IsNaN(left) || double.IsNaN(top))
+            return new(left, top, Math.Max(width, 0), Math.Max(height, 0));
+
+        var target = MonitorFor(workAreas, anchor, new ScreenRect(left, top, width, height));
+        var maxWidth = Math.Max(200, target.Width - 16);
+        var maxHeight = Math.Max(160, target.Height - 16);
+        var fittedWidth = Math.Min(width, maxWidth);
+        var fittedHeight = Math.Min(height, maxHeight);
+        var fittedLeft = left + (width - fittedWidth) / 2;
+        var fittedTop = top + (height - fittedHeight) / 2;
+        (fittedLeft, fittedTop) = ClampToVisible(fittedLeft, fittedTop, fittedWidth, fittedHeight, [target]);
+        return new(fittedLeft, fittedTop, maxWidth, maxHeight);
+    }
+
+
+    /// <summary>
+    /// Places a dialog in the middle of the work area under <paramref name="near"/>.
+    /// With no point, the primary area is used. The dialog is shrunk to leave an 8px margin.
+    /// </summary>
+    public static DialogFit CenterOnScreen(double width, double height, IReadOnlyList<ScreenRect> workAreas, ScreenRect? near = null)
+    {
+        if (workAreas.Count == 0 || width <= 0 || height <= 0 || double.IsNaN(width) || double.IsNaN(height))
+            return new(0, 0, Math.Max(width, 0), Math.Max(height, 0));
+
+        var target = workAreas[0];
+        if (near is { } point)
+        {
+            var hit = workAreas.FirstOrDefault(area => area.Contains(new ScreenRect(point.Left, point.Top, 1, 1)));
+            if (hit.Width > 0) target = hit;
+        }
+
+        var maxWidth = Math.Max(200, target.Width - 16);
+        var maxHeight = Math.Max(160, target.Height - 16);
+        var fittedWidth = Math.Min(width, maxWidth);
+        var fittedHeight = Math.Min(height, maxHeight);
+        return new(
+            target.Left + (target.Width - fittedWidth) / 2,
+            target.Top + (target.Height - fittedHeight) / 2,
+            maxWidth,
+            maxHeight);
+    }
+
+    private static ScreenRect MonitorFor(IReadOnlyList<ScreenRect> workAreas, ScreenRect? anchor, ScreenRect window)
+    {
+        if (anchor is { } owner)
+        {
+            var center = new ScreenRect(owner.Left + owner.Width / 2, owner.Top + owner.Height / 2, 1, 1);
+            foreach (var area in workAreas)
+                if (area.Contains(center)) return area;
+            return workAreas.OrderBy(a => a.DistanceTo(owner)).First();
+        }
+
+        var best = workAreas.OrderByDescending(a => a.Overlap(window)).ThenBy(a => a.DistanceTo(window)).First();
+        return best.Overlap(window) == 0 ? workAreas[0] : best;
     }
 }

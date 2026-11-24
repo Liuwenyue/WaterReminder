@@ -112,4 +112,77 @@ public sealed class WindowPlacementTests
     [Fact]
     public void NothingSavedDefaultsToBottomRight()
         => Assert.Equal((1536 - W - 8, 816 - CompactH - 8), WindowPlacement.Resolve(new UserSettings(), W, CompactH, One));
+
+
+    [Fact]
+    public void DialogHangingOffBottomRight_IsPulledInsideOwnerMonitor()
+    {
+        var owner = new ScreenRect(1184, 740, 352, 76);
+        const double width = 480, height = 700;
+        var left = owner.Left + (owner.Width - width) / 2;
+        var top = owner.Top + (owner.Height - height) / 2;
+        var fit = WindowPlacement.FitDialog(left, top, width, height, One, owner);
+        Assert.True(Primary.Contains(new ScreenRect(fit.Left, fit.Top, width, height)), $"{fit}");
+        Assert.Equal(Primary.Width - 16, fit.MaxWidth);
+        Assert.Equal(Primary.Height - 16, fit.MaxHeight);
+    }
+
+    [Fact]
+    public void DialogTallerThanScreen_ReportsCapAndStaysInside()
+    {
+        var fit = WindowPlacement.FitDialog(100, 100, 480, 2000, One);
+        Assert.Equal(Primary.Height - 16, fit.MaxHeight);
+        var height = Math.Min(2000, fit.MaxHeight);
+        Assert.True(Primary.Contains(new ScreenRect(fit.Left, fit.Top, 480, height)), $"{fit}");
+    }
+
+    [Fact]
+    public void DialogOnSecondMonitor_DoesNotJumpToPrimary()
+    {
+        var second = new ScreenRect(1536, 0, 1280, 720);
+        ScreenRect[] two = [Primary, second];
+        var owner = new ScreenRect(2100, 500, 352, 76);
+        const double width = 480, height = 500;
+        var left = owner.Left + (owner.Width - width) / 2;
+        var top = owner.Top + (owner.Height - height) / 2;
+        var fit = WindowPlacement.FitDialog(left, top, width, height, two, owner);
+        Assert.True(second.Contains(new ScreenRect(fit.Left, fit.Top, width, Math.Min(height, fit.MaxHeight))), $"{fit}");
+    }
+
+    [Fact]
+    public void DialogAlreadyVisible_StaysPut()
+    {
+        var fit = WindowPlacement.FitDialog(40, 50, 480, 400, One);
+        Assert.Equal(40, fit.Left);
+        Assert.Equal(50, fit.Top);
+    }
+
+
+    [Fact]
+    public void CenterOnScreen_UsesMiddleOfTheMonitor_NotTheEdge()
+    {
+        var fit = WindowPlacement.CenterOnScreen(480, 700, One, new ScreenRect(1400, 780, 1, 1));
+        Assert.Equal((Primary.Width - 480) / 2, fit.Left);
+        Assert.Equal((Primary.Height - 700) / 2, fit.Top);
+    }
+
+    [Fact]
+    public void CenterOnScreen_ShrinksATooTallDialogAndKeepsItCentered()
+    {
+        var fit = WindowPlacement.CenterOnScreen(480, 2000, One);
+        var height = Math.Min(2000, fit.MaxHeight);
+        Assert.Equal(Primary.Height - 16, fit.MaxHeight);
+        Assert.Equal(Primary.Left + (Primary.Width - 480) / 2, fit.Left);
+        Assert.Equal(Primary.Top + (Primary.Height - height) / 2, fit.Top);
+    }
+
+    [Fact]
+    public void CenterOnScreen_FollowsTheSecondMonitor()
+    {
+        var second = new ScreenRect(1536, 0, 1280, 720);
+        ScreenRect[] two = [Primary, second];
+        var fit = WindowPlacement.CenterOnScreen(480, 400, two, new ScreenRect(2000, 100, 1, 1));
+        Assert.Equal(second.Left + (second.Width - 480) / 2, fit.Left);
+        Assert.Equal(second.Top + (second.Height - 400) / 2, fit.Top);
+    }
 }

@@ -43,7 +43,6 @@ public partial class SettingsWindow : Window
         _revision = current.Revision;
         _pauseUntil = current.PauseUntil;
         _days = [Mon, Tue, Wed, Thu, Fri, Sat, Sun];
-        MaxHeight = SystemParameters.WorkArea.Height - 16;
 
         GoalStepper.Value = current.DailyGoalMl;
         WorkCupStepper.Value = current.WorkCupMl;
@@ -71,7 +70,6 @@ public partial class SettingsWindow : Window
             LocalPreferencesHeader.Visibility = Visibility.Collapsed;
             LocalPreferencesCard.Visibility = Visibility.Collapsed;
             MemberPushTokenPanel.Visibility = Visibility.Visible;
-            WindowStartupLocation = WindowStartupLocation.CenterOwner;
         }
         Closed += (_, _) => MemberPushToken.Clear();
 
@@ -80,6 +78,7 @@ public partial class SettingsWindow : Window
         Validate();
         WindowEx.EnableDrag(this);
         WpfInterop.EnableKeyboard(this);
+        DialogLayout.KeepOnScreen(this);
     }
 
     private void Day_Click(object sender, RoutedEventArgs e) => Validate();

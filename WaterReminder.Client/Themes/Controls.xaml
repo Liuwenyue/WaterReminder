@@ -17,6 +17,7 @@
     <Setter Property="UseLayoutRounding" Value="True"/>
     <Setter Property="SnapsToDevicePixels" Value="True"/>
     <Setter Property="TextOptions.TextFormattingMode" Value="Ideal"/>
+    <Setter Property="TextOptions.TextRenderingMode" Value="Grayscale"/>
     <Setter Property="Icon" Value="pack://application:,,,/Assets/app.ico"/>
   </Style>
 
@@ -26,11 +27,7 @@
     <Setter Property="Background" Value="{DynamicResource WindowBg}"/>
     <Setter Property="BorderBrush" Value="{DynamicResource Stroke}"/>
     <Setter Property="BorderThickness" Value="1"/>
-    <Setter Property="Effect">
-      <Setter.Value>
-        <DropShadowEffect BlurRadius="24" ShadowDepth="4" Direction="270" Opacity="0.20" Color="#0E1A2B"/>
-      </Setter.Value>
-    </Setter>
+
   </Style>
 
   <Style x:Key="SectionCard" TargetType="Border">
@@ -416,6 +413,27 @@
   </Style>
 
   <!-- Pill chip toggle (weekdays, quick amounts). -->
+
+  <Style x:Key="DayCell" TargetType="Button" BasedOn="{StaticResource ButtonBase}">
+    <Setter Property="Height" Value="52"/>
+    <Setter Property="MinWidth" Value="0"/>
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="Margin" Value="3"/>
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+    <Setter Property="BorderBrush" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="{DynamicResource ControlHover}"/></Trigger>
+    </Style.Triggers>
+  </Style>
+  <Style x:Key="DayCellSelected" TargetType="Button" BasedOn="{StaticResource DayCell}">
+    <Setter Property="Background" Value="{DynamicResource AccentSoft}"/>
+    <Setter Property="Foreground" Value="{DynamicResource AccentText}"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+  </Style>
+
   <Style x:Key="Chip" TargetType="ToggleButton">
     <Setter Property="Cursor" Value="Hand"/>
     <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
@@ -527,22 +545,52 @@
     </Setter>
   </Style>
 
-  <!-- Slim scrollbar -->
+  <!-- Slim scrollbar that follows the light and dark skins. -->
   <Style TargetType="ScrollBar">
-    <Setter Property="Width" Value="6"/>
-    <Setter Property="MinWidth" Value="6"/>
+    <Setter Property="OverridesDefaultStyle" Value="True"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Width" Value="8"/>
+    <Setter Property="MinWidth" Value="8"/>
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="ScrollBar">
-          <Track x:Name="PART_Track" IsDirectionReversed="True">
-            <Track.Thumb>
-              <Thumb>
-                <Thumb.Template>
-                  <ControlTemplate TargetType="Thumb"><Border CornerRadius="3" Background="{DynamicResource StrokeStrong}"/></ControlTemplate>
-                </Thumb.Template>
-              </Thumb>
-            </Track.Thumb>
-          </Track>
+          <Grid Background="Transparent" SnapsToDevicePixels="True">
+            <Track x:Name="PART_Track" IsDirectionReversed="True">
+              <Track.DecreaseRepeatButton>
+                <RepeatButton Command="ScrollBar.PageUpCommand" Focusable="False" Opacity="0">
+                  <RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template>
+                </RepeatButton>
+              </Track.DecreaseRepeatButton>
+              <Track.IncreaseRepeatButton>
+                <RepeatButton Command="ScrollBar.PageDownCommand" Focusable="False" Opacity="0">
+                  <RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template>
+                </RepeatButton>
+              </Track.IncreaseRepeatButton>
+              <Track.Thumb>
+                <Thumb MinHeight="24" MinWidth="24">
+                  <Thumb.Template>
+                    <ControlTemplate TargetType="Thumb">
+                      <Border x:Name="thumb" CornerRadius="4" Margin="2" Background="{DynamicResource StrokeStrong}"/>
+                      <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                          <Setter TargetName="thumb" Property="Background" Value="{DynamicResource TextTertiary}"/>
+                        </Trigger>
+                      </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                  </Thumb.Template>
+                </Thumb>
+              </Track.Thumb>
+            </Track>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="Orientation" Value="Horizontal">
+              <Setter Property="Width" Value="Auto"/>
+              <Setter Property="MinWidth" Value="0"/>
+              <Setter Property="Height" Value="8"/>
+              <Setter Property="MinHeight" Value="8"/>
+              <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
     </Setter>

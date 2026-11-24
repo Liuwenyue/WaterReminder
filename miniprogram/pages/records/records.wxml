@@ -8,23 +8,42 @@
     <button wx:if="{{offset}}" class="button link today-link" hover-class="press" bindtap="showToday">回到今天</button>
   </view>
 
+  <view class="mode-switch">
+    <button class="button mode {{viewMode === 'week' ? 'on' : ''}}" data-mode="week" bindtap="setMode">周</button>
+    <button class="button mode {{viewMode === 'month' ? 'on' : ''}}" data-mode="month" bindtap="setMode">月</button>
+  </view>
+
   <view class="surface trend arrive">
     <view class="spread">
-      <text class="trend-title">七日趋势</text>
-      <text class="range numerals">{{rangeLabel}}</text>
+      <button class="button step" data-dir="-1" hover-class="press" bindtap="shiftPeriod" aria-label="上一个周期"><view class="chevron back"></view></button>
+      <text class="trend-title">{{viewMode === 'month' ? monthLabel : '本周'}}</text>
+      <button class="button step" data-dir="1" disabled="{{!canShiftNext}}" hover-class="press" bindtap="shiftPeriod" aria-label="下一个周期"><view class="chevron"></view></button>
     </view>
+    <text class="caption period-label">{{periodLabel}}</text>
     <text class="caption reading-label">{{relativeLabel}}饮水</text>
     <view class="spread reading-row">
       <view class="quantity numerals"><text class="reading">{{totalText}}</text><text class="reading-unit">mL</text></view>
       <view class="legend"><view class="legend-line"></view><text>目标 {{goalKnown ? goalText + ' mL' : '未记录'}}</text></view>
     </view>
-    <view class="chart">
+    <view wx:if="{{viewMode !== 'month'}}" class="chart">
       <view class="guides" aria-hidden="true"><view wx:if="{{goalKnown}}" class="target-guide" style="top: {{goalTop}}%;"></view></view>
       <view class="columns">
-        <button wx:for="{{bars}}" wx:key="key" class="button column {{item.selected ? 'selected' : ''}}" hover-class="press"
-          data-offset="{{item.offset}}" bindtap="pickDay" aria-label="{{item.ariaLabel}}">
+        <button wx:for="{{bars}}" wx:key="key" class="button column {{item.selected ? 'selected' : ''}} {{item.future ? 'future' : ''}}" hover-class="press"
+          disabled="{{item.future || item.tooOld}}" data-offset="{{item.offset}}" bindtap="pickDay" aria-label="{{item.ariaLabel}}">
           <view class="bar-slot"><view class="bar-fill" style="transform: scaleY({{item.fraction}});"></view></view>
           <view class="day-label"><text>{{item.label}}</text></view>
+        </button>
+      </view>
+    </view>
+    <view wx:else class="month">
+      <view class="dows">
+        <text wx:for="{{dowLabels}}" wx:key="*this">{{item}}</text>
+      </view>
+      <view class="month-grid">
+        <button wx:for="{{monthCells}}" wx:key="key" class="button cell {{item.blank ? 'blank' : ''}} {{item.selected ? 'selected' : ''}} {{item.future || item.tooOld ? 'future' : ''}}"
+          disabled="{{item.blank || item.future || item.tooOld}}" data-offset="{{item.offset}}" bindtap="pickDay">
+          <text class="cell-day">{{item.label}}</text>
+          <text class="cell-amount numerals">{{item.amount}}</text>
         </button>
       </view>
     </view>
