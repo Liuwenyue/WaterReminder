@@ -2,7 +2,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
-using WaterReminder.Client.Controls;
+using WaterReminder.Controls;
 using WaterReminder.Services;
 using FormsScreen = System.Windows.Forms.Screen;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;

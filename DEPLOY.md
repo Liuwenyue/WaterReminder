@@ -2,7 +2,7 @@
 
 The scheduler runs on a Linux VM (Ubuntu, 1 OCPU / 1 GB RAM is enough). Reminder times are always **Asia/Shanghai**, even if the VM clock is UTC. The Windows tray client and the iPhone (PushWard) both take reminders from this process. Do not run the old WPF scheduler at the same time.
 
-Phone delivery supports WeChat subscription messages and PushWard. Each account stores its channel preference on the server.
+Phone delivery goes through PushWard. Each account stores its push preference on the server.
 
 ## Secrets
 
@@ -12,11 +12,7 @@ Keep these only on the server, in the environment or in the data directory. Do n
 | --- | --- | --- |
 | Client API token | `WATERREMINDER_API_TOKEN` | `api.token` |
 | PushWard token | `WATERREMINDER_PUSHWARD_TOKEN` | `pushward.token` |
-| WeChat AppSecret | `WATERREMINDER_WECHAT_APP_SECRET` | `wechat.json` 的 `appSecret` |
-| WeChat template ID | `WATERREMINDER_WECHAT_TEMPLATE_ID` | `wechat.json` 的 `templateId` |
 
-
-微信服务通知需要 AppSecret、模板 ID、成员绑定和可用的订阅次数。提醒渠道按成员配置，自动模式在微信未就绪时使用已配置的 PushWard。`wechat.json` 可以设置 `miniprogramState`（不写时发给正式版 `formal`，开发者工具里才用 `developer`）和 `fields`。默认字段 `thing1`、`time2`、`thing3` 分别对应「该喝水了」、提醒时间和「建议喝{suggested}毫升」。字段名必须和公众平台模板一致。
 
 Environment wins over the file. A token found that way is not copied into `settings.json` when the service saves a pause. `settings.json` in the data directory may still contain `PushWardApiToken` for a hand-edited install; that file stays on the server and is gitignored.
 
@@ -130,7 +126,7 @@ Open the tray icon and choose **设置**. The window is the original desktop set
 
 服务跑在 Linux 上，提醒时间固定为 **Asia/Shanghai**。默认监听 **127.0.0.1:8787**。PushWard 令牌和客户端 API 令牌只放在服务器的环境变量或数据目录（`/var/lib/waterreminder`），不要写入仓库或 Windows 客户端。Windows 客户端用 SSH 隧道连到本机 `127.0.0.1:8787`，`client.json` 里用占位符配置 `tunnel`（不要提交真实 host/密钥）。
 
-自定义数值在 Windows 托盘菜单「设置」里改，其中「显示桌面悬浮窗」和「开机自动启动」是本机偏好。启动后桌面上会看到原来的悬浮窗。点击已喝数字可以改今天的总量；「记录」可看历史天（只读）和编辑今天。托盘可暂停 30 分钟 / 今日暂停 / 恢复。数据来自服务器，不在本机计时。窗口位置在精简/完整模式间共用左上角锚点。窗口沿用原来的桌面设置界面，读取并保存到服务器的 `settings.json`（`PUT /api/settings`）。窗口里不能看也不能改任何令牌。小程序没有单独的注册步骤。已关联到某个成员且服务端一致时，小程序仍用既有的 `GET/PUT /api/settings` 和 `POST /api/sync/operations` 读写该成员账本。手机访问不到默认的 `127.0.0.1`，正式环境需要已备案的 HTTPS 域名，并把它配进小程序的 request 合法域名。用户如何建个人账、如何关联电脑，见 [README.md](README.md)，不要把这里的令牌或 `client.json` 当成注册。
+自定义数值在 Windows 托盘菜单「设置」里改，其中「显示桌面悬浮窗」和「开机自动启动」是本机偏好。启动后桌面上会看到原来的悬浮窗。点击已喝数字可以改今天的总量；「记录」可看历史天（只读）和编辑今天。托盘可暂停 30 分钟 / 今日暂停 / 恢复。数据来自服务器，不在本机计时。窗口位置在精简/完整模式间共用左上角锚点。窗口沿用原来的桌面设置界面，读取并保存到服务器的 `settings.json`（`PUT /api/settings`）。窗口里不能看也不能改任何令牌。家人加入走桌面访问码，见下面「家庭版使用与升级」；不要把这里的令牌或 `client.json` 当成注册。
 
 默认不对外暴露 8787；若改绑到 `0.0.0.0`，才需要在主机防火墙和云安全列表里放行。只新增允许规则，不要清空现有规则，也不要改 SSH。systemd 示例见 `deploy/waterreminder.service`。
 
@@ -138,9 +134,8 @@ Open the tray icon and choose **设置**. The window is the original desktop set
 
 - 同时升级服务器和 Windows 客户端。服务器继续使用原数据目录，原 API 密钥仍是管理员密钥，原有个人记录继续归「我」。升级前备份整个数据目录。家庭账户在 `family.json`，成员数据在 `members/`，请一起保留。
 - Windows 客户端运行需要 .NET 8 桌面运行时。展开专业版，点击「记录」查看最近 30 天内有记录的日期，也可用「前一天」「后一天」查更早的日期。管理员从成员下拉框切换查看，其他成员的详情只读。
-- 访问码和 `client.json` 只用于安装 Windows 客户端，不是小程序注册。管理员在「记录 → 添加成员」输入名称并生成访问码后，把 Windows 客户端交给家人。家人复制 `client.sample.json` 为 `client.json`，在 `serverUrl` 填同一个可访问的服务地址，在 `apiToken` 填自己的访问码。跨设备接入应使用 HTTPS 或为该成员单独配置的 SSH 隧道。停用后旧访问码失效，历史仍可查看。
+- 访问码和 `client.json` 用于安装 Windows 客户端。管理员在「记录 → 添加成员」输入名称并生成访问码后，把 Windows 客户端交给家人。家人复制 `client.sample.json` 为 `client.json`，在 `serverUrl` 填同一个可访问的服务地址，在 `apiToken` 填自己的访问码。跨设备接入应使用 HTTPS 或为该成员单独配置的 SSH 隧道。停用后旧访问码失效，历史仍可查看。
 - 管理员在「记录 → 家庭成员」选中家人，再点「成员设置」。可调整每日目标、工作杯和家庭杯、上下班、午休、免打扰开始时间、提醒间隔、提醒日期和手机推送。开机启动、悬浮窗及窗口位置由各台电脑自行设置。
-- 手机用户扫码后取名注册。管理员使用手机「设置 → 关联我的电脑账本」生成配对码，再到电脑「记录 → 绑定我的微信」输入确认。配对码由同一后端签发和确认，手机和电脑须连接同一服务。详见 [README.md](README.md)。
 - 管理员若要给某成员发 PushWard，在创建成员时填写该成员的集成密钥，或在「成员设置」里填写新密钥并开启手机推送。密钥留空会保留当前值。每人的集成应只投递到自己的设备。
 - 在 iPhone 上展开提醒，点「已喝水 · N ml」记录按钮显示的水量，或点「修改当前已喝水量」输入当天累计水量。输入 `1200` 会将当天总量设为 1200 ml。同一条通知只能选择一次操作。请使用支持通知文本回复的 PushWard 版本。
 - Windows 客户端继续可从旧服务读取个人逐日记录。家庭成员和手机文本回复需要新版服务器。

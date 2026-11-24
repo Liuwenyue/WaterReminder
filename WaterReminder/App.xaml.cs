@@ -21,6 +21,9 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        AttachGlobalExceptionHandlers();
+        FileLogger.Default.Info("WaterReminder started.");
+
         base.OnStartup(e);
 
         if (e.Args.Contains("--ui-demo"))
@@ -77,6 +80,29 @@ public partial class App : System.Windows.Application
         {
             _mainWindow.Show();
         }
+    }
+
+    /// <summary>
+    /// Global last-resort handlers: log every unhandled exception instead of
+    /// crashing silently. Hooked before anything else runs.
+    /// </summary>
+    private void AttachGlobalExceptionHandlers()
+    {
+        // WPF UI thread: log and swallow so one UI fault does not kill the process.
+        DispatcherUnhandledException += (_, e) =>
+        {
+            FileLogger.Default.Error("Unhandled WPF dispatcher exception", e.Exception);
+            e.Handled = true;
+        };
+
+        // WinForms is only used for the tray icon, but hook it too: harmless.
+        System.Windows.Forms.Application.ThreadException += (_, e) =>
+            FileLogger.Default.Error("Unhandled WinForms exception", e.Exception);
+
+        // Background threads / fatal errors: can only log; the runtime still exits.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            FileLogger.Default.Error("Unhandled exception (terminating: " + e.IsTerminating + ")",
+                e.ExceptionObject as Exception);
     }
 
     private void ShowMainWindow()

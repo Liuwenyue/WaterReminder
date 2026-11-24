@@ -9,13 +9,10 @@
 - **WaterReminder.Client**：Windows 托盘，以及原来的悬浮窗、设置和今日记录。本机保存服务器地址、API 令牌、可选 SSH 隧道，以及悬浮窗/开机自启等本地偏好。托盘菜单「设置」打开桌面设置窗口，把目标、杯量、时间和工作日写回服务器；也可暂停/恢复提醒。上班时间弹出「该喝水了」，下班后不再弹窗。单实例：再次启动会唤醒已有悬浮窗。
 - **WaterReminder**：原来的 WPF 程序，仍可在 Windows 上单独使用。与服务器同时运行时会重复提醒。
 
-手机提醒支持微信订阅消息和 PushWard。服务器默认只监听 `127.0.0.1:8787`。Windows 客户端可通过 `client.json` 里的 `tunnel` 自建 SSH 本地转发（示例使用占位符）。
+手机提醒走 PushWard。服务器默认只监听 `127.0.0.1:8787`。Windows 客户端可通过 `client.json` 里的 `tunnel` 自建 SSH 本地转发（示例使用占位符）。
 
 ## 最近更新
 
-- 微信提醒默认发给正式版小程序。
-- 记一杯时会请求下一次授权。今日页显示剩余次数，用完可以直接点按续上。
-- 自动模式下，这次微信没发出去会改由 PushWard 发送。
 - 接口限流按访问者分开。悬浮窗隐藏后不再轮询，数字没变化时大约 30 秒询问一次。
 
 
@@ -61,20 +58,9 @@ PushWard 令牌和客户端 API 令牌放在服务器的数据目录或环境变
 dotnet publish .\WaterReminder\WaterReminder.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=none -o .\publish
 ```
 
-## 微信小程序
+## 手机提醒
 
-大家使用同一个小程序码。首次打开，普通用户输入自己的名字，点「开始记录」。以后使用同一个微信可回到原账本。普通用户可查看和修改自己的饮水记录，管理员可从电脑「记录」选择新注册的成员，修改他们的记录和提醒设置。
-
-管理员在手机「设置 → 关联我的电脑账本」获取配对码，在已登录的桌面程序「记录 → 绑定我的微信」输入并确认，然后在手机点「打开管理员账本」。配对码 5 分钟内有效。绑定后，用同一微信再次打开小程序即可进入管理员账本。同一微信的旧账本会在待同步记录上传后逐笔合并，记录编号相同或同一天时间和饮水量相同的记录只计一次。
-
-手机、Windows 和 PushWard 只有选中同一成员，并且连接同一服务端时，才同步这一本账。断网时手机会显示待同步，恢复后同一笔只补记一次。用微信开发者工具导入 `miniprogram` 目录即可预览，说明见 [miniprogram/README.md](miniprogram/README.md)。服务器安装和 Windows 的 `client.json` 见 [DEPLOY.md](DEPLOY.md)，那不是手机用户的注册步骤。
-
-手机和桌面端都在设置里选择提醒方式，并且只使用这本账实际可用的渠道。微信和 PushWard 都可用时，可选「自动」「仅微信」「仅 PushWard」或「微信和 PushWard」。默认「自动」优先使用已绑定且还有订阅次数的微信；这次微信没发出去时，会改由已配置的 PushWard 发送。记一杯、修改饮水量，或点「授权一次提醒」，都会请求下一次授权。保存设置不会代为授权。今日页会显示剩余次数。关闭手机推送总开关会停用这两种手机提醒。
-
-```bash
-node ./miniprogram-tests/calculator.test.js
-node --test ./miniprogram-tests/interface.test.js ./miniprogram-tests/server.test.js ./miniprogram-tests/wechat.test.js
-```
+手机提醒走 PushWard：家人在 PushWard App 里创建集成，把 Token 交给管理员录入，提醒就会推送到手机上，点一次通知即可记一杯。家人加入走桌面访问码：管理员在「记录 → 添加成员」生成访问码，家人用 Windows 客户端连接同一服务。
 
 ## 许可
 

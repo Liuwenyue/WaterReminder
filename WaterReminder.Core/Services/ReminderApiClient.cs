@@ -7,6 +7,13 @@ namespace WaterReminder.Services;
 public readonly record struct ApiResult<T>(bool Ok, int StatusCode, T? Value)
 {
     public string? Error { get; init; }
+
+    /// <summary>
+    /// Diagnostic-only detail (exception type + message) for a failed call.
+    /// Never shown to users; read only by logging/diagnostics code.
+    /// </summary>
+    public string? Diagnostic { get; init; }
+
     public static ApiResult<T> Success(T value) => new(true, 200, value);
     public static ApiResult<T> Fail(int statusCode, string? error = null) => new(false, statusCode, default) { Error = error };
 }
@@ -54,9 +61,9 @@ public sealed partial class ReminderApiClient : IDisposable
                 ? ApiResult<ClientSettingsResponse>.Fail((int)response.StatusCode)
                 : ApiResult<ClientSettingsResponse>.Success(value);
         }
-        catch
+        catch (Exception ex)
         {
-            return ApiResult<ClientSettingsResponse>.Fail(0);
+            return FailFromException<ClientSettingsResponse>(ex, "PUT api/settings");
         }
     }
 
@@ -78,19 +85,6 @@ public sealed partial class ReminderApiClient : IDisposable
     public Task<ApiResult<FamilyOverview>> GetFamilyAsync(CancellationToken ct = default)
         => ReadAsync<FamilyOverview>("api/family", ct);
 
-    public async Task<ApiResult<bool>> ConfirmOwnerPairAsync(string code, CancellationToken ct = default)
-    {
-        try
-        {
-            using var response = await _http.PostAsJsonAsync("api/family/owner-pair", new { code }, Json, ct).ConfigureAwait(false);
-            if (response.IsSuccessStatusCode) return ApiResult<bool>.Success(true);
-            return ApiResult<bool>.Fail((int)response.StatusCode,
-                ReadError(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false)));
-        }
-        catch (Exception e) when (e is HttpRequestException or OperationCanceledException)
-        { return ApiResult<bool>.Fail(0); }
-    }
-
     public Task<ApiResult<ClientSettingsResponse>> GetFamilySettingsAsync(Guid memberId, CancellationToken ct = default)
         => ReadAsync<ClientSettingsResponse>($"api/family/{memberId}/settings", ct);
 
@@ -111,7 +105,7 @@ public sealed partial class ReminderApiClient : IDisposable
             return value is null ? ApiResult<ClientSettingsResponse>.Fail((int)response.StatusCode)
                 : ApiResult<ClientSettingsResponse>.Success(value);
         }
-        catch { return ApiResult<ClientSettingsResponse>.Fail(0); }
+        catch (Exception ex) { return FailFromException<ClientSettingsResponse>(ex, $"PUT api/family/{memberId}/settings"); }
     }
 
     public Task<ApiResult<HistoryResponse>> GetFamilyHistoryAsync(Guid memberId, int days, CancellationToken ct = default)
@@ -134,7 +128,7 @@ public sealed partial class ReminderApiClient : IDisposable
                 ReadError(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false)));
         }
         catch (Exception e) when (e is HttpRequestException or OperationCanceledException)
-        { return ApiResult<bool>.Fail(0); }
+        { return FailFromException<bool>(e, $"POST api/family/{memberId}/records/operations"); }
     }
 
     public async Task<ApiResult<FamilyInvitation>> AddFamilyMemberAsync(AddFamilyMember request)
@@ -148,7 +142,7 @@ public sealed partial class ReminderApiClient : IDisposable
             var invitation = JsonSerializer.Deserialize<FamilyInvitation>(body, Json);
             return invitation is null ? ApiResult<FamilyInvitation>.Fail(0) : ApiResult<FamilyInvitation>.Success(invitation);
         }
-        catch { return ApiResult<FamilyInvitation>.Fail(0); }
+        catch (Exception ex) { return FailFromException<FamilyInvitation>(ex, "POST api/family"); }
     }
 
     public async Task<bool> ArchiveFamilyMemberAsync(Guid memberId)
@@ -158,7 +152,7 @@ public sealed partial class ReminderApiClient : IDisposable
             using var response = await _http.DeleteAsync($"api/family/{memberId}").ConfigureAwait(false);
             return response.IsSuccessStatusCode;
         }
-        catch { return false; }
+        catch (Exception ex) { LogException(ex, $"DELETE api/family/{memberId}"); return false; }
     }
 
     public Task<ApiResult<object>> GetHealthAsync(CancellationToken ct = default)
@@ -177,9 +171,9 @@ public sealed partial class ReminderApiClient : IDisposable
                 ? ApiResult<SetTotalResponse>.Fail((int)response.StatusCode, ReadError(body))
                 : ApiResult<SetTotalResponse>.Success(value);
         }
-        catch
+        catch (Exception ex)
         {
-            return ApiResult<SetTotalResponse>.Fail(0);
+            return FailFromException<SetTotalResponse>(ex, "PUT api/records/total");
         }
     }
 
@@ -194,9 +188,9 @@ public sealed partial class ReminderApiClient : IDisposable
             var value = JsonSerializer.Deserialize<TodayRecordsResponse>(body, Json);
             return value is null ? ApiResult<TodayRecordsResponse>.Fail((int)response.StatusCode) : ApiResult<TodayRecordsResponse>.Success(value);
         }
-        catch
+        catch (Exception ex)
         {
-            return ApiResult<TodayRecordsResponse>.Fail(0);
+            return FailFromException<TodayRecordsResponse>(ex, $"PUT api/records/{id}");
         }
     }
 
@@ -221,9 +215,9 @@ public sealed partial class ReminderApiClient : IDisposable
             var value = JsonSerializer.Deserialize<TodayRecordsResponse>(body, Json);
             return value is null ? ApiResult<TodayRecordsResponse>.Fail((int)response.StatusCode) : ApiResult<TodayRecordsResponse>.Success(value);
         }
-        catch
+        catch (Exception ex)
         {
-            return ApiResult<TodayRecordsResponse>.Fail(0);
+            return FailFromException<TodayRecordsResponse>(ex, $"{method} {path}");
         }
     }
 
@@ -237,9 +231,9 @@ public sealed partial class ReminderApiClient : IDisposable
             var value = await response.Content.ReadFromJsonAsync<DrinkResponse>(Json, ct).ConfigureAwait(false);
             return value is null ? ApiResult<DrinkResponse>.Fail((int)response.StatusCode) : ApiResult<DrinkResponse>.Success(value);
         }
-        catch
+        catch (Exception ex)
         {
-            return ApiResult<DrinkResponse>.Fail(0);
+            return FailFromException<DrinkResponse>(ex, "POST api/drinks");
         }
     }
 
@@ -251,8 +245,9 @@ public sealed partial class ReminderApiClient : IDisposable
                 "api/desktop-ack", new AckRequest { Id = alertId }, Json, ct).ConfigureAwait(false);
             return response.IsSuccessStatusCode;
         }
-        catch
+        catch (Exception ex)
         {
+            LogException(ex, "POST api/desktop-ack");
             return false;
         }
     }
@@ -270,9 +265,9 @@ public sealed partial class ReminderApiClient : IDisposable
                 ? ApiResult<T>.Fail((int)response.StatusCode, ReadError(body))
                 : ApiResult<T>.Success(value);
         }
-        catch
+        catch (Exception ex)
         {
-            return ApiResult<T>.Fail(0);
+            return FailFromException<T>(ex, $"GET {path}");
         }
     }
 
@@ -289,6 +284,24 @@ public sealed partial class ReminderApiClient : IDisposable
         }
         catch (JsonException) { }
         return null;
+    }
+
+    /// <summary>
+    /// Builds a failed result from a transport exception: keeps a one-line
+    /// diagnostic (exception type + message) on the result and writes the full
+    /// exception to the log. The user-visible <see cref="ApiResult{T}.Error"/> is untouched.
+    /// </summary>
+    private static ApiResult<T> FailFromException<T>(Exception ex, string operation)
+    {
+        var diagnostic = ex.GetType().Name + ": " + ex.Message;
+        FileLogger.Default.Error($"Reminder API {operation} failed ({diagnostic})", ex);
+        return ApiResult<T>.Fail(0) with { Diagnostic = diagnostic };
+    }
+
+    /// <summary>Logs a transport exception for API calls that return only true/false.</summary>
+    private static void LogException(Exception ex, string operation)
+    {
+        FileLogger.Default.Error($"Reminder API {operation} failed ({ex.GetType().Name}: {ex.Message})", ex);
     }
 
     public void Dispose()

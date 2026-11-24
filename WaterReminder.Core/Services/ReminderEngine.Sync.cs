@@ -7,41 +7,6 @@ namespace WaterReminder.Services;
 
 public sealed partial class ReminderEngine
 {
-    /// <summary>Copies drinking events and their merge receipts in the same atomic write.</summary>
-    public void MergePersonalRecords(ReminderEngine source)
-    {
-        IReadOnlyList<DailyRecord> personalDays;
-        lock (source._gate) personalDays = source._storage.ListDailyRecords();
-        lock (_gate)
-        {
-            var now = RefreshLocked();
-            var today = now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            var stored = _storage.ListDailyRecords().ToDictionary(day => day.Date);
-            var processed = stored.Values.SelectMany(day => day.OwnerMergeReceipts ?? []).ToHashSet();
-            var knownIds = stored.Values.SelectMany(day => day.Events).Select(record => record.Id).ToHashSet();
-            var changed = new List<DailyRecord>();
-            foreach (var personalDay in personalDays)
-            {
-                var target = stored.GetValueOrDefault(personalDay.Date) ?? new DailyRecord { Date = personalDay.Date };
-                var matches = target.Events.Select(record => (record.At, record.AmountMl)).ToHashSet();
-                var newReceipts = false;
-                foreach (var record in personalDay.Events)
-                {
-                    if (!processed.Add(record.Id)) continue;
-                    (target.OwnerMergeReceipts ??= []).Add(record.Id);
-                    newReceipts = true;
-                    if (knownIds.Add(record.Id) && matches.Add((record.At, record.AmountMl))) target.Events.Add(record);
-                }
-                if (!newReceipts) continue;
-                target.GoalSnapshotMl ??= target.Date == today ? _settings.DailyGoalMl : personalDay.GoalSnapshotMl;
-                changed.Add(target);
-            }
-            if (changed.Count == 0) return;
-            _storage.SaveDailyRecords(changed);
-            RefreshLocked();
-        }
-    }
-
     public SyncSnapshotResponse SyncSnapshot(Guid memberId, string memberName, int days)
     {
         lock (_gate)

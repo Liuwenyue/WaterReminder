@@ -52,10 +52,7 @@ public static class ServerHost
 
         app.Use(async (context, next) =>
         {
-            if (context.Request.Path.StartsWithSegments("/health") ||
-                context.Request.Path == "/api/invitations/preview" || context.Request.Path == "/api/invitations/redeem" ||
-                context.Request.Path == "/api/wechat/login" || context.Request.Path == "/api/device/login" ||
-                context.Request.Path == "/api/wechat/owner-pair")
+            if (context.Request.Path.StartsWithSegments("/health"))
             {
                 await next();
                 return;
@@ -278,27 +275,7 @@ public static class ServerHost
         });
 
 
-        app.MapGet("/api/wechat", (HttpContext context) => Results.Ok(CurrentEngine(context).WeChatStatus()));
-        app.MapPost("/api/wechat/bind", async (HttpRequest request, CancellationToken cancellationToken) =>
-        {
-            WeChatCodeRequest? body;
-            try { body = await request.ReadFromJsonAsync<WeChatCodeRequest>(cancellationToken); }
-            catch (Exception error) when (error is JsonException or InvalidOperationException or BadHttpRequestException)
-            { body = null; }
-            var (ok, status, errorText) = await CurrentEngine(request.HttpContext).BindWeChatAsync(body?.Code, cancellationToken);
-            return ok ? Results.Ok(status) : Results.BadRequest(new { error = errorText });
-        });
-        app.MapPost("/api/wechat/subscription", async (HttpRequest request, CancellationToken cancellationToken) =>
-        {
-            WeChatSubscriptionRequest? body;
-            try { body = await request.ReadFromJsonAsync<WeChatSubscriptionRequest>(cancellationToken); }
-            catch (Exception error) when (error is JsonException or InvalidOperationException or BadHttpRequestException)
-            { body = null; }
-            var (ok, status, errorText) = CurrentEngine(request.HttpContext).AcceptWeChatSubscription(body?.Id, body?.Status);
-            return ok ? Results.Ok(status) : Results.BadRequest(new { error = errorText });
-        });
-
-        app.MapFamilyRoutes(options);
+        app.MapFamilyRoutes();
         return app;
     }
 

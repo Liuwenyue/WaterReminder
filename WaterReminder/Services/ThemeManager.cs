@@ -21,26 +21,16 @@ public static class ThemeManager
 
     public static void Apply()
     {
-        var dark = ForceDark ?? SystemPrefersDark();
+        var dark = ForceDark ?? SharedTheme.PrefersDark();
         var app = Application.Current;
         if (app is null) return;
         var dicts = app.Resources.MergedDictionaries;
-        var uri = new Uri(dark ? "pack://application:,,,/Themes/Dark.xaml" : "pack://application:,,,/Themes/Light.xaml", UriKind.Absolute);
+        var uri = SharedTheme.DictionaryUri(dark ? "Dark.xaml" : "Light.xaml");
         var existing = dicts.FirstOrDefault(d => d.Source is not null && (d.Source.OriginalString.EndsWith("Light.xaml") || d.Source.OriginalString.EndsWith("Dark.xaml")));
         if (existing is not null && IsDark == dark && existing.Source!.OriginalString.EndsWith(dark ? "Dark.xaml" : "Light.xaml")) return;
         var replacement = new ResourceDictionary { Source = uri };
         if (existing is null) dicts.Insert(0, replacement);
         else dicts[dicts.IndexOf(existing)] = replacement;
         IsDark = dark;
-    }
-
-    private static bool SystemPrefersDark()
-    {
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-            return key?.GetValue("AppsUseLightTheme") is int v && v == 0;
-        }
-        catch { return false; }
     }
 }

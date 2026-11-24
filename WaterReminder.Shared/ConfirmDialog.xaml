@@ -1,0 +1,28 @@
+<Window x:Class="WaterReminder.ConfirmDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource FluentWindow}" Title="确认" Width="392" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Topmost="True">
+  <Border Style="{StaticResource WindowCard}">
+    <StackPanel>
+      <StackPanel Margin="24,24,24,24">
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
+          <Border x:Name="IconBg" Width="40" Height="40" CornerRadius="20" Background="{DynamicResource AccentSoft}" VerticalAlignment="Top">
+            <TextBlock x:Name="IconGlyph" Style="{StaticResource Glyph}" Text="&#xE7A7;" FontSize="18" HorizontalAlignment="Center" Foreground="{DynamicResource AccentText}"/>
+          </Border>
+          <StackPanel Grid.Column="1" Margin="16,0,0,0">
+            <TextBlock x:Name="TitleText" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"/>
+            <TextBlock x:Name="MessageText" Margin="0,8,0,0" FontSize="13" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" LineHeight="20"/>
+          </StackPanel>
+        </Grid>
+      </StackPanel>
+      <Border Background="{DynamicResource SurfaceAlt}" CornerRadius="0,0,12,12" Padding="24,16" BorderBrush="{DynamicResource Stroke}" BorderThickness="0,1,0,0">
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+          <Button Style="{StaticResource SecondaryButton}" Content="取消" MinWidth="96" Margin="0,0,8,0" IsCancel="True" Click="Cancel_Click"/>
+          <Button x:Name="OkButton" Style="{StaticResource PrimaryButton}" Content="确定" MinWidth="96" IsDefault="True" Click="Ok_Click"/>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </Border>
+</Window>

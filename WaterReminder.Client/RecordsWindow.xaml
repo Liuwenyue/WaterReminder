@@ -57,10 +57,9 @@
             <UniformGrid Columns="2" Margin="0,12,0,0">
               <Button x:Name="ArchiveMemberButton" Style="{StaticResource DangerGhostButton}" Content="停用" Click="ArchiveMember_Click" Margin="0,0,8,8"/>
               <Button x:Name="MemberSettingsButton" Style="{StaticResource SecondaryButton}" Content="成员设置" IsEnabled="False" Click="MemberSettings_Click" Margin="0,0,0,8"/>
-              <Button x:Name="InviteAgainButton" Style="{StaticResource SecondaryButton}" Content="微信邀请" IsEnabled="False" Click="InviteAgain_Click" Margin="0,0,8,8"/>
+              <Button x:Name="ResetCodeButton" Style="{StaticResource SecondaryButton}" Content="重置访问码" IsEnabled="False" Click="ResetCode_Click" Margin="0,0,8,8"/>
               <Button x:Name="PushTestButton" Style="{StaticResource SecondaryButton}" Content="测试提醒" Click="PushTest_Click" Margin="0,0,0,8"/>
               <Button x:Name="AddMemberButton" Style="{StaticResource SecondaryButton}" Content="添加成员" Click="AddMember_Click" Margin="0,0,8,0"/>
-              <Button Style="{StaticResource SecondaryButton}" Content="绑定微信" Click="BindOwnerWeChat_Click"/>
             </UniformGrid>
             <TextBlock x:Name="FamilyProgressText" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,12,0,0"/>
           </StackPanel>

@@ -23,14 +23,12 @@ public static class Program
             return;
         }
 
-        options.WeChat = WeChatClient.FromDirectory(options.DataDirectory);
         using var engine = new ReminderEngine(new ReminderEngineOptions
         {
             DataDirectory = options.DataDirectory,
             Clock = ShanghaiClock.Now,
             PushWardToken = () => SecretFiles.PushWardToken(options.DataDirectory),
             PollAnswers = !dryRun,
-            WeChat = options.WeChat,
         });
 
         if (dryRun)

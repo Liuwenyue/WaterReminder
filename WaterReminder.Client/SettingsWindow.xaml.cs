@@ -2,7 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using WaterReminder;
-using WaterReminder.Client.Controls;
+using WaterReminder.Controls;
 using WaterReminder.Services;
 
 namespace WaterReminder.Client;
@@ -58,7 +58,6 @@ public partial class SettingsWindow : Window
         for (var i = 0; i < _days.Length && i < current.ActiveDays.Length; i++)
             _days[i].IsChecked = current.ActiveDays[i];
         MobilePushBox.IsChecked = current.MobilePushEnabled;
-        PhoneModeBox.SelectedIndex = (int)current.PhoneMode;
         FloatingBox.IsChecked = floatingWindow;
         AutoStartBox.IsChecked = autoStart;
         if (memberName is not null)
@@ -99,7 +98,7 @@ public partial class SettingsWindow : Window
         QuietStart = Clock(QuietStepper.Value),
         MinReminderGapMinutes = GapStepper.Value,
         MobilePushEnabled = MobilePushBox.IsChecked == true,
-        PhoneMode = (PhoneDeliveryMode)PhoneModeBox.SelectedIndex,
+        // PhoneMode is not edited here: leaving it null keeps the stored value.
         ActiveDays = _days.Select(x => x.IsChecked == true).ToArray(),
         RemindersPaused = _remindersPaused,
         PreservePause = true,

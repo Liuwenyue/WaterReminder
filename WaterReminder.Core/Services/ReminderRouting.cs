@@ -5,25 +5,16 @@ public enum PhoneChannel
 {
     None,
     PushWard,
-    WeChat,
 }
 
 public static class ReminderRouting
 {
-    public static PhoneChannel Choose(bool mobileEnabled, bool pushWardConfigured, bool wechatReady, PhoneDeliveryMode mode = PhoneDeliveryMode.Auto)
+    public static PhoneChannel Choose(bool mobileEnabled, bool pushWardConfigured)
     {
-        if (!mobileEnabled) return PhoneChannel.None;
-        var push = pushWardConfigured ? PhoneChannel.PushWard : PhoneChannel.None;
-        var wechat = wechatReady ? PhoneChannel.WeChat : PhoneChannel.None;
-        return mode switch
-        {
-            PhoneDeliveryMode.WeChat => wechat,
-            PhoneDeliveryMode.PushWard => push,
-            PhoneDeliveryMode.Both => wechat | push,
-            _ => wechatReady ? wechat : push,
-        };
+        if (!mobileEnabled || !pushWardConfigured) return PhoneChannel.None;
+        return PhoneChannel.PushWard;
     }
 
     public static bool ShouldPublishPushWard(UserSettings settings, bool pushWardConfigured)
-        => settings.MobilePushEnabled && pushWardConfigured && settings.PhoneMode != PhoneDeliveryMode.WeChat;
+        => settings.MobilePushEnabled && pushWardConfigured;
 }

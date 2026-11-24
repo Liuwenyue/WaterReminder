@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using WaterReminder;
-using WaterReminder.Client.Controls;
+using WaterReminder.Controls;
 using WaterReminder.Services;
 
 namespace WaterReminder.Client;
@@ -112,16 +112,6 @@ public partial class RecordsWindow : Window
         await LoadProgressAsync();
     }
 
-    private void BindOwnerWeChat_Click(object sender, RoutedEventArgs e)
-    {
-        if (!_clicks.Enter()) return;
-        try {
-        new OwnerPairWindow(_api) { Owner = this }.ShowDialog();
-    
-        }
-        finally { _clicks.Exit(); }
-    }
-
     private async Task LoadHistoryAsync()
     {
         var version = ++_viewVersion;
@@ -186,14 +176,21 @@ public partial class RecordsWindow : Window
         finally { _clicks.Exit(); }
     }
 
-    private async void InviteAgain_Click(object sender, RoutedEventArgs e)
+    private async void ResetCode_Click(object sender, RoutedEventArgs e)
     {
         if (!_clicks.Enter()) return;
         try {
-        if (MemberPicker.SelectedItem is not MemberOption option) return;
-        var dialog = new FamilyInviteWindow(_api, option.Member) { Owner = this };
-        dialog.ShowDialog();
-        await LoadProgressAsync();
+        if (MemberPicker.SelectedItem is not MemberOption option || option.Member.Id == Guid.Empty || option.Member.Archived)
+            return;
+        if (!ConfirmDialog.Ask(this, $"重置 {option.Member.Name} 的访问码？", "旧访问码立即失效，该成员需要用新访问码重新连接，饮水历史仍保留。", "重置", danger: true))
+            return;
+        var result = await _api.ResetMemberAccessCodeAsync(option.Member.Id);
+        if (!result.Ok || result.Value is null)
+        {
+            SummaryText.Text = result.Error ?? "重置失败，请检查服务端连接。";
+            return;
+        }
+        new FamilyInviteWindow(_api, result.Value) { Owner = this }.ShowDialog();
     
         }
         finally { _clicks.Exit(); }
@@ -237,7 +234,7 @@ public partial class RecordsWindow : Window
         var active = MemberPicker.SelectedItem is MemberOption { Member: { Archived: false } } option
             && option.Member.Id != Guid.Empty;
         ArchiveMemberButton.IsEnabled = active;
-        InviteAgainButton.IsEnabled = active;
+        ResetCodeButton.IsEnabled = active;
         PushTestButton.IsEnabled = MemberPicker.SelectedItem is MemberOption { Member.Archived: false };
         MemberSettingsButton.IsEnabled = active && _memberSettingsRequest is null;
         MemberSettingsButton.Content = _memberSettingsRequest is null ? "成员设置" : "读取中…";

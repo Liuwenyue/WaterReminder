@@ -30,7 +30,7 @@ internal static class Program
             foreach (var resource in new[] { theme, "Controls.xaml" })
                 app.Resources.MergedDictionaries.Add(new ResourceDictionary
                 {
-                    Source = new Uri("pack://application:,,,/WaterReminder.Client;component/Themes/" + resource)
+                    Source = new Uri("pack://application:,,,/WaterReminder.Shared;component/Themes/" + resource)
                 });
             var configType = assembly.GetType("WaterReminder.Client.ClientConfig")!;
             File.WriteAllText(configFile, """{"serverUrl":"http://localhost/","apiToken":"ui-test-only"}""");
