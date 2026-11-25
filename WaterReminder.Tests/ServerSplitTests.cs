@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using WaterReminder;
@@ -420,6 +421,85 @@ public sealed class ServerSplitTests
                 await app.StopAsync();
                 await app.DisposeAsync();
             }
+            TryDelete(dir);
+        }
+    }
+
+    [Fact]
+    public void ReminderRouting_PublishesPushWardOnlyWhenEnabledAndConfigured()
+    {
+        Assert.Equal(PhoneChannel.PushWard, ReminderRouting.Choose(true, true));
+        Assert.Equal(PhoneChannel.None, ReminderRouting.Choose(true, false));
+        Assert.Equal(PhoneChannel.None, ReminderRouting.Choose(false, true));
+    }
+
+    [Fact]
+    public void RetiredPhoneModes_LoadAsAuto_AndPushWardKeepsItsNumber()
+    {
+        var dir = TempDir();
+        try
+        {
+            Directory.CreateDirectory(dir);
+            foreach (var (stored, expected) in new (int, PhoneDeliveryMode)[]
+                     { (0, PhoneDeliveryMode.Auto), (1, PhoneDeliveryMode.Auto), (2, PhoneDeliveryMode.PushWard), (3, PhoneDeliveryMode.Auto) })
+            {
+                File.WriteAllText(Path.Combine(dir, "settings.json"), $$"""{"PhoneMode":{{stored}}}""");
+                Assert.Equal(expected, new StorageService(dir).LoadSettings().PhoneMode);
+            }
+            // Older files may also store retired modes as strings; any unknown name maps to Auto.
+            foreach (var (stored, expected) in new (string, PhoneDeliveryMode)[]
+                     { ("Auto", PhoneDeliveryMode.Auto), ("PushWard", PhoneDeliveryMode.PushWard),
+                       ("Retired", PhoneDeliveryMode.Auto), ("Unknown", PhoneDeliveryMode.Auto) })
+            {
+                File.WriteAllText(Path.Combine(dir, "settings.json"), $$"""{"PhoneMode":"{{stored}}"}""");
+                Assert.Equal(expected, new StorageService(dir).LoadSettings().PhoneMode);
+            }
+            File.WriteAllText(Path.Combine(dir, "settings.json"), """{"PhoneMode":1}""");
+            var storage = new StorageService(dir);
+            storage.SaveSettings(storage.LoadSettings());
+            Assert.Contains("\"PhoneMode\": \"Auto\"", File.ReadAllText(Path.Combine(dir, "settings.json")));
+            Assert.Equal(PhoneDeliveryMode.Auto, storage.LoadSettings().PhoneMode);
+        }
+        finally { TryDelete(dir); }
+    }
+
+    [Fact]
+    public async Task RateLimit_IsSeparateForEachCaller()
+    {
+        var dir = TempDir();
+        WebApplication? app = null;
+        try
+        {
+            using var engine = new ReminderEngine(new ReminderEngineOptions
+            {
+                DataDirectory = dir,
+                Clock = () => Tuesday,
+                PollAnswers = false,
+            });
+            app = ServerHost.Build(ServerOptions.Create(dir, "desktop-api-token", 0, "127.0.0.1", true, false), engine);
+            await app.StartAsync();
+            using var owner = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+            owner.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "desktop-api-token");
+            for (var i = 0; i < ServerHost.PerCallerPermitLimit; i++)
+            {
+                var allowed = await owner.GetAsync("/api/status");
+                Assert.NotEqual(HttpStatusCode.TooManyRequests, allowed.StatusCode);
+            }
+
+            var blocked = await owner.GetAsync("/api/status");
+            Assert.Equal(HttpStatusCode.TooManyRequests, blocked.StatusCode);
+
+            using var other = new HttpClient { BaseAddress = owner.BaseAddress };
+            other.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "someone-else");
+            var separate = await other.GetAsync("/api/status");
+            Assert.NotEqual(HttpStatusCode.TooManyRequests, separate.StatusCode);
+
+            var health = await owner.GetAsync("/health");
+            Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+        }
+        finally
+        {
+            if (app is not null) await app.StopAsync();
             TryDelete(dir);
         }
     }

@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using WaterReminder;
-using WaterReminder.Client.Controls;
+using WaterReminder.Controls;
 using WaterReminder.Services;
 
 namespace WaterReminder.Client;
@@ -112,16 +112,6 @@ public partial class RecordsWindow : Window
         await LoadProgressAsync();
     }
 
-    private void BindOwnerWeChat_Click(object sender, RoutedEventArgs e)
-    {
-        if (!_clicks.Enter()) return;
-        try {
-        new OwnerPairWindow(_api) { Owner = this }.ShowDialog();
-    
-        }
-        finally { _clicks.Exit(); }
-    }
-
     private async Task LoadHistoryAsync()
     {
         var version = ++_viewVersion;
@@ -186,14 +176,26 @@ public partial class RecordsWindow : Window
         finally { _clicks.Exit(); }
     }
 
-    private async void InviteAgain_Click(object sender, RoutedEventArgs e)
+    private async void ResetCode_Click(object sender, RoutedEventArgs e)
     {
         if (!_clicks.Enter()) return;
         try {
-        if (MemberPicker.SelectedItem is not MemberOption option) return;
-        var dialog = new FamilyInviteWindow(_api, option.Member) { Owner = this };
-        dialog.ShowDialog();
-        await LoadProgressAsync();
+        if (MemberPicker.SelectedItem is not MemberOption option || option.Member.Id == Guid.Empty || option.Member.Archived)
+            return;
+        if (!ConfirmDialog.Ask(this, $"重置 {option.Member.Name} 的访问码？", "旧访问码立即失效，该成员需要用新访问码重新连接，饮水历史仍保留。", "重置", danger: true))
+            return;
+        if (MemberPicker.SelectedItem is not MemberOption current || current.Member.Id != option.Member.Id)
+        {
+            SummaryText.Text = "已切换到其他成员，请重新选择后再重置访问码。";
+            return;
+        }
+        var result = await _api.ResetMemberAccessCodeAsync(option.Member.Id);
+        if (!result.Ok || result.Value is null)
+        {
+            SummaryText.Text = result.Error ?? "重置失败，请检查服务端连接。";
+            return;
+        }
+        new FamilyInviteWindow(_api, result.Value) { Owner = this }.ShowDialog();
     
         }
         finally { _clicks.Exit(); }
@@ -237,7 +239,7 @@ public partial class RecordsWindow : Window
         var active = MemberPicker.SelectedItem is MemberOption { Member: { Archived: false } } option
             && option.Member.Id != Guid.Empty;
         ArchiveMemberButton.IsEnabled = active;
-        InviteAgainButton.IsEnabled = active;
+        ResetCodeButton.IsEnabled = active;
         PushTestButton.IsEnabled = MemberPicker.SelectedItem is MemberOption { Member.Archived: false };
         MemberSettingsButton.IsEnabled = active && _memberSettingsRequest is null;
         MemberSettingsButton.Content = _memberSettingsRequest is null ? "成员设置" : "读取中…";
@@ -250,6 +252,15 @@ public partial class RecordsWindow : Window
         _memberSettingsRequest = null;
         UpdateMemberActions();
     }
+
+    /// <summary>
+    /// True only if the window still shows the ledger and day the caller captured
+    /// before opening a dialog. Every record/member mutation re-checks this after
+    /// its dialog or confirmation returns, so a stale edit can never land on the
+    /// ledger the user has since switched to.
+    /// </summary>
+    private bool StillViewing(TodayRecordsResponse records, Guid? member)
+        => !_closed && ReferenceEquals(_records, records) && _member == member;
 
     private async void MemberSettings_Click(object sender, RoutedEventArgs e)
     {
@@ -314,6 +325,11 @@ public partial class RecordsWindow : Window
             return;
         if (!ConfirmDialog.Ask(this, $"停用 {option.Member.Name}？", "该访问码将失效并停止提醒，已有记录仍可查看。", "停用", danger: true))
             return;
+        if (MemberPicker.SelectedItem is not MemberOption current || current.Member.Id != option.Member.Id)
+        {
+            SummaryText.Text = "已切换到其他成员，请重新选择后再停用。";
+            return;
+        }
         ArchiveMemberButton.IsEnabled = false;
         if (!await _api.ArchiveFamilyMemberAsync(option.Member.Id))
         {
@@ -458,6 +474,11 @@ public partial class RecordsWindow : Window
         var title = member is null ? "修改记录" : $"{(MemberPicker.SelectedItem as MemberOption)?.Member.Name} · {records.Date}";
         var dialog = new AmountWindow(initial: Math.Abs(item.Event.AmountMl), cup: _cupMl, title: title, okText: "保存") { Owner = this };
         if (dialog.ShowDialog() != true) return;
+        if (!StillViewing(records, member))
+        {
+            SummaryText.Text = "账本或日期已切换，旧修改已丢弃，请重新打开后再修改。";
+            return;
+        }
         var amount = item.Event.AmountMl < 0 ? -dialog.AmountMl : dialog.AmountMl;
         _recordMutationInFlight = true;
         if (sender is Button button) button.IsEnabled = false;
@@ -491,6 +512,11 @@ public partial class RecordsWindow : Window
         var member = _member;
         var ledger = member is null ? "" : $"{(MemberPicker.SelectedItem as MemberOption)?.Member.Name} · {records.Date} ";
         if (!ConfirmDialog.Ask(this, "删除这条记录？", $"{ledger}{item.TimeText} 的 {item.AmountDisplay} 将被删除。", "删除", danger: true)) return;
+        if (!StillViewing(records, member))
+        {
+            SummaryText.Text = "账本或日期已切换，旧删除已丢弃，请重新确认后再删除。";
+            return;
+        }
         _recordMutationInFlight = true;
         if (sender is Button button) button.IsEnabled = false;
         try
@@ -516,6 +542,10 @@ public partial class RecordsWindow : Window
 
     private async Task ChangeMemberRecordAsync(Guid memberId, TodayRecordsResponse records, RecordItem item, int? amount)
     {
+        // Re-check before the write, not only after it: the request carries the
+        // captured member id + date snapshot, and must not be sent at all if the
+        // user has since moved to another ledger.
+        if (!StillViewing(records, memberId)) return;
         var saved = await _api.ChangeFamilyRecordAsync(memberId, records.Date, item.Event.Id, amount);
         if (_closed || !ReferenceEquals(_records, records)) return;
         if (!saved.Ok) { SummaryText.Text = saved.Error ?? "无法保存修改。"; return; }

@@ -6,8 +6,8 @@
 
 ## 改了什么
 
-- 手机提醒支持微信订阅消息和 **PushWard**。PushWard 的 Notification Answers 仍按本文验证。
-- PushWard 设置保留 `MobilePushEnabled` 和 `PushWardApiToken`（`hlk_…`），微信提醒另有绑定和一次性订阅授权。
+- 手机提醒走 **PushWard**。PushWard 的 Notification Answers 仍按本文验证。
+- PushWard 设置保留 `MobilePushEnabled` 和 `PushWardApiToken`（`hlk_…`）。
   旧 `settings.json` 里的 `MobilePushChannel`、`Ntfy*`、`Pushover*` 字段在读取时被
   System.Text.Json 忽略，下次保存时不再写回；不会因为旧键导致加载失败。
 - `PushWardMessageBuilder` 的动作只剩

@@ -8,27 +8,12 @@ public sealed partial class ReminderApiClient
     public Task<ApiResult<FamilyProgressOverview>> GetFamilyProgressAsync(CancellationToken ct = default)
         => ReadAsync<FamilyProgressOverview>("api/family/progress", ct);
 
-    public Task<ApiResult<MemberInvite>> CreateInvitationAsync(CreateMemberInvite request, CancellationToken ct = default)
-        => PostAsync<MemberInvite>("api/family/invitations", request, ct);
-
     public Task<ApiResult<MemberPushFeedback>> SendPushTestAsync(Guid memberId, CancellationToken ct = default)
         => PostAsync<MemberPushFeedback>($"api/family/{memberId}/push-test", new { }, ct);
 
-    public async Task<ApiResult<bool>> RevokeInvitationAsync(Guid memberId, CancellationToken ct = default)
-    {
-        try
-        {
-            using var response = await _http.DeleteAsync($"api/family/{memberId}/invitation", ct).ConfigureAwait(false);
-            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            return response.IsSuccessStatusCode
-                ? ApiResult<bool>.Success(true)
-                : ApiResult<bool>.Fail((int)response.StatusCode, ReadError(body));
-        }
-        catch
-        {
-            return ApiResult<bool>.Fail(0);
-        }
-    }
+    /// <summary>Owner-only: rotates a member's desktop access code. The old code stops working immediately.</summary>
+    public Task<ApiResult<FamilyInvitation>> ResetMemberAccessCodeAsync(Guid memberId, CancellationToken ct = default)
+        => PostAsync<FamilyInvitation>($"api/family/{memberId}/reset-code", new { }, ct);
 
     private async Task<ApiResult<T>> PostAsync<T>(string path, object request, CancellationToken ct)
     {
@@ -41,9 +26,9 @@ public sealed partial class ReminderApiClient
             var value = JsonSerializer.Deserialize<T>(body, Json);
             return value is null ? ApiResult<T>.Fail((int)response.StatusCode, ReadError(body)) : ApiResult<T>.Success(value);
         }
-        catch
+        catch (Exception ex)
         {
-            return ApiResult<T>.Fail(0);
+            return FailFromException<T>(ex, $"POST {path}");
         }
     }
 }

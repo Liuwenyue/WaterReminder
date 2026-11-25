@@ -1,7 +1,7 @@
 <Window x:Class="WaterReminder.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:c="clr-namespace:WaterReminder.Controls"
+        xmlns:c="clr-namespace:WaterReminder.Controls;assembly=WaterReminder.Shared"
         Style="{StaticResource FluentWindow}"
         Title="喝水提醒" Width="352" SizeToContent="Height"
         WindowStartupLocation="Manual" Topmost="True" ShowInTaskbar="False">

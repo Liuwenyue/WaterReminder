@@ -1,6 +1,7 @@
 using System.IO;
 using System.Threading;
 using System.Windows.Forms;
+using System.Windows.Threading;
 using WaterReminder.Services;
 
 namespace WaterReminder.Client;
@@ -13,6 +14,9 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        AttachGlobalExceptionHandlers();
+        FileLogger.Default.Info("WaterReminder.Client started.");
+
         ApplicationConfiguration.Initialize();
 
         using var mutex = new Mutex(true, MutexName, out var createdNew);
@@ -58,6 +62,31 @@ internal static class Program
         using var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
         using var context = new TrayApplicationContext(config, tunnel, showEvent);
         Application.Run(context);
+    }
+
+    /// <summary>
+    /// Global last-resort handlers: log every unhandled exception instead of
+    /// crashing silently. Hooked before anything else runs.
+    /// </summary>
+    private static void AttachGlobalExceptionHandlers()
+    {
+        // WinForms UI thread: log and let the message loop continue.
+        Application.ThreadException += (_, e) =>
+            FileLogger.Default.Error("Unhandled WinForms exception", e.Exception);
+
+        // The client hosts WPF windows on this thread, but no WPF Application
+        // exists yet at startup, so hook this thread's dispatcher directly.
+        // Marking the exception handled keeps one UI fault from killing the process.
+        Dispatcher.CurrentDispatcher.UnhandledException += (_, e) =>
+        {
+            FileLogger.Default.Error("Unhandled WPF dispatcher exception", e.Exception);
+            e.Handled = true;
+        };
+
+        // Background threads / fatal errors: can only log; the runtime still exits.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            FileLogger.Default.Error("Unhandled exception (terminating: " + e.IsTerminating + ")",
+                e.ExceptionObject as Exception);
     }
 
     private static string ResolvePath(string[] args)

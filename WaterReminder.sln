@@ -12,6 +12,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WaterReminder.Server", "Wat
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WaterReminder.Client", "WaterReminder.Client\WaterReminder.Client.csproj", "{4C97C5B6-9060-4EA6-B3C7-1A838F29D063}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WaterReminder.Shared", "WaterReminder.Shared\WaterReminder.Shared.csproj", "{C76D1C2F-3A15-4189-B8E4-FEF7A5B03940}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -38,5 +40,9 @@ Global
 		{4C97C5B6-9060-4EA6-B3C7-1A838F29D063}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{4C97C5B6-9060-4EA6-B3C7-1A838F29D063}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{4C97C5B6-9060-4EA6-B3C7-1A838F29D063}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C76D1C2F-3A15-4189-B8E4-FEF7A5B03940}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C76D1C2F-3A15-4189-B8E4-FEF7A5B03940}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C76D1C2F-3A15-4189-B8E4-FEF7A5B03940}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C76D1C2F-3A15-4189-B8E4-FEF7A5B03940}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

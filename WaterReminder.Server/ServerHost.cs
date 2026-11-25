@@ -16,11 +16,17 @@ public static class ServerHost
     private static readonly object CallerKey = new();
     private static readonly object EngineKey = new();
 
-    public static WebApplication Build(ServerOptions options, ReminderEngine engine)
+    /// <summary>
+    /// Builds the server. <paramref name="configureWebHost"/> is a test hook: tests pass
+    /// <c>webHost =&gt; webHost.UseTestServer()</c> so requests run in memory without TCP.
+    /// Production callers omit it and the server behaves exactly as before.
+    /// </summary>
+    public static WebApplication Build(ServerOptions options, ReminderEngine engine, Action<IWebHostBuilder>? configureWebHost = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [] });
         builder.WebHost.PreferHostingUrls(false);
         builder.WebHost.UseUrls(options.ListenUrl);
+        configureWebHost?.Invoke(builder.WebHost);
         builder.Logging.ClearProviders();
         builder.Logging.AddSimpleConsole(o => o.SingleLine = true);
         builder.Logging.SetMinimumLevel(LogLevel.Warning);
@@ -48,14 +54,17 @@ public static class ServerHost
 
         var app = builder.Build();
 
+        // Resolve eagerly so a damaged family registry is reported at startup instead of
+        // failing the first request (or killing the scheduler host on first resolve).
+        var accounts = app.Services.GetRequiredService<FamilyAccounts>();
+        if (accounts.StartupWarning is { } warning)
+            app.Logger.LogError("{Warning}", warning);
+
         app.UseRateLimiter();
 
         app.Use(async (context, next) =>
         {
-            if (context.Request.Path.StartsWithSegments("/health") ||
-                context.Request.Path == "/api/invitations/preview" || context.Request.Path == "/api/invitations/redeem" ||
-                context.Request.Path == "/api/wechat/login" || context.Request.Path == "/api/device/login" ||
-                context.Request.Path == "/api/wechat/owner-pair")
+            if (context.Request.Path.StartsWithSegments("/health"))
             {
                 await next();
                 return;
@@ -102,6 +111,38 @@ public static class ServerHost
             if (!e.TryUpdateSettings(update, out error))
                 return error == SettingsEditor.StaleSettings ? Results.Conflict(new { error }) : Results.BadRequest(new { error });
             return Results.Ok(e.ClientSettings());
+        });
+
+        // Member self-service for their own PushWard credential. PUT /api/settings rejects
+        // secret fields by design, so the token needs its own endpoint; it only ever touches
+        // the caller's own engine and FamilyAccounts still enforces one-key-per-member.
+        app.MapPut("/api/settings/push-token", async (HttpContext context, FamilyAccounts accounts) =>
+        {
+            var caller = Caller(context);
+            if (caller == Guid.Empty)
+                return Results.StatusCode(403);
+            string body;
+            using (var reader = new StreamReader(context.Request.Body))
+                body = await reader.ReadToEndAsync();
+            string? token;
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object
+                    || !doc.RootElement.TryGetProperty("pushWardToken", out var value)
+                    || value.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+                    return Results.BadRequest(new { error = "请提供手机推送密钥。" });
+                token = value.GetString();
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest(new { error = "设置内容无法识别。" });
+            }
+            if (!accounts.TryUpdateOwnPushToken(caller, token, out var error))
+                return error is null
+                    ? Results.NotFound(new { error = "成员不存在或已停用。" })
+                    : Results.BadRequest(new { error });
+            return Results.Ok(CurrentEngine(context).ClientSettings());
         });
 
         app.MapPost("/api/sync/operations", async (HttpRequest request) =>
@@ -214,6 +255,7 @@ public static class ServerHost
             if (accounts.Find(id, includeArchived: true) is not { } member) return Results.NotFound();
             var records = member.RecordsFor(date);
             if (records is null) return Results.BadRequest(new { error = "日期格式应为 yyyy-MM-dd。" });
+            // The owner may edit a member's records for today and any past date.
             records.Editable = accounts.Find(id) is not null &&
                 DateOnly.ParseExact(records.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture) <=
                 DateOnly.ParseExact(member.Status().Date, "yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -278,27 +320,7 @@ public static class ServerHost
         });
 
 
-        app.MapGet("/api/wechat", (HttpContext context) => Results.Ok(CurrentEngine(context).WeChatStatus()));
-        app.MapPost("/api/wechat/bind", async (HttpRequest request, CancellationToken cancellationToken) =>
-        {
-            WeChatCodeRequest? body;
-            try { body = await request.ReadFromJsonAsync<WeChatCodeRequest>(cancellationToken); }
-            catch (Exception error) when (error is JsonException or InvalidOperationException or BadHttpRequestException)
-            { body = null; }
-            var (ok, status, errorText) = await CurrentEngine(request.HttpContext).BindWeChatAsync(body?.Code, cancellationToken);
-            return ok ? Results.Ok(status) : Results.BadRequest(new { error = errorText });
-        });
-        app.MapPost("/api/wechat/subscription", async (HttpRequest request, CancellationToken cancellationToken) =>
-        {
-            WeChatSubscriptionRequest? body;
-            try { body = await request.ReadFromJsonAsync<WeChatSubscriptionRequest>(cancellationToken); }
-            catch (Exception error) when (error is JsonException or InvalidOperationException or BadHttpRequestException)
-            { body = null; }
-            var (ok, status, errorText) = CurrentEngine(request.HttpContext).AcceptWeChatSubscription(body?.Id, body?.Status);
-            return ok ? Results.Ok(status) : Results.BadRequest(new { error = errorText });
-        });
-
-        app.MapFamilyRoutes(options);
+        app.MapFamilyRoutes();
         return app;
     }
 

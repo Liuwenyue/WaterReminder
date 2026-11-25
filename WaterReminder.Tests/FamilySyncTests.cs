@@ -5,7 +5,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.WebUtilities;
 using WaterReminder.Server;
 using WaterReminder.Services;
 using Xunit;
@@ -16,173 +15,17 @@ public sealed class FamilySyncTests
 {
     private const string OwnerCode = "test-family-sync-owner";
 
-    [Theory]
-    [InlineData("device")]
-    [InlineData("wechat")]
-    public async Task LoginWithExpectedMember_RejectsUnknownAndOtherIdentitiesWithoutWritingOrDisclosingAccounts(string method)
+    /// <summary>Seeds one independently used (non-shared) member with a known access code.</summary>
+    internal static (Guid Id, string AccessCode) SeedPrivateMember(string directory, string name = "独立账号")
     {
-        using var files = new TestFiles();
-        using var handler = new LoginIdentityHandler();
-        using var weChat = new WeChatClient(new WeChatConfig { AppId = "test-app", AppSecret = "test-secret" }, handler);
-        var route = $"api/{method}/login";
-        var identityField = method == "wechat" ? "code" : "deviceId";
-        var original = new string('a', 64);
-        var other = new string('b', 64);
-        var unknown = new string('c', 64);
-        if (method == "device")
-            SeedLegacyDevices(files.Path, original, other);
-        await using var host = await Host.Start(files.Path, weChat);
-        using var firstLogin = await host.Anonymous.PostAsJsonAsync(route, new Dictionary<string, string>
-            { [identityField] = original, ["name"] = "甲" });
-        firstLogin.EnsureSuccessStatusCode();
-        var memberId = (await firstLogin.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("memberId").GetGuid();
-        using var otherLogin = await host.Anonymous.PostAsJsonAsync(route, new Dictionary<string, string>
-            { [identityField] = other, ["name"] = "乙" });
-        otherLogin.EnsureSuccessStatusCode();
-        var otherId = (await otherLogin.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("memberId").GetGuid();
-        Assert.NotEqual(memberId, otherId);
-
-        var before = SnapshotFiles();
-        Assert.Equal(2, JsonDocument.Parse(File.ReadAllBytes(Path.Combine(files.Path, "family.json"))).RootElement.GetArrayLength());
-        var errorMessages = new List<string>();
-        foreach (var identity in new[] { unknown, other })
+        var code = "wr_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        var id = Guid.NewGuid();
+        var accounts = new[]
         {
-            using var result = await host.Anonymous.PostAsJsonAsync(route, new Dictionary<string, object>
-            {
-                [identityField] = identity,
-                ["expectedMemberId"] = memberId,
-            });
-            Assert.Equal(HttpStatusCode.BadRequest, result.StatusCode);
-            var body = await result.Content.ReadFromJsonAsync<JsonElement>();
-            var error = Assert.Single(body.EnumerateObject());
-            Assert.Equal("error", error.Name);
-            var message = error.Value.GetString()!;
-            Assert.DoesNotContain(memberId.ToString(), message);
-            Assert.DoesNotContain(otherId.ToString(), message);
-            errorMessages.Add(message);
-            Assert.Equal(before, SnapshotFiles());
-        }
-        Assert.Equal(errorMessages[0], errorMessages[1]);
-
-        using var renewed = await host.Anonymous.PostAsJsonAsync(route, new Dictionary<string, object>
-        {
-            [identityField] = original,
-            ["expectedMemberId"] = memberId,
-        });
-        renewed.EnsureSuccessStatusCode();
-        var account = await renewed.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(memberId, account.GetProperty("memberId").GetGuid());
-        using var client = host.Client(account.GetProperty("accessCode").GetString());
-        using var status = await client.GetAsync("api/status");
-        Assert.Equal(HttpStatusCode.OK, status.StatusCode);
-
-        (string Path, string Contents, DateTime Modified)[] SnapshotFiles() =>
-            Directory.GetFiles(files.Path, "*", SearchOption.AllDirectories)
-                .OrderBy(path => path, StringComparer.Ordinal)
-                .Select(path => (path, Convert.ToBase64String(File.ReadAllBytes(path)), File.GetLastWriteTimeUtc(path)))
-                .ToArray();
-    }
-
-    internal static Guid[] SeedLegacyDevices(string directory, params string[] deviceIds)
-    {
-        var accounts = deviceIds.Select(deviceId => new
-        {
-            Id = Guid.NewGuid(), Name = "旧版设备", CodeHash = new string('0', 64), SharedWithOwner = false,
-            WeChatIdentityHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("device:" + deviceId)))
-        }).ToArray();
+            new { Id = id, Name = name, CodeHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code))), SharedWithOwner = false },
+        };
         File.WriteAllText(Path.Combine(directory, "family.json"), JsonSerializer.Serialize(accounts));
-        return accounts.Select(account => account.Id).ToArray();
-    }
-
-    [Fact]
-    public async Task PhonePairingOpensExistingOwnerLedgerOnlyForThePairedWeChat()
-    {
-        using var files = new TestFiles();
-        using var handler = new LoginIdentityHandler();
-        using var weChat = new WeChatClient(new WeChatConfig { AppId = "test-app", AppSecret = "test-secret" }, handler);
-        var day = DateOnly.FromDateTime(ShanghaiClock.Now()).AddDays(-1).ToString("yyyy-MM-dd");
-        const string ownerCode = "aaaaaaaa-first-login";
-        const string otherCode = "bbbbbbbb-first-login";
-        Guid otherId;
-        await using (var host = await Host.Start(files.Path, weChat))
-        {
-            await PostSync(host.Owner, Operation(day, "drink", amount: 325));
-            var loginPath = "api/wechat/login";
-            using var missingDevice = await host.Anonymous.PostAsJsonAsync("api/device/login", new { deviceId = new string('c', 64) });
-            Assert.Equal(HttpStatusCode.NotFound, missingDevice.StatusCode);
-            Assert.True((await missingDevice.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("deviceAccountMissing").GetBoolean());
-
-            using var originalLogin = await host.Anonymous.PostAsJsonAsync(loginPath, new { code = ownerCode, name = "原账本" });
-            originalLogin.EnsureSuccessStatusCode();
-            var originalId = (await originalLogin.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("memberId").GetGuid();
-            using var unnamed = await host.Anonymous.PostAsJsonAsync(loginPath, new { code = otherCode });
-            Assert.Equal(HttpStatusCode.Conflict, unnamed.StatusCode);
-            Assert.True((await unnamed.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("registrationRequired").GetBoolean());
-            using var signUp = await host.Anonymous.PostAsJsonAsync(loginPath, new { code = otherCode, name = "我" });
-            signUp.EnsureSuccessStatusCode();
-            var registered = await signUp.Content.ReadFromJsonAsync<JsonElement>();
-            otherId = registered.GetProperty("memberId").GetGuid();
-            Assert.NotEqual(Guid.Empty, otherId);
-            using var member = host.Client(registered.GetProperty("accessCode").GetString());
-
-            using var attempt = await host.Anonymous.PostAsJsonAsync("api/wechat/owner-pair", new { code = ownerCode });
-            attempt.EnsureSuccessStatusCode();
-            var pairCode = (await attempt.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString();
-            using var tooEarly = await host.Anonymous.PostAsJsonAsync(loginPath, new { code = ownerCode, ownerOnly = true });
-            Assert.Equal(HttpStatusCode.BadRequest, tooEarly.StatusCode);
-            using var denied = await member.PostAsJsonAsync("api/family/owner-pair", new { code = pairCode });
-            Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
-            using var confirmed = await host.Owner.PostAsJsonAsync("api/family/owner-pair", new { code = pairCode });
-            confirmed.EnsureSuccessStatusCode();
-            using var originalRenewed = await host.Anonymous.PostAsJsonAsync(loginPath, new { code = ownerCode, expectedMemberId = originalId });
-            originalRenewed.EnsureSuccessStatusCode();
-            var original = await originalRenewed.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.Equal(originalId, original.GetProperty("memberId").GetGuid());
-            using var originalPhone = host.Client(original.GetProperty("accessCode").GetString());
-            Assert.False((await originalPhone.GetFromJsonAsync<FamilyOverview>("api/family"))!.IsOwner);
-            await PostSync(originalPhone, Operation(day, "drink", amount: 325));
-            var personalOnly = Operation(day, "drink", amount: 150);
-            await PostSync(originalPhone, personalOnly);
-            using var unauthorizedMerge = await originalPhone.PostAsync("api/wechat/owner-merge", null);
-            Assert.Equal(HttpStatusCode.Forbidden, unauthorizedMerge.StatusCode);
-            using var wrongMember = await host.Anonymous.PostAsJsonAsync(loginPath, new { code = ownerCode, expectedMemberId = otherId });
-            Assert.Equal(HttpStatusCode.BadRequest, wrongMember.StatusCode);
-            using var replay = await host.Owner.PostAsJsonAsync("api/family/owner-pair", new { code = pairCode });
-            Assert.Equal(HttpStatusCode.BadRequest, replay.StatusCode);
-            using var impostor = await host.Anonymous.PostAsJsonAsync(loginPath, new { code = otherCode, ownerOnly = true });
-            Assert.Equal(HttpStatusCode.BadRequest, impostor.StatusCode);
-            Assert.Equal(0, (await Records(member, day)).GetProperty("consumedMl").GetInt32());
-
-            var drink = Operation(day, "drink", amount: 500);
-            await PostSync(member, drink);
-            var edit = new SyncOperation { Id = Guid.NewGuid(), Date = day, Kind = "edit", EventId = drink.Id, AmountMl = 300 };
-            var body = new SyncOperationsRequest { Operations = [edit] };
-            var editPath = $"api/family/{otherId}/records/operations";
-            using var forbiddenEdit = await member.PostAsJsonAsync(editPath, body);
-            Assert.Equal(HttpStatusCode.Forbidden, forbiddenEdit.StatusCode);
-            using var adminEdit = await host.Owner.PostAsJsonAsync(editPath, body);
-            adminEdit.EnsureSuccessStatusCode();
-            Assert.Equal(300, (await Records(member, day)).GetProperty("consumedMl").GetInt32());
-        }
-
-        await using var restarted = await Host.Start(files.Path, weChat);
-        using var freshLogin = await restarted.Anonymous.PostAsJsonAsync("api/wechat/login", new { code = "aaaaaaaa-fresh-phone" });
-        freshLogin.EnsureSuccessStatusCode();
-        var owner = await freshLogin.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(Guid.Empty, owner.GetProperty("memberId").GetGuid());
-        using var phone = restarted.Client(owner.GetProperty("accessCode").GetString());
-        Assert.Equal(325, (await Records(phone, day)).GetProperty("consumedMl").GetInt32());
-        for (var attempt = 0; attempt < 2; attempt++)
-        {
-            using var merge = await phone.PostAsJsonAsync("api/wechat/owner-merge", new { });
-            merge.EnsureSuccessStatusCode();
-        }
-        var merged = await Records(phone, day);
-        Assert.Equal(475, merged.GetProperty("consumedMl").GetInt32());
-        Assert.Equal(2, merged.GetProperty("events").GetArrayLength());
-        var overview = await phone.GetFromJsonAsync<FamilyOverview>("api/family");
-        Assert.True(overview!.IsOwner);
-        Assert.Contains(overview.Members, member => member.Id == otherId);
+        return (id, code);
     }
 
     [Fact]
@@ -217,29 +60,73 @@ public sealed class FamilySyncTests
         Assert.Equal(System.Net.HttpStatusCode.Conflict, rejected.StatusCode);
         Assert.Equal(300, (await Records(host.Owner, today)).GetProperty("consumedMl").GetInt32());
 
-        var invitation = await Invite(host.Owner, "家人甲", "https://cup.example");
-        var preview = await host.Anonymous.PostAsJsonAsync("api/invitations/preview", new InvitationTokenRequest(invitation.InviteToken));
-        Assert.Equal("家人甲", (await preview.Content.ReadFromJsonAsync<InvitationPreview>())!.Member.Name);
-        var redeemed = await Redeem(host.Anonymous, invitation.InviteToken);
-        using var member = host.Client(redeemed.AccessCode);
+        var invitation = await AddMember(host.Owner, "家人甲");
+        using var member = host.Client(invitation.AccessCode);
         Assert.Equal(0, (await Records(member, today)).GetProperty("consumedMl").GetInt32());
         await PostSync(member, Operation(today, "drink", amount: 500));
         Assert.Equal(500, (await Records(member, today)).GetProperty("consumedMl").GetInt32());
         Assert.Equal(300, (await Records(host.Owner, today)).GetProperty("consumedMl").GetInt32());
 
-        var again = await Invite(host.Owner, null, "https://cup.example", redeemed.Member.Id);
-        var rotated = await Redeem(host.Anonymous, again.InviteToken);
-        Assert.NotEqual(redeemed.AccessCode, rotated.AccessCode);
+        var rotated = await ResetCode(host.Owner, invitation.Member.Id);
+        Assert.Equal(invitation.Member.Id, rotated.Member.Id);
+        Assert.NotEqual(invitation.AccessCode, rotated.AccessCode);
         Assert.Equal(System.Net.HttpStatusCode.Unauthorized, (await member.GetAsync("api/status")).StatusCode);
         using var renewed = host.Client(rotated.AccessCode);
         Assert.Equal(500, (await Records(renewed, today)).GetProperty("consumedMl").GetInt32());
-        Assert.Equal(System.Net.HttpStatusCode.BadRequest, (await host.Anonymous.PostAsJsonAsync("api/invitations/preview", new InvitationTokenRequest(again.InviteToken))).StatusCode);
 
-        var feedback = await host.Owner.PostAsync($"api/family/{redeemed.Member.Id}/push-test", new StringContent("{}"));
+        var feedback = await host.Owner.PostAsync($"api/family/{invitation.Member.Id}/push-test", new StringContent("{}"));
         var push = await feedback.Content.ReadFromJsonAsync<MemberPushFeedback>();
         Assert.Equal("unconfigured", push!.State);
         Assert.Equal(500, (await Records(renewed, today)).GetProperty("consumedMl").GetInt32());
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await renewed.GetAsync("api/family/progress")).StatusCode);
+    }
+
+    [Fact]
+    public void SyncDrinkWithoutSourceDefaultsToDesktop()
+    {
+        // In-process (no HTTP): the sandbox blocks all TCP, so the loopback
+        // harness cannot run here. The default-source logic lives in
+        // ReminderEngine.TrySyncOperations and is fully covered this way.
+        using var files = new TestFiles();
+        using var engine = new ReminderEngine(new ReminderEngineOptions
+        {
+            DataDirectory = files.Path, Clock = () => new DateTime(2026, 11, 19, 10, 0, 0), PollAnswers = false,
+        });
+        const string today = "2026-11-19";
+        var drink = new SyncOperation { Id = Guid.NewGuid(), Date = today, Kind = "drink", AmountMl = 250, At = today + "T09:30:00" };
+        Assert.True(engine.TrySyncOperations(new() { Operations = [drink] }, out _, out _, out _));
+        var recorded = Assert.Single(engine.RecordsFor(today)!.Events);
+        Assert.Equal("desktop", recorded.Source);
+    }
+
+    [Fact]
+    public async Task ResetAccessCode_ReturnsNewCode_InvalidatesOldCode_AndKeepsMemberData()
+    {
+        using var files = new TestFiles();
+        await using var host = await Host.Start(files.Path);
+        var invitation = await AddMember(host.Owner, "家人甲");
+        using var member = host.Client(invitation.AccessCode);
+        var today = DateOnly.FromDateTime(ShanghaiClock.Now()).ToString("yyyy-MM-dd");
+        await PostSync(member, Operation(today, "drink", amount: 500));
+
+        using var denied = await member.PostAsync($"api/family/{invitation.Member.Id}/reset-code", null);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        using var missing = await host.Owner.PostAsync($"api/family/{Guid.NewGuid()}/reset-code", null);
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+
+        var rotated = await ResetCode(host.Owner, invitation.Member.Id);
+        Assert.Equal(invitation.Member.Id, rotated.Member.Id);
+        Assert.Equal("家人甲", rotated.Member.Name);
+        Assert.NotEqual(invitation.AccessCode, rotated.AccessCode);
+        Assert.StartsWith("wr_", rotated.AccessCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await member.GetAsync("api/status")).StatusCode);
+        using var renewed = host.Client(rotated.AccessCode);
+        Assert.Equal(500, (await Records(renewed, today)).GetProperty("consumedMl").GetInt32());
+
+        using var archived = await host.Owner.DeleteAsync($"api/family/{invitation.Member.Id}");
+        Assert.Equal(HttpStatusCode.OK, archived.StatusCode);
+        using var stopped = await host.Owner.PostAsync($"api/family/{invitation.Member.Id}/reset-code", null);
+        Assert.Equal(HttpStatusCode.NotFound, stopped.StatusCode);
     }
 
     [Fact]
@@ -257,14 +144,17 @@ public sealed class FamilySyncTests
         var batch = new SyncOperationsRequest { Operations = [yesterdayDrink, stalePause, todayDrink] };
         Assert.True(engine.TrySyncOperations(batch, out var applied, out _, out _));
         Assert.False(applied!.Status.RemindersPaused);
-        var file = Path.Combine(files.Path, "daily-records.json");
-        Assert.DoesNotContain(yesterdayDrink.Id.ToString(), File.ReadAllText(file + ".bak"));
-        var before = File.ReadAllBytes(file);
+        var yesterdayFile = Path.Combine(files.Path, "records", yesterday + ".json");
+        var todayFile = Path.Combine(files.Path, "records", today + ".json");
+        Assert.DoesNotContain(yesterdayDrink.Id.ToString(), File.ReadAllText(todayFile + ".bak"));
+        var beforeYesterday = File.ReadAllBytes(yesterdayFile);
+        var beforeToday = File.ReadAllBytes(todayFile);
         var clear = new SyncOperation { Id = Guid.NewGuid(), Kind = "clear", Date = yesterday };
         todayDrink.AmountMl++;
         Assert.False(engine.TrySyncOperations(new() { Operations = [clear, todayDrink] }, out _, out _, out var conflict));
         Assert.True(conflict);
-        Assert.Equal(before, File.ReadAllBytes(file));
+        Assert.Equal(beforeYesterday, File.ReadAllBytes(yesterdayFile));
+        Assert.Equal(beforeToday, File.ReadAllBytes(todayFile));
         Assert.True(engine.TrySyncOperations(new() { Operations = [clear] }, out _, out _, out _));
         var snapshot = engine.SyncSnapshot(Guid.Empty, "我", 31);
         Assert.Equal(31, snapshot.Days.Count);
@@ -279,15 +169,22 @@ public sealed class FamilySyncTests
         var storage = new StorageService(files.Path);
         var first = new DailyRecord { Date = "2026-11-18", Events = [new WaterEvent { AmountMl = 240 }] };
         storage.SaveDailyRecord(first);
-        storage.SaveDailyRecord(new DailyRecord { Date = "2026-11-19" });
-        var path = Path.Combine(files.Path, "daily-records.json");
+        storage.SaveDailyRecord(new DailyRecord { Date = "2026-11-18", Events = [new WaterEvent { AmountMl = 500 }] });
+        storage.SaveDailyRecord(new DailyRecord { Date = "2026-11-19", Events = [new WaterEvent { AmountMl = 100 }] });
+        var path = Path.Combine(files.Path, "records", "2026-11-18.json");
         File.WriteAllText(path, "{");
-        Assert.Equal(240, Assert.Single(storage.ListDailyRecords()).ConsumedMl);
+        Assert.Equal(240, storage.LoadDailyRecord(new DateOnly(2026, 11, 18)).ConsumedMl);
+        Assert.Equal(100, storage.LoadDailyRecord(new DateOnly(2026, 11, 19)).ConsumedMl);
+        Assert.Equal(240, storage.ListDailyRecords().Single(day => day.Date == "2026-11-18").ConsumedMl);
         Assert.Equal(File.ReadAllText(path + ".bak"), File.ReadAllText(path));
         File.WriteAllText(path, "{");
         File.WriteAllText(path + ".bak", "{");
-        Assert.ThrowsAny<JsonException>(() => storage.SaveDailyRecord(first));
+        Assert.ThrowsAny<JsonException>(() => storage.LoadDailyRecord(new DateOnly(2026, 11, 18)));
         Assert.Equal("{", File.ReadAllText(path));
+        Assert.Equal("{", File.ReadAllText(path + ".bak"));
+        // Damage is per-day now: other days can still be saved and read.
+        storage.SaveDailyRecord(new DailyRecord { Date = "2026-11-19", Events = [new WaterEvent { AmountMl = 200 }] });
+        Assert.Equal(200, storage.LoadDailyRecord(new DateOnly(2026, 11, 19)).ConsumedMl);
     }
 
     [Fact]
@@ -379,18 +276,18 @@ public sealed class FamilySyncTests
         return JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.Clone();
     }
 
-    private static async Task<MemberInvite> Invite(HttpClient client, string? name, string serverUrl, Guid? memberId = null)
+    private static async Task<FamilyInvitation> AddMember(HttpClient client, string name)
     {
-        using var response = await client.PostAsJsonAsync("api/family/invitations", new CreateMemberInvite(name, memberId, serverUrl));
+        using var response = await client.PostAsJsonAsync("api/family", new AddFamilyMember(name, null));
         response.EnsureSuccessStatusCode();
-        return (await response.Content.ReadFromJsonAsync<MemberInvite>())!;
+        return (await response.Content.ReadFromJsonAsync<FamilyInvitation>())!;
     }
 
-    private static async Task<RedeemedInvitation> Redeem(HttpClient client, string token)
+    private static async Task<FamilyInvitation> ResetCode(HttpClient client, Guid memberId)
     {
-        using var response = await client.PostAsJsonAsync("api/invitations/redeem", new InvitationTokenRequest(token));
+        using var response = await client.PostAsync($"api/family/{memberId}/reset-code", null);
         response.EnsureSuccessStatusCode();
-        return (await response.Content.ReadFromJsonAsync<RedeemedInvitation>())!;
+        return (await response.Content.ReadFromJsonAsync<FamilyInvitation>())!;
     }
 
     private sealed class TestFiles : IDisposable
@@ -398,18 +295,6 @@ public sealed class FamilySyncTests
         public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "WaterReminderTests", Guid.NewGuid().ToString("N"));
         public TestFiles() => Directory.CreateDirectory(Path);
         public void Dispose() { if (Directory.Exists(Path)) Directory.Delete(Path, true); }
-    }
-
-    private sealed class LoginIdentityHandler : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            var code = QueryHelpers.ParseQuery(request.RequestUri!.Query)["js_code"].ToString();
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = JsonContent.Create(new { openid = "test-openid-" + code[..8] }),
-            });
-        }
     }
 
     private sealed class Host : IAsyncDisposable
@@ -431,11 +316,10 @@ public sealed class FamilySyncTests
             if (token is not null) http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             return http;
         }
-        public static async Task<Host> Start(string directory, WeChatClient? weChat = null)
+        public static async Task<Host> Start(string directory)
         {
             var owner = new ReminderEngine(new ReminderEngineOptions { DataDirectory = directory, PollAnswers = false });
             var options = ServerOptions.Create(directory, OwnerCode, 0, "127.0.0.1", true, false);
-            if (weChat is not null) options.WeChat = weChat;
             var app = ServerHost.Build(options, owner);
             await app.StartAsync();
             return new(app, owner);

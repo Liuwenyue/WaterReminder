@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.IO;
+using System.Text.Json;
 using WaterReminder;
 using WaterReminder.Services;
 using Xunit;
@@ -35,6 +37,15 @@ public sealed class PersistenceAndPolicyTests
         try { action(new StorageService(dir)); }
         finally { try { Directory.Delete(dir, true); } catch { } }
     }
+
+    private static void WithTempDir(Action<string> action)
+    {
+        var dir = TempDir();
+        try { Directory.CreateDirectory(dir); action(dir); }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    private static string DayKey(DateOnly date) => date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
     // ---------- LastReminderAt persistence ----------
 
@@ -188,5 +199,256 @@ public sealed class PersistenceAndPolicyTests
     {
         var record = new DailyRecord { Date = "2026-11-03", Events = [new WaterEvent { AmountMl = 2220, At = T(9, 0) }] };
         Assert.Contains("今日目标已完成", PlanSummaryText.Describe(Mine(), record, T(10, 0)));
+    }
+
+    // ---------- per-day record files ----------
+
+    [Fact]
+    public void LegacyLedger_MigratesToPerDayFiles_AndKeepsLegacyAsBackup()
+    {
+        WithTempDir(dir =>
+        {
+            var today = DateOnly.FromDateTime(DateTime.Now);
+            var first = today.AddDays(-2);
+            var second = today.AddDays(-1);
+            var legacy = new List<DailyRecord>
+            {
+                new() { Date = DayKey(first), Events = [new WaterEvent { AmountMl = 240 }] },
+                new() { Date = DayKey(second), Events = [new WaterEvent { AmountMl = 500 }] },
+            };
+            File.WriteAllText(Path.Combine(dir, "daily-records.json"), JsonSerializer.Serialize(legacy));
+
+            var storage = new StorageService(dir);
+            Assert.Equal(240, storage.LoadDailyRecord(first).ConsumedMl);
+            Assert.Equal(500, storage.LoadDailyRecord(second).ConsumedMl);
+            Assert.Equal(new[] { DayKey(first), DayKey(second) }, storage.ListDailyRecords().Select(day => day.Date).ToArray());
+
+            Assert.True(File.Exists(Path.Combine(dir, "records", DayKey(first) + ".json")));
+            Assert.True(File.Exists(Path.Combine(dir, "records", DayKey(second) + ".json")));
+            Assert.False(File.Exists(Path.Combine(dir, "daily-records.json")));
+            Assert.True(File.Exists(Path.Combine(dir, "daily-records.json.migrated")));
+
+            // A second instance on the same directory sees the migrated files, not the legacy one.
+            var reopened = new StorageService(dir);
+            Assert.Equal(240, reopened.LoadDailyRecord(first).ConsumedMl);
+            Assert.Equal(2, reopened.ListDailyRecords().Count);
+        });
+    }
+
+    [Fact]
+    public void LegacyLedger_MissingDayFile_FallsBackToMigratedBackup()
+    {
+        WithTempDir(dir =>
+        {
+            var day = DateOnly.FromDateTime(DateTime.Now).AddDays(-1);
+            var legacy = new List<DailyRecord>
+            {
+                new() { Date = DayKey(day), Events = [new WaterEvent { AmountMl = 240 }] },
+            };
+            File.WriteAllText(Path.Combine(dir, "daily-records.json"), JsonSerializer.Serialize(legacy));
+            var storage = new StorageService(dir);
+            Assert.Equal(240, storage.LoadDailyRecord(day).ConsumedMl); // migrates
+
+            File.Delete(Path.Combine(dir, "records", DayKey(day) + ".json"));
+
+            // After a restart the day is still readable from the migrated backup.
+            var reopened = new StorageService(dir);
+            Assert.Equal(240, reopened.LoadDailyRecord(day).ConsumedMl);
+        });
+    }
+
+    [Fact]
+    public void LegacyMigration_KeepsExistingPerDayFile_OverLegacyCopy()
+    {
+        WithTempDir(dir =>
+        {
+            var today = DateOnly.FromDateTime(DateTime.Now);
+            var day = today.AddDays(-1);
+            var other = today.AddDays(-2);
+            // A per-day file written by an interrupted earlier migration wins over the legacy copy.
+            Directory.CreateDirectory(Path.Combine(dir, "records"));
+            File.WriteAllText(Path.Combine(dir, "records", DayKey(day) + ".json"),
+                JsonSerializer.Serialize(new DailyRecord { Date = DayKey(day), Events = [new WaterEvent { AmountMl = 300 }] }));
+            var legacy = new List<DailyRecord>
+            {
+                new() { Date = DayKey(day), Events = [new WaterEvent { AmountMl = 240 }] },
+                new() { Date = DayKey(other), Events = [new WaterEvent { AmountMl = 500 }] },
+            };
+            File.WriteAllText(Path.Combine(dir, "daily-records.json"), JsonSerializer.Serialize(legacy));
+
+            var storage = new StorageService(dir);
+            Assert.Equal(300, storage.LoadDailyRecord(day).ConsumedMl);
+            Assert.Equal(500, storage.LoadDailyRecord(other).ConsumedMl);
+            Assert.True(File.Exists(Path.Combine(dir, "daily-records.json.migrated")));
+        });
+    }
+
+    [Fact]
+    public void SaveDailyRecord_LeavesOtherDaysUntouched()
+    {
+        WithTempDir(dir =>
+        {
+            var today = DateOnly.FromDateTime(DateTime.Now);
+            var other = today.AddDays(-1);
+            var storage = new StorageService(dir);
+            storage.SaveDailyRecord(new DailyRecord { Date = DayKey(other), Events = [new WaterEvent { AmountMl = 240 }] });
+            storage.SaveDailyRecord(new DailyRecord { Date = DayKey(today), Events = [new WaterEvent { AmountMl = 500 }] });
+            var otherPath = Path.Combine(dir, "records", DayKey(other) + ".json");
+            var before = File.ReadAllBytes(otherPath);
+            var beforeModified = File.GetLastWriteTimeUtc(otherPath);
+
+            storage.SaveDailyRecord(new DailyRecord { Date = DayKey(today), Events = [new WaterEvent { AmountMl = 700 }] });
+
+            Assert.Equal(before, File.ReadAllBytes(otherPath));
+            Assert.Equal(beforeModified, File.GetLastWriteTimeUtc(otherPath));
+            Assert.Equal(700, storage.LoadDailyRecord(today).ConsumedMl);
+        });
+    }
+
+    [Fact]
+    public void SaveDailyRecord_PrunesFilesOlderThanRetentionWindow()
+    {
+        WithTempDir(dir =>
+        {
+            var today = DateOnly.FromDateTime(DateTime.Now);
+            var keep = today.AddDays(-(StorageService.MaxRecordDays - 1)); // oldest kept day
+            var drop = today.AddDays(-StorageService.MaxRecordDays);      // one day too old
+            var ancient = today.AddDays(-500);
+            // Seed files directly: saving through StorageService would prune them immediately.
+            var recordsDir = Path.Combine(dir, "records");
+            Directory.CreateDirectory(recordsDir);
+            foreach (var date in new[] { keep, drop, ancient })
+                File.WriteAllText(Path.Combine(recordsDir, DayKey(date) + ".json"),
+                    JsonSerializer.Serialize(new DailyRecord { Date = DayKey(date), Events = [new WaterEvent { AmountMl = 100 }] }));
+            // A stale backup of a pruned day is removed with it.
+            File.WriteAllText(Path.Combine(recordsDir, DayKey(ancient) + ".json.bak"), "{}");
+
+            var storage = new StorageService(dir);
+            Assert.Equal(0, storage.LoadDailyRecord(today).ConsumedMl);
+            Assert.Equal(3, storage.ListDailyRecords().Count);
+            Assert.True(File.Exists(Path.Combine(recordsDir, DayKey(ancient) + ".json"))); // reads never prune
+
+            storage.SaveDailyRecord(new DailyRecord { Date = DayKey(today) });
+
+            Assert.True(File.Exists(Path.Combine(recordsDir, DayKey(keep) + ".json")));
+            Assert.False(File.Exists(Path.Combine(recordsDir, DayKey(drop) + ".json")));
+            Assert.False(File.Exists(Path.Combine(recordsDir, DayKey(ancient) + ".json")));
+            Assert.False(File.Exists(Path.Combine(recordsDir, DayKey(ancient) + ".json.bak")));
+            Assert.Equal(100, storage.LoadDailyRecord(keep).ConsumedMl);
+            Assert.Equal(2, storage.ListDailyRecords().Count);
+        });
+    }
+
+    // ---------- corrupt JSON: keep the last good file, log an error ----------
+
+    private static string ReadLog(string logDir)
+    {
+        var path = Path.Combine(logDir, $"waterreminder-{DateTime.Now:yyyy-MM-dd}.log");
+        return File.Exists(path) ? File.ReadAllText(path) : "";
+    }
+
+    [Fact]
+    public void CorruptSettings_RecoversFromBackup_AndLogsError()
+    {
+        WithTempDir(dir =>
+        {
+            var logDir = Path.Combine(dir, "logs");
+            var storage = new StorageService(dir, new FileLogger(logDir));
+            var first = Mine(); first.DailyGoalMl = 1111;
+            var second = Mine(); second.DailyGoalMl = 2222;
+            storage.SaveSettings(first);
+            storage.SaveSettings(second); // writes settings.json.bak with the first version
+            File.WriteAllText(Path.Combine(dir, "settings.json"), "{ this is not json");
+
+            var recovered = storage.LoadSettings();
+
+            Assert.Equal(1111, recovered.DailyGoalMl); // last good file wins
+            Assert.True(File.Exists(Path.Combine(dir, "settings.json.bak")));
+            Assert.DoesNotContain("not json", File.ReadAllText(Path.Combine(dir, "settings.json")));
+            var log = ReadLog(logDir);
+            Assert.Contains("[ERROR]", log);
+            Assert.Contains("settings.json", log);
+            Assert.Contains("restored from backup", log);
+            Assert.DoesNotContain("hlk_test_token", log); // the fake PushWard token must never reach the log
+        });
+    }
+
+    [Fact]
+    public void CorruptSettingsWithoutBackup_Throws_KeepsFile_AndLogsError()
+    {
+        WithTempDir(dir =>
+        {
+            var logDir = Path.Combine(dir, "logs");
+            const string corrupt = "{ broken settings";
+            File.WriteAllText(Path.Combine(dir, "settings.json"), corrupt);
+
+            var storage = new StorageService(dir, new FileLogger(logDir));
+            Assert.Throws<JsonException>(() => storage.LoadSettings());
+
+            Assert.Equal(corrupt, File.ReadAllText(Path.Combine(dir, "settings.json"))); // kept for inspection
+            var log = ReadLog(logDir);
+            Assert.Contains("[ERROR]", log);
+            Assert.Contains("settings.json", log);
+            Assert.Contains("no backup", log);
+        });
+    }
+
+    [Fact]
+    public void CorruptSettingsAndBackup_Throws_AndKeepsBothFiles()
+    {
+        WithTempDir(dir =>
+        {
+            var logDir = Path.Combine(dir, "logs");
+            File.WriteAllText(Path.Combine(dir, "settings.json"), "{ broken");
+            File.WriteAllText(Path.Combine(dir, "settings.json.bak"), "{ also broken");
+            var storage = new StorageService(dir, new FileLogger(logDir));
+
+            Assert.Throws<JsonException>(() => storage.LoadSettings());
+
+            Assert.Equal("{ broken", File.ReadAllText(Path.Combine(dir, "settings.json")));
+            Assert.Equal("{ also broken", File.ReadAllText(Path.Combine(dir, "settings.json.bak")));
+            Assert.Contains("both unreadable", ReadLog(logDir));
+        });
+    }
+
+    [Fact]
+    public void CorruptDailyRecord_RecoversFromBackup_AndLogsError()
+    {
+        WithTempDir(dir =>
+        {
+            var logDir = Path.Combine(dir, "logs");
+            var storage = new StorageService(dir, new FileLogger(logDir));
+            var today = DateOnly.FromDateTime(DateTime.Now);
+            storage.SaveDailyRecord(new DailyRecord { Date = DayKey(today), Events = [new WaterEvent { AmountMl = 240 }] });
+            storage.SaveDailyRecord(new DailyRecord { Date = DayKey(today), Events = [new WaterEvent { AmountMl = 500 }] });
+            var path = Path.Combine(dir, "records", DayKey(today) + ".json");
+            File.WriteAllText(path, "not json at all");
+
+            var recovered = storage.LoadDailyRecord(today);
+
+            Assert.Equal(240, recovered.ConsumedMl);
+            var log = ReadLog(logDir);
+            Assert.Contains("[ERROR]", log);
+            Assert.Contains(DayKey(today) + ".json", log);
+            Assert.Contains("restored from backup", log);
+        });
+    }
+
+    [Fact]
+    public void CorruptLegacyLedger_LogsError_AndKeepsFile()
+    {
+        WithTempDir(dir =>
+        {
+            var logDir = Path.Combine(dir, "logs");
+            File.WriteAllText(Path.Combine(dir, "daily-records.json"), "[ broken ledger");
+            var storage = new StorageService(dir, new FileLogger(logDir));
+
+            Assert.Throws<JsonException>(() => storage.LoadDailyRecord(DateOnly.FromDateTime(DateTime.Now)));
+
+            Assert.Equal("[ broken ledger", File.ReadAllText(Path.Combine(dir, "daily-records.json")));
+            var log = ReadLog(logDir);
+            Assert.Contains("[ERROR]", log);
+            Assert.Contains("daily-records.json", log);
+        });
     }
 }

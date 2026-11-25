@@ -1,7 +1,40 @@
 namespace WaterReminder;
 
-[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<PhoneDeliveryMode>))]
-public enum PhoneDeliveryMode { Auto, WeChat, PushWard, Both }
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+/// <summary>
+/// Reads PhoneDeliveryMode leniently: retired values (unknown names and the numbers 1/3
+/// from older settings.json files) map to <see cref="PhoneDeliveryMode.Auto"/>
+/// instead of failing deserialization. Writes the canonical string form.
+/// </summary>
+public sealed class PhoneDeliveryModeConverter : JsonConverter<PhoneDeliveryMode>
+{
+    public override PhoneDeliveryMode Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.String)
+        {
+            var text = reader.GetString();
+            if (text is not null && Enum.TryParse<PhoneDeliveryMode>(text, ignoreCase: true, out var mode)
+                && Enum.IsDefined(mode))
+                return mode;
+            return PhoneDeliveryMode.Auto;
+        }
+        if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out var number)
+            && Enum.IsDefined((PhoneDeliveryMode)number))
+            return (PhoneDeliveryMode)number;
+        return PhoneDeliveryMode.Auto;
+    }
+
+    public override void Write(Utf8JsonWriter writer, PhoneDeliveryMode value, JsonSerializerOptions options)
+        => writer.WriteStringValue(Enum.IsDefined(value) ? value.ToString() : PhoneDeliveryMode.Auto.ToString());
+}
+
+[JsonConverter(typeof(PhoneDeliveryModeConverter))]
+// PushWard is the only phone channel. PushWard keeps its historical numeric value (2)
+// because settings.json stores this enum as a number; the retired values 1 and 3
+// are mapped back to Auto when settings load.
+public enum PhoneDeliveryMode { Auto = 0, PushWard = 2 }
 
 /// <summary>Today's status for the Windows client. Contains no PushWard credential.</summary>
 public sealed class StatusResponse
@@ -199,23 +232,4 @@ public sealed class SyncSnapshotResponse
     public Guid MemberId { get; set; }
     public string MemberName { get; set; } = "";
     public List<TodayRecordsResponse> Days { get; set; } = [];
-}
-
-public sealed class WeChatStatusResponse
-{
-    public bool Enabled { get; set; }
-    public string TemplateId { get; set; } = "";
-    public bool Bound { get; set; }
-    public int Credits { get; set; }
-}
-
-public sealed class WeChatCodeRequest
-{
-    public string? Code { get; set; }
-}
-
-public sealed class WeChatSubscriptionRequest
-{
-    public string? Id { get; set; }
-    public string? Status { get; set; }
 }

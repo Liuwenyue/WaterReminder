@@ -20,15 +20,14 @@ public sealed class FamilySettingsTests
     {
         using var files = new TestFiles();
         new StorageService(files.Path).SaveSettings(new UserSettings { MobilePushEnabled = false });
-        FamilySyncTests.SeedLegacyDevices(files.Path, new string('a', 64));
+        var (privateId, privateCode) = FamilySyncTests.SeedPrivateMember(files.Path);
         await using var host = await Host.Start(files.Path);
         var shared = await Invite(host.Owner, "共享成员", null);
         using var member = host.Client(shared.AccessCode);
-        using var login = await host.Owner.PostAsJsonAsync("api/device/login", new { deviceId = new string('a', 64) });
-        login.EnsureSuccessStatusCode();
-        var privateAccount = await login.Content.ReadFromJsonAsync<JsonElement>();
-        var privateId = privateAccount.GetProperty("memberId").GetGuid();
-        Assert.False(privateAccount.GetProperty("sharedWithOwner").GetBoolean());
+        using var privateClient = host.Client(privateCode);
+        var overview = await host.Owner.GetFromJsonAsync<FamilyOverview>("api/family");
+        Assert.DoesNotContain(overview!.Members, entry => entry.Id == privateId);
+        Assert.Equal(HttpStatusCode.OK, (await privateClient.GetAsync("api/status")).StatusCode);
 
         static string PushTest(Guid id) => $"api/family/{id}/push-test";
         using var ownerTest = await host.Owner.PostAsync(PushTest(Guid.Empty), null);
