@@ -30,6 +30,8 @@
   <SolidColorBrush x:Key="WarningSoft" Color="#3D3020"/>
   <SolidColorBrush x:Key="Danger" Color="#FF7B7E"/>
   <SolidColorBrush x:Key="DangerSoft" Color="#43262A"/>
+  <!-- Filled danger buttons: dark enough for white text (Danger itself is too light in the dark theme). -->
+  <SolidColorBrush x:Key="DangerSolid" Color="#D92D20"/>
   <SolidColorBrush x:Key="ControlBg" Color="#2A2F36"/>
   <SolidColorBrush x:Key="ControlHover" Color="#323840"/>
   <SolidColorBrush x:Key="ControlPressed" Color="#3A414A"/>

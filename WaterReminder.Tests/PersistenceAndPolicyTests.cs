@@ -338,4 +338,117 @@ public sealed class PersistenceAndPolicyTests
             Assert.Equal(2, storage.ListDailyRecords().Count);
         });
     }
+
+    // ---------- corrupt JSON: keep the last good file, log an error ----------
+
+    private static string ReadLog(string logDir)
+    {
+        var path = Path.Combine(logDir, $"waterreminder-{DateTime.Now:yyyy-MM-dd}.log");
+        return File.Exists(path) ? File.ReadAllText(path) : "";
+    }
+
+    [Fact]
+    public void CorruptSettings_RecoversFromBackup_AndLogsError()
+    {
+        WithTempDir(dir =>
+        {
+            var logDir = Path.Combine(dir, "logs");
+            var storage = new StorageService(dir, new FileLogger(logDir));
+            var first = Mine(); first.DailyGoalMl = 1111;
+            var second = Mine(); second.DailyGoalMl = 2222;
+            storage.SaveSettings(first);
+            storage.SaveSettings(second); // writes settings.json.bak with the first version
+            File.WriteAllText(Path.Combine(dir, "settings.json"), "{ this is not json");
+
+            var recovered = storage.LoadSettings();
+
+            Assert.Equal(1111, recovered.DailyGoalMl); // last good file wins
+            Assert.True(File.Exists(Path.Combine(dir, "settings.json.bak")));
+            Assert.DoesNotContain("not json", File.ReadAllText(Path.Combine(dir, "settings.json")));
+            var log = ReadLog(logDir);
+            Assert.Contains("[ERROR]", log);
+            Assert.Contains("settings.json", log);
+            Assert.Contains("restored from backup", log);
+            Assert.DoesNotContain("hlk_test_token", log); // the fake PushWard token must never reach the log
+        });
+    }
+
+    [Fact]
+    public void CorruptSettingsWithoutBackup_Throws_KeepsFile_AndLogsError()
+    {
+        WithTempDir(dir =>
+        {
+            var logDir = Path.Combine(dir, "logs");
+            const string corrupt = "{ broken settings";
+            File.WriteAllText(Path.Combine(dir, "settings.json"), corrupt);
+
+            var storage = new StorageService(dir, new FileLogger(logDir));
+            Assert.Throws<JsonException>(() => storage.LoadSettings());
+
+            Assert.Equal(corrupt, File.ReadAllText(Path.Combine(dir, "settings.json"))); // kept for inspection
+            var log = ReadLog(logDir);
+            Assert.Contains("[ERROR]", log);
+            Assert.Contains("settings.json", log);
+            Assert.Contains("no backup", log);
+        });
+    }
+
+    [Fact]
+    public void CorruptSettingsAndBackup_Throws_AndKeepsBothFiles()
+    {
+        WithTempDir(dir =>
+        {
+            var logDir = Path.Combine(dir, "logs");
+            File.WriteAllText(Path.Combine(dir, "settings.json"), "{ broken");
+            File.WriteAllText(Path.Combine(dir, "settings.json.bak"), "{ also broken");
+            var storage = new StorageService(dir, new FileLogger(logDir));
+
+            Assert.Throws<JsonException>(() => storage.LoadSettings());
+
+            Assert.Equal("{ broken", File.ReadAllText(Path.Combine(dir, "settings.json")));
+            Assert.Equal("{ also broken", File.ReadAllText(Path.Combine(dir, "settings.json.bak")));
+            Assert.Contains("both unreadable", ReadLog(logDir));
+        });
+    }
+
+    [Fact]
+    public void CorruptDailyRecord_RecoversFromBackup_AndLogsError()
+    {
+        WithTempDir(dir =>
+        {
+            var logDir = Path.Combine(dir, "logs");
+            var storage = new StorageService(dir, new FileLogger(logDir));
+            var today = DateOnly.FromDateTime(DateTime.Now);
+            storage.SaveDailyRecord(new DailyRecord { Date = DayKey(today), Events = [new WaterEvent { AmountMl = 240 }] });
+            storage.SaveDailyRecord(new DailyRecord { Date = DayKey(today), Events = [new WaterEvent { AmountMl = 500 }] });
+            var path = Path.Combine(dir, "records", DayKey(today) + ".json");
+            File.WriteAllText(path, "not json at all");
+
+            var recovered = storage.LoadDailyRecord(today);
+
+            Assert.Equal(240, recovered.ConsumedMl);
+            var log = ReadLog(logDir);
+            Assert.Contains("[ERROR]", log);
+            Assert.Contains(DayKey(today) + ".json", log);
+            Assert.Contains("restored from backup", log);
+        });
+    }
+
+    [Fact]
+    public void CorruptLegacyLedger_LogsError_AndKeepsFile()
+    {
+        WithTempDir(dir =>
+        {
+            var logDir = Path.Combine(dir, "logs");
+            File.WriteAllText(Path.Combine(dir, "daily-records.json"), "[ broken ledger");
+            var storage = new StorageService(dir, new FileLogger(logDir));
+
+            Assert.Throws<JsonException>(() => storage.LoadDailyRecord(DateOnly.FromDateTime(DateTime.Now)));
+
+            Assert.Equal("[ broken ledger", File.ReadAllText(Path.Combine(dir, "daily-records.json")));
+            var log = ReadLog(logDir);
+            Assert.Contains("[ERROR]", log);
+            Assert.Contains("daily-records.json", log);
+        });
+    }
 }

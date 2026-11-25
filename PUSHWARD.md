@@ -28,11 +28,15 @@ PushWard 支持自定义通知动作：按钮可以是 **Notification Answer**�
 
 1. iPhone 从 **App Store** 安装 **PushWard**。
 2. 打开 PushWard App，创建一个集成（Integration），复制以 `hlk_` 开头的 API Token。
-3. 打开本程序 → 设置 →「手机推送（PushWard）」：
-   - 勾选「开启手机推送」；
-   - 把 API Token 粘贴到「PushWard API Token」；
-   - 点「保存」（首次使用是「开始使用」）。Answers 轮询从保存时启动；
-   - 需要验证时，重新打开设置点「发送测试」，iPhone 应收到一条带「喝水了」按钮的测试通知。
+3. 服务器模式（当前部署方式）：把 API Token 放到服务器的环境变量
+   `WATERREMINDER_PUSHWARD_TOKEN` 或数据目录的 `pushward.token`（见
+   [DEPLOY.md](DEPLOY.md)），不要粘贴到 Windows 客户端里——客户端设置页只有
+   「开启手机推送」开关，不能查看或修改密钥。管理员给家人配置推送时，在创建成员
+   或「成员设置」里填写该成员自己的集成密钥。
+   旧版单机 WPF 程序才在设置页粘贴 Token：打开设置 →「手机推送（PushWard）」，
+   勾选「开启手机推送」，把 Token 粘贴到「PushWard API Token」，点「保存」启动
+   Answers 轮询；需要验证时重新打开设置点「发送测试」，iPhone 应收到一条带
+   「喝水了」按钮的测试通知。
 4. 服务器需要一直运行：提醒由服务器发出，Answer 也由服务器轮询取回。Windows 电脑只在上班时间显示气泡，不保存 PushWard Token。
 
 > **iOS 上按钮通常不是直接可见的**：长按通知，或在通知中心下拉/展开该通知，
@@ -78,8 +82,10 @@ PushWard 支持自定义通知动作：按钮可以是 **Notification Answer**�
 
 ## 设置测试
 
-「发送测试」使用与真实提醒相同的消息构造：一条 PushWard 测试通知 + 同一个「喝水了」
-动作。发送成功只看 PushWard API 是否返回 2xx（正常为 201）。长按/下拉通知后点
+服务器模式下，管理员在「记录」窗口选中成员后点「测试提醒」，服务器会给该成员发一条
+测试通知（见 [DEPLOY.md](DEPLOY.md) 的家庭版说明）。旧版单机 WPF 程序的设置页有
+「发送测试」按钮：它使用与真实提醒相同的消息构造，一条 PushWard 测试通知 + 同一个
+「喝水了」动作。发送成功只看 PushWard API 是否返回 2xx（正常为 201）。长按/下拉通知后点
 「喝水了」，即可验证整条记账链路。
 
 如果刚填写或修改了 Token，请先点「保存」——轮询只在保存后启动；测试按钮本身只

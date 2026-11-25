@@ -185,7 +185,7 @@ public sealed partial class ReminderEngine
                 var eventId = operation.Kind == "import" ? operation.EventId!.Value : operation.Id;
                 var amount = operation.AmountMl!.Value;
                 var source = string.IsNullOrWhiteSpace(operation.Source)
-                    ? operation.Kind == "import" ? "legacy" : "miniapp" : operation.Source.Trim();
+                    ? operation.Kind == "import" ? "legacy" : "desktop" : operation.Source.Trim();
                 var existingEvent = record.Events.FirstOrDefault(e => e.Id == eventId);
                 if (existingEvent is not null)
                 {

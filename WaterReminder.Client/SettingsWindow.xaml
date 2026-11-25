@@ -87,6 +87,17 @@
                   <PasswordBox x:Name="MemberPushToken" Style="{StaticResource FluentPasswordBox}" MaxLength="512" AutomationProperties.Name="该成员的新 PushWard 密钥"/>
                   <TextBlock Text="留空保留现有密钥，不会显示原密钥。" Style="{StaticResource Caption}" Margin="0,6,0,0" TextWrapping="Wrap"/>
                 </StackPanel>
+                <StackPanel x:Name="OwnPushTokenPanel" Visibility="Collapsed" Margin="0,12,0,0">
+                  <TextBlock Text="手机推送密钥（PushWard）" FontSize="13" Margin="0,0,0,8"/>
+                  <PasswordBox x:Name="OwnPushToken" Style="{StaticResource FluentPasswordBox}" MaxLength="512" AutomationProperties.Name="自己的 PushWard 密钥"/>
+                  <TextBlock x:Name="OwnPushTokenHint" Text="密钥只保存在服务器上，这里不显示原密钥。输入新密钥并保存即可更换；留空则不做更改。" Style="{StaticResource Caption}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                  <CheckBox x:Name="ClearOwnPushTokenBox" Style="{StaticResource ToggleSwitch}" Margin="0,8,0,0" Click="ClearOwnPushToken_Click">
+                    <StackPanel>
+                      <TextBlock Text="清除已保存的密钥" FontSize="13"/>
+                      <TextBlock Text="保存后将清除服务器上保存的密钥" Style="{StaticResource Caption}" TextWrapping="Wrap"/>
+                    </StackPanel>
+                  </CheckBox>
+                </StackPanel>
               </StackPanel>
             </Border>
 

@@ -15,7 +15,45 @@ public readonly record struct ApiResult<T>(bool Ok, int StatusCode, T? Value)
     public string? Diagnostic { get; init; }
 
     public static ApiResult<T> Success(T value) => new(true, 200, value);
-    public static ApiResult<T> Fail(int statusCode, string? error = null) => new(false, statusCode, default) { Error = error };
+    public static ApiResult<T> Fail(int statusCode, string? error = null)
+        => new(false, statusCode, default) { Error = FriendlyError(statusCode, error) };
+
+    /// <summary>
+    /// User-facing error text. A clear server message wins; otherwise the
+    /// status code maps to a plain Chinese explanation so a dead access code,
+    /// a permission denial, or a bad server address is never shown as a bare
+    /// "unauthorized" or a generic "please retry".
+    /// </summary>
+    internal static string? FriendlyError(int statusCode, string? serverError)
+    {
+        if (!string.IsNullOrWhiteSpace(serverError)
+            && !serverError.Equals("unauthorized", StringComparison.OrdinalIgnoreCase))
+            return serverError;
+        return statusCode switch
+        {
+            400 => "请求内容有误，请重试。",
+            401 => "访问码或 API 令牌无效或已过期，请联系管理员获取新的访问码。",
+            403 => "没有权限执行此操作，普通成员不能管理家庭成员。",
+            404 => "找不到这条记录或成员。",
+            409 => "数据已变更，请刷新后重试。",
+            429 => "请求太频繁，稍后再试。",
+            >= 500 => "服务器出错，请稍后重试。",
+            _ => serverError,
+        };
+    }
+
+    /// <summary>
+    /// User-facing text for a transport failure (no HTTP status at all):
+    /// distinguishes a timeout from an unreachable/bad server address.
+    /// </summary>
+    internal static string FriendlyTransportError(Exception ex) => ex switch
+    {
+        TaskCanceledException => "连接服务器超时，请检查服务器地址和网络。",
+        OperationCanceledException => "连接服务器超时，请检查服务器地址和网络。",
+        UriFormatException => "服务器地址格式错误，请检查 client.json 中的 serverUrl。",
+        HttpRequestException => "无法连接服务器，请检查服务器地址和网络。",
+        _ => "无法连接服务器，请检查服务器地址和网络。",
+    };
 }
 
 /// <summary>
@@ -64,6 +102,37 @@ public sealed partial class ReminderApiClient : IDisposable
         catch (Exception ex)
         {
             return FailFromException<ClientSettingsResponse>(ex, "PUT api/settings");
+        }
+    }
+
+    /// <summary>
+    /// Self-service update of the caller's own PushWard credential. Members only:
+    /// the server rejects the owner (403) and a token already used by someone else
+    /// (400 with a Chinese message). A null or blank token clears the credential.
+    /// The token value is never logged.
+    /// </summary>
+    public async Task<ApiResult<ClientSettingsResponse>> UpdateOwnPushTokenAsync(string? pushWardToken, CancellationToken ct = default)
+    {
+        var token = string.IsNullOrWhiteSpace(pushWardToken) ? null : pushWardToken.Trim();
+        try
+        {
+            using var response = await _http.PutAsJsonAsync("api/settings/push-token", new { pushWardToken = token }, Json, ct).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = ReadError(body);
+                if ((int)response.StatusCode == 403 && string.IsNullOrWhiteSpace(error))
+                    error = "管理员请在服务器上配置推送密钥。";
+                return ApiResult<ClientSettingsResponse>.Fail((int)response.StatusCode, error);
+            }
+            var value = JsonSerializer.Deserialize<ClientSettingsResponse>(body, Json);
+            return value is null
+                ? ApiResult<ClientSettingsResponse>.Fail((int)response.StatusCode)
+                : ApiResult<ClientSettingsResponse>.Success(value);
+        }
+        catch (Exception ex)
+        {
+            return FailFromException<ClientSettingsResponse>(ex, "PUT api/settings/push-token");
         }
     }
 
@@ -289,13 +358,15 @@ public sealed partial class ReminderApiClient : IDisposable
     /// <summary>
     /// Builds a failed result from a transport exception: keeps a one-line
     /// diagnostic (exception type + message) on the result and writes the full
-    /// exception to the log. The user-visible <see cref="ApiResult{T}.Error"/> is untouched.
+    /// exception to the log. The user-visible <see cref="ApiResult{T}.Error"/>
+    /// is a plain Chinese explanation of the connection problem, never the raw
+    /// exception text.
     /// </summary>
     private static ApiResult<T> FailFromException<T>(Exception ex, string operation)
     {
         var diagnostic = ex.GetType().Name + ": " + ex.Message;
         FileLogger.Default.Error($"Reminder API {operation} failed ({diagnostic})", ex);
-        return ApiResult<T>.Fail(0) with { Diagnostic = diagnostic };
+        return ApiResult<T>.Fail(0, ApiResult<T>.FriendlyTransportError(ex)) with { Diagnostic = diagnostic };
     }
 
     /// <summary>Logs a transport exception for API calls that return only true/false.</summary>

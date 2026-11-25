@@ -497,6 +497,32 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
         }
     }
 
+    /// <summary>Replaces this member's own PushWard credential; a blank value clears it. Callers enforce uniqueness across members.</summary>
+    public bool TryUpdatePushToken(string? token, out string? error)
+    {
+        error = null;
+        var value = token?.Trim() ?? "";
+        if (value.Length > 512 || value.Any(char.IsWhiteSpace) || value.Any(char.IsControl))
+        {
+            error = "手机推送密钥格式无效。";
+            return false;
+        }
+        lock (_gate)
+        {
+            EnsureActiveLocked();
+            RefreshLocked();
+            var fresh = _storage.LoadSettings();
+            fresh.PushWardApiToken = value;
+            _storage.SaveSettings(fresh);
+            ApplyOverlay(fresh);
+            var tokenChanged = fresh.PushWardApiToken != _settings.PushWardApiToken;
+            Copy(fresh, _settings);
+            if (tokenChanged) _push.Stop();
+            EnsureAnswerLoopLocked();
+            return true;
+        }
+    }
+
     public bool AcknowledgeDesktop(string? id)
     {
         lock (_gate)

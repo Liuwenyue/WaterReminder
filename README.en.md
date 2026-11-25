@@ -13,6 +13,7 @@ Phone reminders go through PushWard. The server defaults to `127.0.0.1:8787`. Th
 
 ## Recent update
 
+- The WeChat mini-program has been removed; this is now a pure Windows desktop app. Family members join with a desktop access code (the admin creates one from Records → Add member); the family ledger, access codes, and PushWard reminders are unchanged.
 - API limits are per caller. A hidden floating window stops polling, and an unchanged window slows to about 30 seconds.
 
 

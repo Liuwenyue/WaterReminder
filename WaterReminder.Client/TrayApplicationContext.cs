@@ -167,7 +167,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 ClientStartup.IsEnabled(),
                 update => SaveSettingsAsync(update, ui),
                 now,
-                consumed);
+                consumed,
+                api: _api);
             if (window.ShowDialog() == true)
             {
                 _config.FloatingWindow = window.FloatingWindow;
@@ -301,7 +302,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 else if (_tunnel?.Enabled == true)
                     SetTip("连接服务器中…");
                 else
-                    SetTip(result.StatusCode == 401 ? "服务器拒绝了访问" : "无法连接服务器");
+                    // ApiResult.Error is already a plain Chinese explanation
+                    // (dead access code, no permission, bad server address…).
+                    SetTip(string.IsNullOrWhiteSpace(result.Error) ? "无法连接服务器" : result.Error);
                 return;
             }
 

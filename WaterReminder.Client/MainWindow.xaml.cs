@@ -26,6 +26,7 @@ internal partial class MainWindow : Window
     private int? _shownConsumed;
     private bool _wasDone;
     private bool _editing;
+    private DateOnly? _editTotalDate;
     private bool _allowClose;
     private bool _modeTransitioning;
     private int _modeGeneration;
@@ -238,6 +239,8 @@ internal partial class MainWindow : Window
             {
                 if (result.StatusCode == 429)
                     StatusText.Text = "请求太频繁，稍后再试";
+                else if (result.StatusCode is 401 or 403 && !string.IsNullOrWhiteSpace(result.Error))
+                    StatusText.Text = result.Error;
                 NextInterval(unchanged: true);
                 return;
             }
@@ -511,6 +514,13 @@ internal partial class MainWindow : Window
     {
         if (_editing || _status is null) return;
         _editing = true;
+        // Snapshot the ledger day the user is looking at: the total-correction
+        // API has no date parameter, so the write must be re-checked against
+        // the server day before it is sent (see SetTotalAsync).
+        // (_status is already proven non-null by the guard above.)
+        _editTotalDate = DateTime.TryParse(_status.Now, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var now)
+            ? DateOnly.FromDateTime(now)
+            : DateOnly.FromDateTime(DateTime.Now);
         var editor = Editor;
         editor.Text = _status.ConsumedMl.ToString(System.Globalization.CultureInfo.InvariantCulture);
         EditorHost.Visibility = Visibility.Collapsed;
@@ -569,6 +579,21 @@ internal partial class MainWindow : Window
 
     private async Task SetTotalAsync(int total)
     {
+        // PUT /api/records/total always corrects the server's current day, so a
+        // midnight rollover while the editor was open would silently correct the
+        // wrong day. Re-read the server day first and abort if it moved on.
+        if (_editTotalDate is { } expectedDate)
+        {
+            var fresh = await _api.GetStatusAsync();
+            if (fresh.Ok && fresh.Value is not null
+                && DateTime.TryParse(fresh.Value.Now, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var serverNow)
+                && DateOnly.FromDateTime(serverNow) != expectedDate)
+            {
+                ShowSnack("已过午夜，账本日期已变，请重新打开修正。");
+                await RefreshAsync();
+                return;
+            }
+        }
         var result = await _api.SetTodayTotalAsync(total);
         if (!result.Ok || result.Value is null)
         {
@@ -621,7 +646,7 @@ internal partial class MainWindow : Window
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (_modeTransitioning || _editing || e.OriginalSource is System.Windows.Controls.TextBox) return;
+        if (_modeTransitioning || _editing || e.IsRepeat || e.OriginalSource is System.Windows.Controls.TextBox) return;
         if (e.Key is Key.Space or Key.Enter) { DrinkButton_Click(this, new RoutedEventArgs()); e.Handled = true; }
         else if (e.Key == Key.Escape) { Hide(); e.Handled = true; }
     }

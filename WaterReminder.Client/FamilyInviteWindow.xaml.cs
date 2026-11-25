@@ -8,6 +8,7 @@ namespace WaterReminder.Client;
 public partial class FamilyInviteWindow : Window
 {
     private readonly ReminderApiClient _api;
+    private readonly ClickGuard _clicks = new();
 
     public FamilyInviteWindow(ReminderApiClient api)
     {
@@ -41,6 +42,8 @@ public partial class FamilyInviteWindow : Window
 
     private async void Create_Click(object sender, RoutedEventArgs e)
     {
+        if (!_clicks.Enter()) return;
+        try {
         if (AccessCode.Visibility == Visibility.Visible)
         {
             AccessCode.Focus();
@@ -75,6 +78,8 @@ public partial class FamilyInviteWindow : Window
         PushToken.Clear();
         ShowAccessCode(invitation.AccessCode);
         Feedback.Text = "请将访问码交给该成员。成员客户端连接同一服务端时，用这个访问码作为 API 密钥。关闭后无法再次查看。";
+        }
+        finally { _clicks.Exit(); }
     }
 
     private void ShowAccessCode(string code)

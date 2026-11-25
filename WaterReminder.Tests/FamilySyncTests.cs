@@ -82,6 +82,24 @@ public sealed class FamilySyncTests
     }
 
     [Fact]
+    public void SyncDrinkWithoutSourceDefaultsToDesktop()
+    {
+        // In-process (no HTTP): the sandbox blocks all TCP, so the loopback
+        // harness cannot run here. The default-source logic lives in
+        // ReminderEngine.TrySyncOperations and is fully covered this way.
+        using var files = new TestFiles();
+        using var engine = new ReminderEngine(new ReminderEngineOptions
+        {
+            DataDirectory = files.Path, Clock = () => new DateTime(2026, 11, 19, 10, 0, 0), PollAnswers = false,
+        });
+        const string today = "2026-11-19";
+        var drink = new SyncOperation { Id = Guid.NewGuid(), Date = today, Kind = "drink", AmountMl = 250, At = today + "T09:30:00" };
+        Assert.True(engine.TrySyncOperations(new() { Operations = [drink] }, out _, out _, out _));
+        var recorded = Assert.Single(engine.RecordsFor(today)!.Events);
+        Assert.Equal("desktop", recorded.Source);
+    }
+
+    [Fact]
     public async Task ResetAccessCode_ReturnsNewCode_InvalidatesOldCode_AndKeepsMemberData()
     {
         using var files = new TestFiles();

@@ -19,6 +19,8 @@ public partial class MainWindow : Window
     private int? _shownConsumed;
     private bool _wasDone;
     private bool _editing;
+    private DateTime _lastDrinkUtc = DateTime.MinValue;
+    private DateOnly? _editTotalDate;
 
     public double DisplayMl { get => (double)GetValue(DisplayMlProperty); set => SetValue(DisplayMlProperty, value); }
     public bool IsDemo { get; init; }
@@ -213,8 +215,19 @@ public partial class MainWindow : Window
             ShowSnack(applied > 0 ? $"已记录 +{applied} ml" : $"已减少 {-applied} ml");
     }
 
+    /// <summary>350 ms debounce, same as the tray client: an accidental double-click must not log a second cup.</summary>
+    private bool TryDrinkNow()
+    {
+        if (DateTime.UtcNow - _lastDrinkUtc < TimeSpan.FromMilliseconds(350)) return false;
+        _lastDrinkUtc = DateTime.UtcNow;
+        return true;
+    }
+
     private void DrinkButton_Click(object sender, RoutedEventArgs e)
-        => AddWater(WaterCalculator.CurrentCupMl(_services.Settings, DateTime.Now), "cup");
+    {
+        if (!TryDrinkNow()) return;
+        AddWater(WaterCalculator.CurrentCupMl(_services.Settings, DateTime.Now), "cup");
+    }
 
     private void CustomButton_Click(object sender, RoutedEventArgs e)
     {
@@ -281,6 +294,9 @@ public partial class MainWindow : Window
         if (_editing) return;
         _services.RefreshToday();
         _editing = true;
+        // Snapshot the ledger day the user is looking at, so a midnight
+        // rollover while the editor is open cannot correct the new day.
+        _editTotalDate = DateOnly.FromDateTime(DateTime.Now);
         var editor = Editor;
         editor.Text = _services.Today.ConsumedMl.ToString(System.Globalization.CultureInfo.InvariantCulture);
         EditorHost.Visibility = Visibility.Collapsed;
@@ -316,7 +332,10 @@ public partial class MainWindow : Window
             }
             _editing = false;
             CloseEditor();
-            ApplyCorrection(total);
+            if (_editTotalDate is { } expected && DateOnly.FromDateTime(DateTime.Now) != expected)
+                ShowSnack("已过午夜，账本日期已变，请重新打开修正。");
+            else
+                ApplyCorrection(total);
         }
         else
         {
@@ -367,8 +386,8 @@ public partial class MainWindow : Window
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (_editing || e.OriginalSource is System.Windows.Controls.TextBox) return;
-        if (e.Key is Key.Space or Key.Enter) { AddWater(WaterCalculator.CurrentCupMl(_services.Settings, DateTime.Now), "keyboard"); e.Handled = true; }
+        if (_editing || e.IsRepeat || e.OriginalSource is System.Windows.Controls.TextBox) return;
+        if (e.Key is Key.Space or Key.Enter) { if (TryDrinkNow()) AddWater(WaterCalculator.CurrentCupMl(_services.Settings, DateTime.Now), "keyboard"); e.Handled = true; }
         else if (e.Key == Key.Escape) { Hide(); e.Handled = true; }
     }
 }

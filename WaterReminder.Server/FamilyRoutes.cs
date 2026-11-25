@@ -27,7 +27,7 @@ internal static class FamilyRoutes
         {
             var caller = accounts.Authenticate(context.Request);
             if (caller != Guid.Empty && caller != id) return Results.StatusCode(403);
-            if (caller == Guid.Empty && !accounts.OwnerCanAccess(id)) return Results.NotFound();
+            if (caller == Guid.Empty && id != Guid.Empty && !accounts.OwnerCanAccess(id)) return Results.NotFound();
             return accounts.Find(id) is { } engine ? Results.Ok(engine.SafePushFeedback()) : Results.NotFound();
         });
     }

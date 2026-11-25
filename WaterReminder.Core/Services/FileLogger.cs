@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace WaterReminder.Services;
 
@@ -9,6 +10,10 @@ namespace WaterReminder.Services;
 /// rolling to a .1/.2... suffix once a file exceeds 5 MB.
 /// Logging must never throw: every write is guarded, so a logging failure
 /// is silently dropped instead of crashing the caller.
+/// As a last line of defense, every line is scrubbed before it is written:
+/// Bearer tokens and wr_ access codes are replaced, so a caller that
+/// accidentally logs a credential (e.g. inside an exception message) cannot
+/// leak it into the log file.
 /// </summary>
 public sealed class FileLogger
 {
@@ -16,6 +21,14 @@ public sealed class FileLogger
     public const long DefaultMaxFileBytes = 5L * 1024 * 1024;
 
     private const int MaxRollover = 99;
+
+    // Bearer <token> as it appears in an Authorization header dump.
+    private static readonly Regex BearerTokenPattern = new(
+        @"Bearer\s+[A-Za-z0-9\-._~+/=]+", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    // Desktop access code: "wr_" + 32 random bytes as 64 hex chars.
+    private static readonly Regex AccessCodePattern = new(
+        @"wr_[0-9a-fA-F]{64}", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     /// <summary>Shared logger writing to the default log directory.</summary>
     public static FileLogger Default { get; } = new();
@@ -128,9 +141,21 @@ public sealed class FileLogger
     private static string Format(string level, string message, Exception? exception)
     {
         var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
-        var text = $"[{timestamp}] [{level}] {message}{Environment.NewLine}";
+        var text = $"[{timestamp}] [{level}] {Scrub(message)}{Environment.NewLine}";
         if (exception is not null)
-            text += exception.ToString() + Environment.NewLine;
+            text += Scrub(exception.ToString()) + Environment.NewLine;
+        return text;
+    }
+
+    /// <summary>
+    /// Removes credentials from a log line. Callers must still avoid logging
+    /// secrets; this only catches accidents (a token inside an exception
+    /// message, a pasted Authorization header).
+    /// </summary>
+    private static string Scrub(string text)
+    {
+        text = BearerTokenPattern.Replace(text, "Bearer [redacted]");
+        text = AccessCodePattern.Replace(text, "[redacted-access-code]");
         return text;
     }
 }

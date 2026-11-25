@@ -88,7 +88,42 @@ public sealed class LoggingTests
         Assert.Equal(0, result.StatusCode);
         Assert.Contains("HttpRequestException", result.Diagnostic);
         Assert.Contains("simulated offline", result.Diagnostic);
-        Assert.Null(result.Error); // user-visible text unchanged
+        Assert.Equal("无法连接服务器，请检查服务器地址和网络。", result.Error); // user-visible friendly text, diagnostic keeps the technical detail
+    }
+
+    [Fact]
+    public void RedactsBearerTokenFromMessageAndException()
+    {
+        var dir = TempDir();
+        try
+        {
+            var logger = new FileLogger(dir);
+            const string fakeToken = "fake-bearer-token-0123456789abcdef";
+            logger.Info("request failed, header was Authorization: Bearer " + fakeToken);
+            logger.Error("auth failed", new InvalidOperationException("rejected Bearer " + fakeToken));
+
+            var text = File.ReadAllText(Path.Combine(dir, $"waterreminder-{DateTime.Now:yyyy-MM-dd}.log"));
+            Assert.Contains("Bearer [redacted]", text);
+            Assert.DoesNotContain(fakeToken, text);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
+    public void RedactsAccessCodeFromLog()
+    {
+        var dir = TempDir();
+        try
+        {
+            var logger = new FileLogger(dir);
+            var fakeCode = "wr_" + new string('a', 64); // fake code, same shape as a real one
+            logger.Info("member joined with code " + fakeCode);
+
+            var text = File.ReadAllText(Path.Combine(dir, $"waterreminder-{DateTime.Now:yyyy-MM-dd}.log"));
+            Assert.Contains("[redacted-access-code]", text);
+            Assert.DoesNotContain(fakeCode, text);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
     }
 
     private static string TempDir()

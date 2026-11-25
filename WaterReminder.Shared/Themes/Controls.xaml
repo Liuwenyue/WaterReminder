@@ -132,8 +132,8 @@
   </Style>
 
   <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource ButtonBase}">
-    <Setter Property="Background" Value="{DynamicResource Danger}"/>
-    <Setter Property="Foreground" Value="#FFFFFF"/>
+    <Setter Property="Background" Value="{DynamicResource DangerSolid}"/>
+    <Setter Property="Foreground" Value="{DynamicResource OnAccent}"/>
     <Setter Property="BorderThickness" Value="0"/>
     <Setter Property="FontWeight" Value="SemiBold"/>
     <Style.Triggers>

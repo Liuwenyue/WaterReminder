@@ -21,11 +21,20 @@ public sealed class StorageService
     public const int MaxRecordDays = 400;
 
     private readonly string _directory;
+    private readonly FileLogger _logger;
     private readonly object _migrationLock = new();
     private bool _migrated;
 
     public StorageService() : this(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WaterReminder")) { }
-    public StorageService(string directory) => _directory = directory;
+
+    /// <param name="directory">Per-ledger directory (one per family member on the server).</param>
+    /// <param name="logger">Where corruption/recovery is reported; null selects
+    /// <see cref="FileLogger.Default"/>. Tests pass a temp-directory logger.</param>
+    public StorageService(string directory, FileLogger? logger = null)
+    {
+        _directory = directory;
+        _logger = logger ?? FileLogger.Default;
+    }
     private readonly JsonSerializerOptions _options = new() { WriteIndented = true };
     private string SettingsPath => Path.Combine(_directory, "settings.json");
     private string RecordsDirectory => Path.Combine(_directory, "records");
@@ -39,9 +48,20 @@ public sealed class StorageService
     {
         if (!File.Exists(PhoneRepliesPath)) return null;
         try { return JsonSerializer.Deserialize<PhoneReplyState>(File.ReadAllText(PhoneRepliesPath)); }
-        catch (JsonException) when (File.Exists(PhoneRepliesPath + ".bak"))
+        catch (JsonException error)
         {
-            return JsonSerializer.Deserialize<PhoneReplyState>(File.ReadAllText(PhoneRepliesPath + ".bak"));
+            if (!File.Exists(PhoneRepliesPath + ".bak")) throw;
+            try
+            {
+                var recovered = JsonSerializer.Deserialize<PhoneReplyState>(File.ReadAllText(PhoneRepliesPath + ".bak"));
+                _logger.Error("Storage: phone-replies.json is corrupt; recovered from backup.", error);
+                return recovered;
+            }
+            catch (Exception backupError) when (backupError is IOException or JsonException or UnauthorizedAccessException)
+            {
+                _logger.Error("Storage: phone-replies.json and its backup are both unreadable; both files were left untouched.", backupError);
+                throw;
+            }
         }
     }
 
@@ -168,6 +188,7 @@ public sealed class StorageService
         }
         catch (Exception error) when (error is IOException or JsonException or UnauthorizedAccessException)
         {
+            _logger.Warning($"Storage: ignoring unreadable legacy ledger {Path.GetFileName(path)} ({error.GetType().Name}).");
             return [];
         }
     }
@@ -193,10 +214,18 @@ public sealed class StorageService
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
                 // Best effort: a locked old file must not fail the save that just succeeded.
+                _logger.Warning($"Storage: could not prune old record file {Path.GetFileName(path)} ({error.GetType().Name}).");
             }
         }
     }
 
+    /// <summary>
+    /// Reads a JSON file, falling back to its .bak copy when the main file is
+    /// missing or corrupt. Every corruption is logged (file name + exception
+    /// type only — JsonException messages never contain file contents, and the
+    /// logger scrubs Bearer tokens and access codes). A file that cannot be
+    /// recovered is left on disk untouched for inspection.
+    /// </summary>
     private T ReadWithBackup<T>(string path) where T : class, new()
     {
         T Parse(string text) => JsonSerializer.Deserialize<T>(text, _options)
@@ -209,13 +238,36 @@ public sealed class StorageService
         {
             if (!File.Exists(path + ".bak"))
             {
-                if (error is JsonException) throw;
+                if (error is JsonException)
+                {
+                    _logger.Error($"Storage: {Path.GetFileName(path)} is corrupt and no backup exists; the file was left untouched.", error);
+                    throw;
+                }
                 return new T();
             }
-            var backup = File.ReadAllText(path + ".bak");
-            var recovered = Parse(backup);
-            File.WriteAllText(path + ".recover", backup);
-            File.Move(path + ".recover", path, true);
+            string backup;
+            T recovered;
+            try
+            {
+                backup = File.ReadAllText(path + ".bak");
+                recovered = Parse(backup);
+            }
+            catch (Exception backupError) when (backupError is IOException or JsonException or UnauthorizedAccessException)
+            {
+                _logger.Error($"Storage: {Path.GetFileName(path)} and its backup are both unreadable; both files were left untouched.", backupError);
+                throw;
+            }
+            try
+            {
+                File.WriteAllText(path + ".recover", backup);
+                File.Move(path + ".recover", path, true);
+            }
+            catch (Exception restoreError) when (restoreError is IOException or UnauthorizedAccessException)
+            {
+                _logger.Error($"Storage: {Path.GetFileName(path)} was recovered from backup in memory but the file could not be restored.", restoreError);
+                throw;
+            }
+            _logger.Error($"Storage: {Path.GetFileName(path)} was unreadable ({error.GetType().Name}); restored from backup.", error);
             return recovered;
         }
     }

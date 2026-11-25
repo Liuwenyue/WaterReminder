@@ -55,6 +55,17 @@ The process listens on **TCP 8787** and defaults to **`127.0.0.1`** (`WATERREMIN
 - `DELETE /api/records/{id}` — delete one event
 - `DELETE /api/records` — clear today
 - `POST /api/desktop-ack` — the tray client has shown the toast (`{"id":"..."}`)
+- `POST /api/sync/operations` — batch drink/import/edit/delete operations, idempotent by operation id; a drink without `source` is recorded as `desktop`
+- `GET /api/sync/snapshot` — recent records for resync
+- `GET /api/family` — member list (admin only)
+- `POST /api/family` — create a member, returns a one-time access code
+- `DELETE /api/family/{id}` — deactivate a member; the old code stops working, history stays readable by the admin
+- `GET/PUT /api/family/{id}/settings` — read or change one member's settings (admin only)
+- `GET /api/family/{id}/records?date=yyyy-MM-dd` and `GET /api/family/{id}/history` — one member's records (admin only)
+- `POST /api/family/{id}/records/operations` — admin edits to one member's records
+- `POST /api/family/{id}/reset-code` — rotate a member's access code; the old code stops working immediately and history is kept
+- `POST /api/family/{id}/push-test` — send a test push to one member
+- `GET /api/family/progress` — today's progress for all members (admin only)
 
 `--dry-run` prints the Shanghai schedule and exits. It does not open the port and does not call PushWard.
 

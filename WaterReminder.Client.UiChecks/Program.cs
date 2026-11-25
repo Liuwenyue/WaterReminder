@@ -2,6 +2,7 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -16,6 +17,12 @@ internal static class Program
 {
     private static readonly BindingFlags Flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
     private static int passed;
+
+    // PROCESS_DPI_AWARENESS: 0 = unaware, 1 = system, 2 = per-monitor (PerMonitorV2 reports as 2).
+    [DllImport("shcore.dll")]
+    private static extern int GetProcessDpiAwareness(IntPtr hprocess, out int awareness);
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentProcess();
 
     [STAThread]
     static int Main(string[] args)
@@ -32,6 +39,7 @@ internal static class Program
                 {
                     Source = new Uri("pack://application:,,,/WaterReminder.Shared;component/Themes/" + resource)
                 });
+            AssertThemeResources(app, theme);
             var configType = assembly.GetType("WaterReminder.Client.ClientConfig")!;
             File.WriteAllText(configFile, """{"serverUrl":"http://localhost/","apiToken":"ui-test-only"}""");
             var config = configType.GetMethod("Load")!.Invoke(null, new object[] { configFile })!;
@@ -198,6 +206,10 @@ internal static class Program
                 Check(!Compact() && !Busy(), "restart during expansion restores professional mode");
                 Toggle(); Wait();
                 At(savedLeft, savedTop, "collapse after expansion restart restores compact anchor");
+                window.UpdateLayout();
+                AssertTextFits(miniAmount, "compact amount on this monitor");
+                AssertTextFits(miniGoal, "compact goal on this monitor");
+                AssertInside(window, miniPercent, "compact percent on this monitor");
             }
             var familyHandler = new FamilyHandler();
             using var familyHttp = new HttpClient(familyHandler);
@@ -208,6 +220,7 @@ internal static class Program
             try
             {
                 Pump(250);
+                AssertCentered(history, areas, "records dialog");
                 var memberPicker = (ComboBox)history.FindName("MemberPicker");
                 var historyPicker = (ComboBox)history.FindName("HistoryPicker");
                 var clear = (Button)history.FindName("ClearButton");
@@ -261,7 +274,7 @@ internal static class Program
                     if (failure is not null) throw failure;
                     Check(seen, "selected member's settings dialog opens");
                 }
-                InspectMemberSettings(AssertSettingsReadable);
+                InspectMemberSettings(dialog => AssertSettingsReadable(dialog, areas));
                 InspectMemberSettings(dialog =>
                 {
                     Check(dialog.Title.Contains("家人甲"), "member settings identify the selected person");
@@ -325,6 +338,40 @@ internal static class Program
                 finally { invite.Close(); }
             }
             finally { history.Close(); }
+            var amount = new AmountWindow(initial: 3000, cup: 300) { Owner = window, Topmost = false, ShowActivated = false };
+            try
+            {
+                amount.Show();
+                Pump(200);
+                AssertCentered(amount, areas, "amount dialog");
+                var amountStepper = (FrameworkElement)amount.FindName("AmountStepper");
+                var amountBox = FindChild<TextBox>(amountStepper);
+                Check(amountBox is not null && amountBox.Text.Contains("3,000 ml") && TextFits(amountBox),
+                    "amount stepper shows '3,000 ml' in full");
+            }
+            finally { amount.Close(); }
+            var confirm = new ConfirmDialog("删除记录", "确定要删除这条记录吗？", "删除", danger: true)
+                { Owner = window, Topmost = false, ShowActivated = false };
+            try
+            {
+                confirm.Show();
+                Pump(200);
+                AssertCentered(confirm, areas, "confirm dialog");
+                var okButton = (Button)confirm.FindName("OkButton");
+                var okBackground = (SolidColorBrush)okButton.Background;
+                var dangerSolid = (SolidColorBrush)app.FindResource("DangerSolid");
+                Check(okBackground.Color == dangerSolid.Color, "danger confirm button uses the filled danger color");
+                Check(ContrastRatio(((SolidColorBrush)okButton.Foreground).Color, okBackground.Color) >= 4.5,
+                    "danger confirm button text keeps a 4.5:1 contrast");
+            }
+            finally { confirm.Close(); }
+            // The text-fit checks above validate the ambient display scale; re-run with
+            // Windows set to 125% and 150% to cover those scales. This DPI check runs last
+            // so a failure here does not hide the results above.
+            var dpiResult = GetProcessDpiAwareness(GetCurrentProcess(), out var dpiAwareness);
+            Console.WriteLine($"DPI awareness={dpiAwareness} (2 = per-monitor) pixelsPerDip={VisualTreeHelper.GetDpi(window).PixelsPerDip:F2}");
+            Check(dpiResult == 0 && dpiAwareness == 2,
+                "process is per-monitor DPI aware (add ApplicationHighDpiMode=PerMonitorV2 to the UiChecks project if this fails)");
             Console.WriteLine($"UI_CHECKS_PASSED={passed}");
             return 0;
         }
@@ -338,8 +385,17 @@ internal static class Program
     }
 
 
-    static void AssertSettingsReadable(SettingsWindow dialog)
+    static void AssertSettingsReadable(SettingsWindow dialog, IReadOnlyList<ScreenRect> areas)
     {
+        AssertCentered(dialog, areas, "settings dialog");
+        var mobilePush = (CheckBox)dialog.FindName("MobilePushBox");
+        mobilePush.IsChecked = true;
+        mobilePush.ApplyTemplate();
+        dialog.UpdateLayout();
+        var track = (Border)mobilePush.Template.FindName("track", mobilePush);
+        var accent = (SolidColorBrush)Application.Current!.FindResource("Accent");
+        Check(track.Background is SolidColorBrush trackBrush && trackBrush.Color == accent.Color,
+            "checked toggle switch uses the theme accent");
         var lunch = (CheckBox)dialog.FindName("LunchBox");
         lunch.IsChecked = true;
         lunch.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
@@ -372,6 +428,62 @@ internal static class Program
     }
 
 
+
+    static void AssertCentered(Window dialog, IReadOnlyList<ScreenRect> areas, string name)
+    {
+        Pump(150);
+        dialog.UpdateLayout();
+        var centerX = dialog.Left + dialog.ActualWidth / 2;
+        var centerY = dialog.Top + dialog.ActualHeight / 2;
+        var area = areas.FirstOrDefault(a => a.Contains(new ScreenRect(centerX, centerY, 1, 1)));
+        if (area.Width == 0) area = areas[0];
+        var expectedLeft = area.Left + (area.Width - dialog.ActualWidth) / 2;
+        var expectedTop = area.Top + (area.Height - dialog.ActualHeight) / 2;
+        Check(Math.Abs(dialog.Left - expectedLeft) < 2 && Math.Abs(dialog.Top - expectedTop) < 2,
+            name + " is centered on its monitor");
+    }
+
+    static void AssertThemeResources(Application app, string theme)
+    {
+        var required = new[]
+        {
+            "WindowBg", "SurfaceAlt", "Stroke", "StrokeStrong", "TextPrimary", "TextSecondary", "TextTertiary",
+            "Accent", "AccentHover", "AccentPressed", "AccentSoft", "AccentSoftHover", "AccentText", "OnAccent",
+            "RingTrack", "Success", "SuccessSoft", "Warning", "WarningSoft",
+            "Danger", "DangerSoft", "DangerSolid", "ControlBg", "ControlHover", "ControlPressed", "SwitchOff"
+        };
+        foreach (var key in required)
+            Check(app.TryFindResource(key) is SolidColorBrush, theme + " defines " + key);
+        var other = theme == "Dark.xaml" ? "Light.xaml" : "Dark.xaml";
+        var otherDict = new ResourceDictionary { Source = new Uri("pack://application:,,,/WaterReminder.Shared;component/Themes/" + other) };
+        var loaded = (ResourceDictionary)app.Resources.MergedDictionaries[0];
+        var missing = otherDict.Keys.OfType<string>().Except(loaded.Keys.OfType<string>()).ToList();
+        var extra = loaded.Keys.OfType<string>().Except(otherDict.Keys.OfType<string>()).ToList();
+        Check(missing.Count == 0 && extra.Count == 0, "light and dark themes define the same resource keys");
+        Color Brush(string key) => ((SolidColorBrush)app.FindResource(key)).Color;
+        Check(ContrastRatio(Brush("TextPrimary"), Brush("WindowBg")) >= 4.5, "main text keeps a 4.5:1 contrast on the window background");
+        Check(ContrastRatio(Brush("OnAccent"), Brush("Accent")) >= 3.0, "primary button text keeps a 3:1 contrast on the accent");
+        Check(ContrastRatio(Brush("OnAccent"), Brush("DangerSolid")) >= 4.5, "danger button text keeps a 4.5:1 contrast");
+        Check(ContrastRatio(Brush("Danger"), Brush("WindowBg")) >= 4.5, "danger text keeps a 4.5:1 contrast on the window background");
+        Check(ContrastRatio(Brush("AccentText"), Brush("AccentSoft")) >= 4.5, "accent text keeps a 4.5:1 contrast on its soft background");
+    }
+
+    static double ContrastRatio(Color a, Color b)
+    {
+        var light = Math.Max(Luminance(a), Luminance(b));
+        var dark = Math.Min(Luminance(a), Luminance(b));
+        return (light + 0.05) / (dark + 0.05);
+    }
+
+    static double Luminance(Color color)
+    {
+        double Linear(byte channel)
+        {
+            var c = channel / 255.0;
+            return c <= 0.03928 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4);
+        }
+        return 0.2126 * Linear(color.R) + 0.7152 * Linear(color.G) + 0.0722 * Linear(color.B);
+    }
 
     static void AssertInside(Window window, FrameworkElement element, string name)
     {

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -20,12 +21,80 @@ internal sealed class FamilyAccounts : IDisposable
     private List<Entry> _entries;
     public ReminderEngine Owner { get; }
 
+    /// <summary>Set when the registry had to be recovered or quarantined at startup; null on a clean load.</summary>
+    public string? StartupWarning { get; private set; }
+
     public FamilyAccounts(ServerOptions options, ReminderEngine owner)
     {
         _options = options;
         Owner = owner;
         _path = Path.Combine(options.DataDirectory, "family.json");
-        _entries = File.Exists(_path) ? ReadEntries(File.ReadAllText(_path)) : [];
+        _entries = File.Exists(_path) ? LoadEntries() : [];
+    }
+
+    /// <summary>
+    /// Loads the registry, recovering from family.json.bak when the main file is corrupt.
+    /// When neither file parses, the corrupt file is quarantined and the server starts with
+    /// an empty registry (all old access codes stop working). <see cref="StartupWarning"/>
+    /// describes what happened so startup can report it. Transient I/O errors still throw:
+    /// a locked or unreadable file must fail loudly instead of silently dropping members.
+    /// </summary>
+    private List<Entry> LoadEntries()
+    {
+        try
+        {
+            return ReadEntries(File.ReadAllText(_path));
+        }
+        catch (Exception error) when (error is JsonException or InvalidDataException)
+        {
+            // Corrupt main file: try the backup below.
+        }
+        try
+        {
+            if (File.Exists(_path + ".bak"))
+            {
+                var recovered = ReadEntries(File.ReadAllText(_path + ".bak"));
+                try
+                {
+                    var temp = _path + ".recover";
+                    File.Copy(_path + ".bak", temp, true);
+                    File.Move(temp, _path, true);
+                }
+                catch (Exception restoreError) when (restoreError is IOException or UnauthorizedAccessException)
+                {
+                    StartupWarning = "family.json 已损坏，已从 family.json.bak 在内存中恢复，但无法写回主文件，请检查数据目录权限。";
+                    return recovered;
+                }
+                StartupWarning = "family.json 已损坏，已从 family.json.bak 恢复；请检查数据目录与磁盘。";
+                return recovered;
+            }
+        }
+        catch (Exception backupError) when (backupError is JsonException or InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            // Both files are unusable; quarantine the main file below.
+        }
+        var quarantine = QuarantinePath();
+        try
+        {
+            File.Move(_path, quarantine);
+        }
+        catch (Exception moveError) when (moveError is IOException or UnauthorizedAccessException)
+        {
+            StartupWarning = "family.json 已损坏且无可用备份，但隔离失败（文件被占用或无权限）；已以空注册表启动，旧访问码全部失效。";
+            return [];
+        }
+        StartupWarning = $"family.json 已损坏且无可用备份，已隔离为 {Path.GetFileName(quarantine)} 并以空注册表启动；旧访问码全部失效，请重新为成员生成访问码。";
+        return [];
+    }
+
+    private string QuarantinePath()
+    {
+        var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+        var candidate = _path + ".corrupt-" + stamp;
+        var attempt = 1;
+        while (File.Exists(candidate))
+            candidate = _path + $".corrupt-{stamp}-{++attempt}";
+        return candidate;
     }
 
     public FamilyOverview Overview(Guid caller)
@@ -189,6 +258,35 @@ internal sealed class FamilyAccounts : IDisposable
         }
     }
 
+    /// <summary>
+    /// Member-only: replaces the caller's own PushWard credential; a blank value clears it.
+    /// The format and one-key-per-member checks run under the registry lock together with the
+    /// update, so two members cannot claim the same key. Returns false with a null error for
+    /// a missing or archived member, and never touches another member's engine.
+    /// </summary>
+    public bool TryUpdateOwnPushToken(Guid caller, string? token, out string? error)
+    {
+        lock (_gate)
+        {
+            error = null;
+            if (caller == Guid.Empty) return false;
+            var entry = _entries.Find(item => item.Id == caller && !item.Archived);
+            if (entry is null) return false;
+            var value = token?.Trim() ?? "";
+            if (!ValidPushToken(value))
+            {
+                error = "手机推送密钥格式无效。";
+                return false;
+            }
+            if (PushTokenInUse(value, caller))
+            {
+                error = "每位成员须使用自己手机的 PushWard 密钥。";
+                return false;
+            }
+            return Engine(entry).TryUpdatePushToken(value, out error);
+        }
+    }
+
     private static bool ValidPushToken(string token)
         => token.Length <= 512 && !token.Any(char.IsWhiteSpace) && !token.Any(char.IsControl);
 
@@ -231,6 +329,8 @@ internal sealed class FamilyAccounts : IDisposable
         Directory.CreateDirectory(_options.DataDirectory);
         var temp = _path + ".tmp";
         File.WriteAllText(temp, JsonSerializer.Serialize(entries));
+        // Keep the previous generation so a corrupt registry can be recovered at startup.
+        if (File.Exists(_path)) File.Copy(_path, _path + ".bak", true);
         File.Move(temp, _path, overwrite: true);
         _entries = entries;
     }
