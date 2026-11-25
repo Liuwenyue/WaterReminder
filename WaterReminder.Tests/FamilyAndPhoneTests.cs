@@ -171,8 +171,12 @@ public sealed class FamilyAndPhoneTests
         Assert.True(((IPushWardReplies)restart).Accept(token, "begin+001", new("next", [new("1234", action)])));
         Assert.Equal(expected, restart.TodayRecords().ConsumedMl);
         Assert.Contains($"已记 {expected} ml", ReadConfirmation(fake));
+        Assert.True(await WaitRetractedAsync(fake, 2));
+        Assert.Equal(new[] { "water-evening", "water-test" }, fake.Retracted);
         Assert.True(((IPushWardReplies)restart).Accept(token, "next", new("later", [new("1234", action)])));
         Assert.Equal(expected, restart.TodayRecords().ConsumedMl);
+        await Task.Delay(100);
+        Assert.Equal(2, fake.Retracted.Length);
     }
 
     [Theory]
@@ -228,6 +232,17 @@ public sealed class FamilyAndPhoneTests
         return message!;
     }
 
+    private static async Task<bool> WaitRetractedAsync(PushInbox fake, int count)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (fake.Retracted.Length >= count) return true;
+            await Task.Delay(20);
+        }
+        return fake.Retracted.Length >= count;
+    }
+
     private static ReminderEngine Engine(TempData data, Func<DateTime> now, HttpClient? http = null,
         string? token = null, bool poll = false) => new(new ReminderEngineOptions
         {
@@ -251,6 +266,8 @@ public sealed class FamilyAndPhoneTests
         public string? FirstGet { get; private set; }
         public string? Answers { get; set; }
         public Channel<string> Confirmations { get; } = Channel.CreateUnbounded<string>();
+        private readonly List<string> _retracted = new();
+        public string[] Retracted { get { lock (_retracted) return _retracted.ToArray(); } }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -261,6 +278,12 @@ public sealed class FamilyAndPhoneTests
                 return Json(HttpStatusCode.OK, Answers ?? """{"cursor":"begin+001","items":[]}""");
             }
             var payload = await request.Content!.ReadAsStringAsync(cancellationToken);
+            if (request.RequestUri?.AbsolutePath.EndsWith("/notifications/retract", StringComparison.Ordinal) == true)
+            {
+                using var retract = JsonDocument.Parse(payload);
+                lock (_retracted) _retracted.Add(retract.RootElement.GetProperty("collapse_id").GetString()!);
+                return Json(HttpStatusCode.Accepted, """{"devices":1}""");
+            }
             using var doc = JsonDocument.Parse(payload);
             if (doc.RootElement.TryGetProperty("actions", out _)) Reminder = payload;
             else Confirmations.Writer.TryWrite(payload);

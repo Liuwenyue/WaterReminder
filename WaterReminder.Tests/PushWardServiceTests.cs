@@ -87,6 +87,7 @@ public sealed class PushWardServiceTests
         Assert.Equal("喝水提醒", message.Payload.SourceDisplayName);
         Assert.Equal("time-sensitive", message.Payload.Level);
         Assert.Equal("water-evening", message.Payload.CollapseId);
+        Assert.Equal("今天还差 1600 ml", message.Payload.Subtitle);
 
         Assert.Equal(2, message.Payload.Actions!.Count);
         var action = message.Payload.Actions[0];
@@ -100,6 +101,8 @@ public sealed class PushWardServiceTests
         var root = doc.RootElement;
         Assert.Equal("该喝水了", root.GetProperty("title").GetString());
         Assert.Equal("已喝 400/2000 ml，建议 300 ml", root.GetProperty("body").GetString());
+        Assert.Equal("今天还差 1600 ml", root.GetProperty("subtitle").GetString());
+        Assert.StartsWith("water-", root.GetProperty("thread_id").GetString());
         Assert.Equal("waterreminder", root.GetProperty("source").GetString());
         Assert.Equal("time-sensitive", root.GetProperty("level").GetString());
         Assert.False(root.TryGetProperty("url", out _));       // 顶层没有 url
@@ -129,6 +132,38 @@ public sealed class PushWardServiceTests
         Assert.False(root.TryGetProperty("actions", out _));
         Assert.False(root.TryGetProperty("url", out _));
         Assert.False(root.TryGetProperty("collapse_id", out _));
+        Assert.False(root.TryGetProperty("subtitle", out _));
+        Assert.StartsWith("water-", root.GetProperty("thread_id").GetString());
+    }
+
+    [Fact]
+    public void Reminder_UsesDailyThread_AndConfirmationDoesNotReuseCollapseId()
+    {
+        var day = new DateTime(2026, 11, 3, 19, 0, 0);
+        var message = PushWardMessageBuilder.BuildReminder(Token, 300, 400, 2000, day);
+        Assert.Equal("今天还差 1600 ml", message.Payload.Subtitle);
+        Assert.Equal("water-20261103", message.Payload.ThreadId);
+        Assert.InRange(message.Payload.ThreadId!.Length, 1, 128);
+        Assert.Equal("今天还差 0 ml", PushWardMessageBuilder.BuildReminder(Token, 0, 2500, 2000, day).Payload.Subtitle);
+
+        var settings = Settings();
+        settings.DailyGoalMl = 2000;
+        settings.HomeCupCapacityMl = 800;
+        var test = PushWardMessageBuilder.BuildTest(settings, 400, day);
+        Assert.Equal("water-test", test.Payload.CollapseId);
+        Assert.Equal(message.Payload.Subtitle, test.Payload.Subtitle);
+        Assert.Equal(message.Payload.ThreadId, test.Payload.ThreadId);
+
+        var confirmation = PushWardMessageBuilder.BuildConfirmation(Token, 800, day);
+        Assert.Null(confirmation.Payload.CollapseId);
+        Assert.Null(confirmation.Payload.Subtitle);
+        Assert.Null(confirmation.Payload.Actions);
+        Assert.Equal("water-20261103", confirmation.Payload.ThreadId);
+        using var doc = JsonDocument.Parse(confirmation.Json);
+        Assert.False(doc.RootElement.TryGetProperty("collapse_id", out _));
+        Assert.False(doc.RootElement.TryGetProperty("subtitle", out _));
+        Assert.False(doc.RootElement.TryGetProperty("actions", out _));
+        Assert.Equal("water-20261103", doc.RootElement.GetProperty("thread_id").GetString());
     }
 
     [Fact]
@@ -468,4 +503,75 @@ public sealed class PushWardServiceTests
         Assert.False(seen.Add(text.Items[0].NotificationId));
     }
 
+    [Fact]
+    public async Task RetractReminders_PostsBothCollapseIds_WithBearerAndNoTokenInBody()
+    {
+        var handler = new FakeHandler
+        {
+            Respond = request => request.Uri.AbsolutePath.EndsWith("/notifications/retract", StringComparison.Ordinal)
+                ? (HttpStatusCode.Accepted, """{"devices":1}""")
+                : (HttpStatusCode.Created, """{"id":"n"}"""),
+        };
+        using var http = new HttpClient(handler);
+        using var service = new PushWardService(Settings(), http);
+
+        service.RetractRemindersBestEffort();
+        Assert.True(await WaitForAsync(() => handler.Count(IsRetract) >= 2));
+
+        var requests = handler.Requests.Where(IsRetract).ToArray();
+        Assert.Equal(2, requests.Length);
+        Assert.All(requests, request =>
+        {
+            Assert.Equal(HttpMethod.Post, request.Method);
+            Assert.Equal("https://api.pushward.app/notifications/retract", request.Uri.ToString());
+            Assert.Equal("Bearer", request.AuthorizationScheme);
+            Assert.Equal(Token, request.AuthorizationParameter);
+            Assert.Equal("application/json", request.MediaType);
+            Assert.DoesNotContain(Token, request.Body);
+        });
+        Assert.Contains("{\"collapse_id\":\"water-evening\"}", requests.Select(request => request.Body));
+        Assert.Contains("{\"collapse_id\":\"water-test\"}", requests.Select(request => request.Body));
+    }
+
+    [Fact]
+    public async Task RetractReminders_FailureIsIgnored_AndEmptyTokenSendsNothing()
+    {
+        var attempts = 0;
+        var handler = new FakeHandler
+        {
+            Respond = _ =>
+            {
+                Interlocked.Increment(ref attempts);
+                throw new HttpRequestException("simulated offline");
+            },
+        };
+        using var http = new HttpClient(handler);
+        using var service = new PushWardService(Settings(), http);
+        service.RetractRemindersBestEffort();
+        Assert.True(await WaitForAsync(() => Volatile.Read(ref attempts) >= 2));
+
+        var silent = new FakeHandler();
+        using var silentHttp = new HttpClient(silent);
+        var settings = Settings();
+        settings.PushWardApiToken = " ";
+        using var unconfigured = new PushWardService(settings, silentHttp);
+        unconfigured.RetractRemindersBestEffort();
+        await Task.Delay(50);
+        Assert.Empty(silent.Requests);
+    }
+
+    private static bool IsRetract(RecordedRequest request)
+        => request.Method == HttpMethod.Post
+           && request.Uri.AbsolutePath.EndsWith("/notifications/retract", StringComparison.Ordinal);
+
+    private static async Task<bool> WaitForAsync(Func<bool> ready)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (ready()) return true;
+            await Task.Delay(20);
+        }
+        return ready();
+    }
 }

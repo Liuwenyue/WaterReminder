@@ -26,7 +26,9 @@ public sealed record PushWardPayload(
     [property: JsonPropertyName("source_display_name")] string SourceDisplayName,
     [property: JsonPropertyName("level")] string Level,
     [property: JsonPropertyName("collapse_id")] string? CollapseId,
-    [property: JsonPropertyName("actions")] IReadOnlyList<PushWardAction>? Actions);
+    [property: JsonPropertyName("actions")] IReadOnlyList<PushWardAction>? Actions,
+    [property: JsonPropertyName("subtitle")] string? Subtitle = null,
+    [property: JsonPropertyName("thread_id")] string? ThreadId = null);
 
 /// <summary>一条 PushWard 消息：令牌用于请求头，Payload 序列化为 JSON 正文。</summary>
 public sealed record PushWardMessage(string Token, PushWardPayload Payload)
@@ -58,6 +60,7 @@ public static class PushWardMessageBuilder
     public const string ApiBase = "https://api.pushward.app";
     public const string Endpoint = ApiBase + "/notifications";
     public const string AnswersEndpoint = ApiBase + "/notifications/answers";
+    public const string RetractEndpoint = ApiBase + "/notifications/retract";
 
     public const string Source = "waterreminder";
     public const string SourceDisplayName = "喝水提醒";
@@ -100,6 +103,17 @@ public static class PushWardMessageBuilder
     public static string FormatReminderBody(int consumedMl, int goalMl, int suggestedMl)
         => $"已喝 {consumedMl}/{goalMl} ml，建议 {suggestedMl} ml";
 
+    /// <summary>副标题只表示今天还差多少，已达标时显示还差 0 ml。</summary>
+    public static string FormatReminderSubtitle(int consumedMl, int goalMl)
+        => $"今天还差 {Math.Max(0, goalMl - consumedMl)} ml";
+
+    /// <summary>同一天的提醒和确认共用这个分组，最长 128 个字符。</summary>
+    public static string ThreadIdFor(DateTime day)
+    {
+        var id = "water-" + day.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);
+        return id.Length <= 128 ? id : id[..128];
+    }
+
     /// <summary>晚间提醒：标题「该喝水了」，正文「已喝 已喝量/目标 ml，建议 N ml」。</summary>
     public static PushWardMessage BuildReminder(UserSettings s, int suggestedMl, int consumedMl)
         => BuildReminder(s.PushWardApiToken, suggestedMl, consumedMl, s.DailyGoalMl);
@@ -116,22 +130,29 @@ public static class PushWardMessageBuilder
             SourceDisplayName,
             ReminderLevel,
             ReminderCollapseId,
-            [BuildDrinkAction(day, amount), BuildTotalAction(day)]));
+            [BuildDrinkAction(day, amount), BuildTotalAction(day)],
+            FormatReminderSubtitle(consumedMl, goalMl),
+            ThreadIdFor(day)));
     }
 
     /// <summary>记账后的确认：标题「已记录」，正文「已记 N ml」，没有 actions。</summary>
-    public static PushWardMessage BuildConfirmation(UserSettings s, int appliedMl)
-        => BuildConfirmation(s.PushWardApiToken, appliedMl);
+    public static PushWardMessage BuildConfirmation(UserSettings s, int appliedMl, DateTime? date = null)
+        => BuildConfirmation(s.PushWardApiToken, appliedMl, date);
 
-    public static PushWardMessage BuildConfirmation(string? token, int appliedMl)
-        => new(token ?? "", new PushWardPayload(
+    public static PushWardMessage BuildConfirmation(string? token, int appliedMl, DateTime? date = null)
+    {
+        var day = date ?? ShanghaiClock.Now();
+        return new(token ?? "", new PushWardPayload(
             "已记录",
             $"已记 {appliedMl} ml",
             Source,
             SourceDisplayName,
             ConfirmationLevel,
             CollapseId: null,
-            Actions: null));
+            Actions: null,
+            Subtitle: null,
+            ThreadId: ThreadIdFor(day)));
+    }
 
     /// <summary>设置页测试：文案与真实提醒相同，仅 collapse_id 用 water-test，避免盖住晚间提醒。</summary>
     public static PushWardMessage BuildTest(UserSettings s, int consumedMl, DateTime? date = null)
@@ -239,6 +260,46 @@ public sealed class PushWardService : IDisposable
         }
         // The loop task owns disposal, after it has observed cancellation.
         try { cts?.Cancel(); } catch (ObjectDisposedException) { }
+    }
+
+    /// <summary>
+    /// 喝水或校正成功后收回普通提醒和测试提醒。best-effort：失败只忽略，绝不抛给记账流程。
+    /// </summary>
+    public void RetractRemindersBestEffort()
+    {
+        try
+        {
+            if (_disposed || !IsConfigured) return;
+            _ = RetractRemindersAsync();
+        }
+        catch
+        {
+            // 撤回失败不能影响已经记下的饮水量。
+        }
+    }
+
+    private async Task RetractRemindersAsync()
+    {
+        foreach (var collapseId in new[] { PushWardMessageBuilder.ReminderCollapseId, PushWardMessageBuilder.TestCollapseId })
+        {
+            try { await RetractOneAsync(collapseId).ConfigureAwait(false); }
+            catch { }
+        }
+    }
+
+    private async Task RetractOneAsync(string collapseId)
+    {
+        if (_disposed || string.IsNullOrWhiteSpace(collapseId) || string.IsNullOrWhiteSpace(_settings.PushWardApiToken))
+            return;
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(PushWardMessageBuilder.RetractEndpoint));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _settings.PushWardApiToken.Trim());
+        request.Content = new StringContent(
+            JsonSerializer.Serialize(new Dictionary<string, string> { ["collapse_id"] = collapseId }, PushWardMessageBuilder.JsonOptions),
+            Encoding.UTF8,
+            "application/json");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+        using var response = await _http.SendAsync(request, timeout.Token).ConfigureAwait(false);
     }
 
     public async Task<bool> PublishReminderAsync(int suggestedMl, int consumedMl = 0, CancellationToken ct = default,

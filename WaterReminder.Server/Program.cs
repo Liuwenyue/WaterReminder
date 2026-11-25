@@ -11,10 +11,11 @@ public static class Program
     public static async Task Main(string[] args)
     {
         var dryRun = args.Any(a => string.Equals(a, "--dry-run", StringComparison.OrdinalIgnoreCase));
+        var sendTest = args.Any(a => string.Equals(a, "--send-test", StringComparison.OrdinalIgnoreCase));
         ServerOptions options;
         try
         {
-            options = ServerOptions.FromEnvironment(requireApiToken: !dryRun);
+            options = ServerOptions.FromEnvironment(requireApiToken: !dryRun && !sendTest);
         }
         catch (InvalidOperationException ex)
         {
@@ -28,8 +29,16 @@ public static class Program
             DataDirectory = options.DataDirectory,
             Clock = ShanghaiClock.Now,
             PushWardToken = () => SecretFiles.PushWardToken(options.DataDirectory),
-            PollAnswers = !dryRun,
+            PollAnswers = !dryRun && !sendTest,
         });
+
+        if (sendTest)
+        {
+            var sent = await engine.SendTestPushAsync();
+            Console.WriteLine(sent ? "test-sent" : "test-not-sent");
+            Environment.ExitCode = sent ? 0 : 2;
+            return;
+        }
 
         if (dryRun)
         {

@@ -154,6 +154,7 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
     /// <summary>Desktop tray action. Amount omitted means the cup currently in effect.</summary>
     public int LogDrink(int? amountMl, string? source)
     {
+        int recorded;
         lock (_gate)
         {
             EnsureActiveLocked();
@@ -164,8 +165,10 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
                 amount = amountMl.Value;
             else
                 amount = WaterCalculator.CurrentCupMl(_settings, now);
-            return _progress.Drink(amount, src);
+            recorded = _progress.Drink(amount, src);
         }
+        if (recorded != 0) _push.RetractRemindersBestEffort();
+        return recorded;
     }
 
     public TodayRecordsResponse TodayRecords()
@@ -230,21 +233,24 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
         result = null;
         if (!WaterCalculator.TryParseTotal(totalMl.ToString(CultureInfo.InvariantCulture), out var total, out error))
             return false;
+        var changed = false;
         lock (_gate)
         {
             EnsureActiveLocked();
             RefreshLocked();
             var delta = _progress.Correct(total);
             error = null;
+            changed = delta != 0;
             result = new SetTotalResponse
             {
                 DeltaMl = delta,
                 ConsumedMl = _progress.Today.ConsumedMl,
                 GoalMl = _settings.DailyGoalMl,
-                Changed = delta != 0,
+                Changed = changed,
             };
-            return true;
         }
+        if (changed) _push.RetractRemindersBestEffort();
+        return true;
     }
 
     public bool TryEditRecord(Guid id, int amountMl, out string? error)
@@ -400,7 +406,7 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
                 var message = ApplyPhoneReplyLocked(now, day, state.TokenHash, answer, expectedAction);
                 if (message is not null)
                 {
-                    var confirmation = PushWardMessageBuilder.BuildConfirmation(token, 0);
+                    var confirmation = PushWardMessageBuilder.BuildConfirmation(token, 0, now);
                     _ = _push.PublishAsync(confirmation with { Payload = confirmation.Payload with
                     {
                         Body = message,
@@ -440,6 +446,7 @@ public sealed partial class ReminderEngine : IDisposable, IPushWardReplies
         var receipt = $"{tokenHash}:{answer.NotificationId}";
         var delta = _progress.ApplyPhoneReply(now, receipt, total, cup);
         if (delta is null) return null;
+        _push.RetractRemindersBestEffort();
         if (total is { } amount) return $"今日已喝总量为 {amount} ml";
         return delta > 0 ? $"已记 {delta} ml" : "今日已达到饮水目标。";
     }
